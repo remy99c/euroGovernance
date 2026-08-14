@@ -176,6 +176,7 @@ export {
 export {
   listAvailableFrameworks,
   adoptFramework,
+  unadoptFramework,
   updateFrameworkScope,
   setRequirementApplicability,
   instantiateFrameworkControls,

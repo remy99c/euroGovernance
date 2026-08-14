@@ -324,6 +324,9 @@ export interface AdoptedFramework extends BaseEntity {
   frameworkId: string; // matches /frameworks/{frameworkId}
   frameworkCode: string;
   frameworkName: string;
+  frameworkVersion?: string;
+  pinnedVersion?: string | null;
+  versionPinnedAt?: string | null;
   status: AdoptedFrameworkStatus;
   scopeDescription: string;
   scopingBoundaries: string[]; // e.g. ['Frankfurt Cloud Services', 'Customer Data Processing', 'AI Recommendation Engine']

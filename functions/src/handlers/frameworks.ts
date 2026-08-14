@@ -47,11 +47,27 @@ export const listAvailableFrameworks = onCall(async (request) => {
   return { frameworks };
 });
 
+export interface AdoptFrameworkInput {
+  tenantId: string;
+  frameworkId: string;
+  scopeDescription?: string;
+  scopingBoundaries?: string[];
+  targetCertificationDate?: string | null;
+  pinnedVersion?: string;
+}
+
+export interface UnadoptFrameworkInput {
+  tenantId: string;
+  frameworkId: string;
+  reason?: string;
+  deleteInstantiatedControls?: boolean;
+}
+
 /**
  * 2. Adopt a Global Framework for a Tenant
  */
-export const adoptFramework = onCall(async (request) => {
-  const { tenantId, frameworkId, scopeDescription, scopingBoundaries, targetCertificationDate } = request.data || {};
+export const adoptFramework = onCall<AdoptFrameworkInput>(async (request) => {
+  const { tenantId, frameworkId, scopeDescription, scopingBoundaries, targetCertificationDate, pinnedVersion } = request.data || {};
 
   if (!tenantId || typeof tenantId !== 'string') {
     throw new HttpsError('invalid-argument', 'Missing or invalid tenantId.');
@@ -70,15 +86,27 @@ export const adoptFramework = onCall(async (request) => {
   }
   const fwData = fwDoc.data() as Framework;
 
-  // 2. Fetch master controls count and requirements
+  // 2. Prevent duplicate adoption if already active or in scoping
+  const adoptedRef = db.collection('tenants').doc(tenantId).collection('adopted_frameworks').doc(frameworkId);
+  const existingAdopted = await adoptedRef.get();
+  if (existingAdopted.exists) {
+    const prevStatus = existingAdopted.data()?.status;
+    if (prevStatus && prevStatus !== 'retired') {
+      throw new HttpsError(
+        'already-exists',
+        `Framework '${frameworkId}' is already adopted by tenant '${tenantId}' with status '${prevStatus}'.`
+      );
+    }
+  }
+
+  // 3. Fetch master controls count and requirements
   const [masterControlsSnap, reqsSnap] = await Promise.all([
     fwRef.collection('master_controls').get(),
     fwRef.collection('requirements').get(),
   ]);
 
   const now = new Date().toISOString();
-  const adoptedRef = db.collection('tenants').doc(tenantId).collection('adopted_frameworks').doc(frameworkId);
-  const existingAdopted = await adoptedRef.get();
+  const effectiveVersion = pinnedVersion || fwData.version || '1.0';
 
   const adoptedRecord: AdoptedFramework = {
     id: frameworkId,
@@ -86,27 +114,30 @@ export const adoptFramework = onCall(async (request) => {
     frameworkId,
     frameworkCode: fwData.code || frameworkId.toUpperCase(),
     frameworkName: fwData.name || frameworkId,
-    status: existingAdopted.exists ? (existingAdopted.data()?.status || 'in_scoping') : 'in_scoping',
+    frameworkVersion: fwData.version || '1.0',
+    pinnedVersion: effectiveVersion,
+    versionPinnedAt: now,
+    status: 'in_scoping',
     ownerId: authCtx.userId,
     scopeDescription: scopeDescription || `Organizational compliance scope for ${fwData.name}`,
-    scopingBoundaries: Array.isArray(scopingBoundaries) ? scopingBoundaries : ['Primary EU Operations'],
+    scopingBoundaries: Array.isArray(scopingBoundaries) && scopingBoundaries.length > 0 ? scopingBoundaries : ['Primary EU Operations'],
     targetCertificationDate: targetCertificationDate || null,
     totalMasterControlsCount: masterControlsSnap.size,
-    instantiatedControlsCount: existingAdopted.exists ? (existingAdopted.data()?.instantiatedControlsCount || 0) : 0,
+    instantiatedControlsCount: 0,
     applicableControlsCount: masterControlsSnap.size,
     notApplicableControlsCount: 0,
     adoptedBy: authCtx.userId,
-    adoptedAt: existingAdopted.exists ? (existingAdopted.data()?.adoptedAt || now) : now,
-    lastInstantiatedAt: existingAdopted.exists ? (existingAdopted.data()?.lastInstantiatedAt || null) : null,
-    createdAt: existingAdopted.exists ? (existingAdopted.data()?.createdAt || now) : now,
+    adoptedAt: now,
+    lastInstantiatedAt: null,
+    createdAt: now,
     updatedAt: now,
-    createdBy: existingAdopted.exists ? (existingAdopted.data()?.createdBy || authCtx.userId) : authCtx.userId,
+    createdBy: authCtx.userId,
     updatedBy: authCtx.userId,
   };
 
-  await adoptedRef.set(adoptedRecord, { merge: true });
+  await adoptedRef.set(adoptedRecord);
 
-  // 3. Populate default requirement applicability
+  // 4. Populate default requirement applicability (without cloning controls yet)
   const batch = db.batch();
   for (const reqDoc of reqsSnap.docs) {
     const reqData = reqDoc.data() as Requirement;
@@ -138,7 +169,7 @@ export const adoptFramework = onCall(async (request) => {
   }
   await batch.commit();
 
-  // 4. Audit Log
+  // 5. Audit Log
   await recordAuditLog({
     tenantId,
     actorId: authCtx.userId,
@@ -150,10 +181,77 @@ export const adoptFramework = onCall(async (request) => {
     beforeSummary: existingAdopted.exists ? existingAdopted.data() : null,
     afterSummary: adoptedRecord as any,
     source: 'cloud_function',
-    workflowContext: `Adopted framework ${frameworkId}`,
+    workflowContext: `Adopted framework ${frameworkId} (Pinned Version: ${effectiveVersion})`,
   });
 
   return { adoptedFramework: adoptedRecord };
+});
+
+/**
+ * 2b. Unadopt or Deactivate Framework
+ */
+export const unadoptFramework = onCall<UnadoptFrameworkInput>(async (request) => {
+  const { tenantId, frameworkId, reason = 'Unadopted by compliance management', deleteInstantiatedControls = false } = request.data || {};
+
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing or invalid tenantId.');
+  }
+  if (!frameworkId || typeof frameworkId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing or invalid frameworkId.');
+  }
+
+  const authCtx = await requireTenantMember(request, tenantId, ['tenant_admin', 'compliance_manager', 'security_manager']);
+
+  const adoptedRef = db.collection('tenants').doc(tenantId).collection('adopted_frameworks').doc(frameworkId);
+  const snap = await adoptedRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Framework '${frameworkId}' is not adopted by tenant '${tenantId}'.`);
+  }
+
+  const adoptedData = snap.data() as AdoptedFramework;
+  const now = new Date().toISOString();
+
+  // If deleteInstantiatedControls is requested, unmap framework from controls
+  if (deleteInstantiatedControls) {
+    const controlsSnap = await db.collection('tenants').doc(tenantId).collection('controls')
+      .where('frameworkIds', 'array-contains', frameworkId)
+      .get();
+
+    const batch = db.batch();
+    for (const ctrlDoc of controlsSnap.docs) {
+      const ctrl = ctrlDoc.data();
+      const updatedFwIds = (ctrl.frameworkIds || []).filter((id: string) => id !== frameworkId);
+      if (updatedFwIds.length === 0) {
+        batch.delete(ctrlDoc.ref);
+      } else {
+        batch.update(ctrlDoc.ref, { frameworkIds: updatedFwIds, updatedAt: now, updatedBy: authCtx.userId });
+      }
+    }
+    await batch.commit();
+  }
+
+  // Deactivate and transition to retired
+  await adoptedRef.update({
+    status: 'retired',
+    updatedAt: now,
+    updatedBy: authCtx.userId,
+  });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authCtx.userId,
+    actorEmail: authCtx.email,
+    actorRole: authCtx.role,
+    entityType: 'adopted_framework',
+    entityId: frameworkId,
+    action: 'status_transition',
+    beforeSummary: adoptedData as any,
+    afterSummary: { status: 'retired', reason, deleteInstantiatedControls },
+    source: 'cloud_function',
+    workflowContext: `Unadopted/deactivated framework ${frameworkId}`,
+  });
+
+  return { success: true, frameworkId, status: 'retired' };
 });
 
 /**
