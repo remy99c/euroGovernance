@@ -6,3 +6,4 @@ export * from './ai-act.js';
 export * from './data-act.js';
 export * from './iso.js';
 export * from './audit.js';
+export * from './scoping-and-harmonization.js';
