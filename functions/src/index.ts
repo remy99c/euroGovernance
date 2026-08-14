@@ -79,6 +79,23 @@ export {
   listTenantBreaches,
 } from './handlers/gdpr.js';
 
+// EU AI Act Phase 1 Module Handlers
+export {
+  createTenantAISystem,
+  updateTenantAISystem,
+  deleteTenantAISystem,
+  listTenantAISystems,
+  classifyTenantAISystem,
+  listTenantAIAssessments,
+  logTenantAIIncident,
+  updateTenantAIIncident,
+  listTenantAIIncidents,
+  logSubstantialChange,
+  listSubstantialChanges,
+  logPostMarketMonitoring,
+  listPostMarketLogs,
+} from './handlers/ai-act.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,
