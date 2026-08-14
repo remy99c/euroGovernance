@@ -123,6 +123,18 @@ export {
   listISOManagementReviews,
 } from './handlers/iso.js';
 
+// Operational Support: Notifications & Summary Metrics
+export {
+  listRecipientNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+} from './handlers/notifications.js';
+
+export {
+  materializeTenantMetrics,
+  getTenantSummaryMetrics,
+} from './handlers/metrics.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,

@@ -71,3 +71,30 @@ export interface EntityTimestamp {
   seconds: number;
   nanoseconds: number;
 }
+
+/**
+ * Materialized Derived Summary Metrics (/tenants/{tenantId}/summary_metrics/{metricId})
+ */
+export interface TenantSummaryMetrics {
+  id: string;
+  tenantId: string;
+  lastMaterializedAt: string;
+  totalControlsCount: number;
+  implementedControlsCount: number;
+  overallComplianceScore: number;
+  frameworkReadiness: {
+    gdpr: number;
+    eu_ai_act: number;
+    eu_data_act: number;
+    iso_27001: number;
+    iso_42001: number;
+  };
+  openRisksCount: number;
+  highOrCriticalRisksCount: number;
+  pendingEvidenceReviewsCount: number;
+  activeBreachesCount: number;
+  openDsrRequestsCount: number;
+  registeredAISystemsCount: number;
+  highRiskAISystemsCount: number;
+  openIssuesCount: number;
+}

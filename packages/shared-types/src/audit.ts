@@ -20,14 +20,23 @@ export type ExportType =
   | 'eu_ai_act_technical_file_pdf'
   | 'iso_soa_pdf';
 
+export type NotificationPriority = 'low' | 'medium' | 'high' | 'urgent';
+
 export type NotificationType =
   | 'evidence_expiry_warning'
   | 'evidence_approval_requested'
+  | 'evidence_approved'
+  | 'evidence_rejected'
+  | 'task_assigned'
   | 'task_overdue'
   | 'policy_review_due'
   | 'dpia_review_due'
   | 'export_ready'
-  | 'breach_72h_alert';
+  | 'breach_72h_alert'
+  | 'breach_deadline_warning'
+  | 'dsr_deadline_warning'
+  | 'ai_incident_reported'
+  | 'audit_scheduled';
 
 /**
  * Immutable Audit Log Event (/tenants/{tenantId}/audit_logs/{logId})
@@ -76,11 +85,18 @@ export interface Notification {
   id: string;
   tenantId: string;
   recipientId: string;
+  recipientEmail?: string;
   type: NotificationType;
+  priority?: NotificationPriority;
   title: string;
   body: string;
-  actionUrl: string;
+  actionUrl?: string | null;
+  linkUrl?: string | null;
+  sourceEntityType?: string | null;
+  sourceEntityId?: string | null;
   isRead: boolean;
   readAt: string | null;
   createdAt: string;
 }
+
+export type TenantNotification = Notification;

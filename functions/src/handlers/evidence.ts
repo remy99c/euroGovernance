@@ -2,6 +2,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
+import { createNotification } from '../lib/notifications.js';
 import {
   Evidence,
   EvidenceVersion,
@@ -359,6 +360,19 @@ export const approveEvidence = onCall<ApproveEvidenceInput>(async (request) => {
     workflowContext: 'evidence_approval_workflow',
   });
 
+  if (evidence.createdBy) {
+    await createNotification({
+      tenantId,
+      recipientId: evidence.createdBy,
+      title: 'Evidence Approved',
+      message: `Your evidence "${evidence.title}" has been signed off and marked active.`,
+      type: 'evidence_approved',
+      priority: 'low',
+      sourceEntityType: 'evidence',
+      sourceEntityId: evidenceId,
+    });
+  }
+
   return { success: true, evidenceId, status: 'valid', reviewedAt: now, reviewerId: authContext.userId };
 });
 
@@ -419,6 +433,19 @@ export const rejectEvidence = onCall<RejectEvidenceInput>(async (request) => {
     source: 'cloud_function',
     workflowContext: 'evidence_rejection_workflow',
   });
+
+  if (evidence.createdBy) {
+    await createNotification({
+      tenantId,
+      recipientId: evidence.createdBy,
+      title: 'Evidence Revision Requested',
+      message: `Evidence "${evidence.title}" was rejected: ${rejectionReason.trim()}`,
+      type: 'evidence_rejected',
+      priority: 'high',
+      sourceEntityType: 'evidence',
+      sourceEntityId: evidenceId,
+    });
+  }
 
   return { success: true, evidenceId, status: 'rejected', rejectionReason: rejectionReason.trim(), reviewerId: authContext.userId };
 });

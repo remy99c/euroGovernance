@@ -2,6 +2,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
+import { createNotification } from '../lib/notifications.js';
 import {
   Risk,
   RiskStatus,
@@ -565,6 +566,19 @@ export const createTenantTask = onCall<CreateTaskInput>(async (request) => {
     source: 'cloud_function',
     workflowContext: 'task_creation',
   });
+
+  if (taskDoc.assigneeId && taskDoc.assigneeId !== authContext.userId) {
+    await createNotification({
+      tenantId,
+      recipientId: taskDoc.assigneeId,
+      title: 'New Remediation Task Assigned',
+      message: `You have been assigned task: "${taskDoc.title}" due on ${dueDate}.`,
+      type: 'task_assigned',
+      priority: 'medium',
+      sourceEntityType: 'task',
+      sourceEntityId: taskRef.id,
+    });
+  }
 
   return { success: true, taskId: taskRef.id, task: taskDoc };
 });
