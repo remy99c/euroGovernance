@@ -19,9 +19,11 @@ This document provides a comprehensive breakdown of all regulatory and managemen
 | **GDPR Privacy Layer** | GDPR (ROPA, DPIA, TIA, Breaches, DSR) | **Implemented** | `handlers/gdpr.ts` | Dashboard & Data Management |
 | **EU AI Act Engine** | EU AI Act (Art. 6, 9, 73) | **Implemented** | `handlers/ai-act.ts` | AI Act Governance Tab |
 | **ISO Management Layer** | ISO/IEC 27001:2022 & ISO 42001:2023 | **Implemented** | `handlers/iso.ts` | ISO 27001 Management Tab |
-| **Operational Services** | In-app Notifications & Materialized Metrics | **Implemented** | `handlers/notifications.ts`, `metrics.ts` | Dashboard Live Metrics |
-| **Compliance Export Processor** | Dossier & Framework Readiness Exports | **Implemented** | `handlers/exports.ts` | Exports & Audit Logs Tab |
+| **Framework Adoption & Scoping** | Frameworks, Scoping & Harmonization | **Implemented** | `handlers/frameworks.ts` | Controls Tab / Framework Deck |
 | **EU Data Act** | EU Data Act (B2B Data Sharing) | **Partially Implemented** | Direct Firestore CRUD + Schema | Shared Type Schema |
+
+> [!NOTE]
+> For the in-depth architectural audit and cross-framework harmonization roadmap, see [Frameworks, Scoping & Harmonization Audit Report (2026-08-14)](file:///Users/remon/Documents/euroGovernance/docs/framework-scoping-harmonization-audit-2026-08-14.md).
 
 ---
 
