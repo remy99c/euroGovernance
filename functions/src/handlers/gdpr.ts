@@ -15,6 +15,7 @@ import {
   PersonalDataBreach,
   BreachSeverity,
   BreachStatus,
+  BreachReportingSource,
   DSRRequest,
   DSRType,
   DSRStatus,
@@ -22,6 +23,7 @@ import {
   ProcessorProfile,
   prefillROPAFromProcessors,
   synthesizeDPIAProcessorContext,
+  summarizeProcessorBreachHistory,
 } from '@eurogovernance/shared-types';
 
 // -----------------------------------------------------------------------------
@@ -1464,6 +1466,14 @@ export interface LogBreachInput {
   rootCauseAnalysis?: string;
   containmentActionsTaken?: string;
   remedialIssueIds?: string[];
+  involvesProcessor?: boolean;
+  processorProfileIds?: string[];
+  vendorIds?: string[];
+  reportingSource?: BreachReportingSource | null;
+  processorNotificationReceivedAt?: string | null;
+  transferArrangementIds?: string[];
+  affectedSystemAssetIds?: string[];
+  processorIncidentNotes?: string | null;
   ownerId?: string;
 }
 
@@ -1476,12 +1486,24 @@ export interface UpdateBreachInput {
   dataSubjectsNotifiedAt?: string | null;
   containmentActionsTaken?: string;
   rootCauseAnalysis?: string;
+  involvesProcessor?: boolean;
+  processorProfileIds?: string[];
+  vendorIds?: string[];
+  reportingSource?: BreachReportingSource | null;
+  processorNotificationReceivedAt?: string | null;
+  transferArrangementIds?: string[];
+  affectedSystemAssetIds?: string[];
+  processorIncidentNotes?: string | null;
 }
 
 export interface ListBreachesInput {
   tenantId: string;
   status?: BreachStatus;
   severity?: BreachSeverity;
+  involvesProcessor?: boolean;
+  processorProfileId?: string;
+  vendorId?: string;
+  reportingSource?: BreachReportingSource;
 }
 
 export const logTenantBreach = onCall<LogBreachInput>(async (request) => {
@@ -1499,6 +1521,14 @@ export const logTenantBreach = onCall<LogBreachInput>(async (request) => {
     rootCauseAnalysis = '',
     containmentActionsTaken = '',
     remedialIssueIds = [],
+    involvesProcessor = false,
+    processorProfileIds = [],
+    vendorIds = [],
+    reportingSource = null,
+    processorNotificationReceivedAt = null,
+    transferArrangementIds = [],
+    affectedSystemAssetIds = [],
+    processorIncidentNotes = null,
     ownerId,
   } = request.data;
 
@@ -1523,6 +1553,29 @@ export const logTenantBreach = onCall<LogBreachInput>(async (request) => {
     new Date(discoveredAt).getTime() + 72 * 60 * 60 * 1000
   ).toISOString();
 
+  // Resolve vendor IDs from processor profiles if processorProfileIds provided
+  const vendorIdsSet = new Set<string>(vendorIds);
+  const hasProcessors = involvesProcessor || processorProfileIds.length > 0;
+
+  if (processorProfileIds && processorProfileIds.length > 0) {
+    for (const profId of processorProfileIds) {
+      const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId).get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        if (pData.vendorId) vendorIdsSet.add(pData.vendorId);
+        // Sync reverse reference
+        const prevBreaches = pData.linkedBreachIds || [];
+        if (!prevBreaches.includes(breachRef.id)) {
+          await pSnap.ref.update({
+            linkedBreachIds: [...prevBreaches, breachRef.id],
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+  }
+
   const breachDoc: PersonalDataBreach = {
     id: breachRef.id,
     tenantId,
@@ -1543,6 +1596,14 @@ export const logTenantBreach = onCall<LogBreachInput>(async (request) => {
     dataSubjectsNotifiedAt: null,
     containmentActionsTaken: containmentActionsTaken.trim(),
     remedialIssueIds,
+    involvesProcessor: hasProcessors,
+    processorProfileIds,
+    vendorIds: Array.from(vendorIdsSet),
+    reportingSource,
+    processorNotificationReceivedAt,
+    transferArrangementIds,
+    affectedSystemAssetIds,
+    processorIncidentNotes,
     ownerId: ownerId || authContext.userId,
     createdAt: now,
     updatedAt: now,
@@ -1560,7 +1621,7 @@ export const logTenantBreach = onCall<LogBreachInput>(async (request) => {
     entityType: 'personal_data_breach',
     entityId: breachRef.id,
     action: 'create',
-    afterSummary: { incidentReference: breachDoc.incidentReference, severity, dpaNotificationDeadline72h },
+    afterSummary: { incidentReference: breachDoc.incidentReference, severity, dpaNotificationDeadline72h, involvesProcessor: hasProcessors, processorProfileIds },
     source: 'cloud_function',
     workflowContext: 'breach_incident_log',
   });
@@ -1591,6 +1652,14 @@ export const updateTenantBreach = onCall<UpdateBreachInput>(async (request) => {
     dataSubjectsNotifiedAt,
     containmentActionsTaken,
     rootCauseAnalysis,
+    involvesProcessor,
+    processorProfileIds,
+    vendorIds,
+    reportingSource,
+    processorNotificationReceivedAt,
+    transferArrangementIds,
+    affectedSystemAssetIds,
+    processorIncidentNotes,
   } = request.data;
 
   if (!tenantId || !breachId) {
@@ -1613,6 +1682,25 @@ export const updateTenantBreach = onCall<UpdateBreachInput>(async (request) => {
   const prev = snap.data() as PersonalDataBreach;
   const now = new Date().toISOString();
 
+  // If processorProfileIds updated, sync reverse reference on processor profiles
+  if (processorProfileIds && Array.isArray(processorProfileIds)) {
+    for (const profId of processorProfileIds) {
+      const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId);
+      const pSnap = await pRef.get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        const prevBreaches = pData.linkedBreachIds || [];
+        if (!prevBreaches.includes(breachId)) {
+          await pRef.update({
+            linkedBreachIds: [...prevBreaches, breachId],
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+  }
+
   const updates: Partial<PersonalDataBreach> = {
     updatedAt: now,
     updatedBy: authContext.userId,
@@ -1624,6 +1712,14 @@ export const updateTenantBreach = onCall<UpdateBreachInput>(async (request) => {
   if (dataSubjectsNotifiedAt !== undefined) updates.dataSubjectsNotifiedAt = dataSubjectsNotifiedAt;
   if (containmentActionsTaken !== undefined) updates.containmentActionsTaken = containmentActionsTaken;
   if (rootCauseAnalysis !== undefined) updates.rootCauseAnalysis = rootCauseAnalysis;
+  if (involvesProcessor !== undefined) updates.involvesProcessor = involvesProcessor;
+  if (processorProfileIds !== undefined) updates.processorProfileIds = processorProfileIds;
+  if (vendorIds !== undefined) updates.vendorIds = vendorIds;
+  if (reportingSource !== undefined) updates.reportingSource = reportingSource;
+  if (processorNotificationReceivedAt !== undefined) updates.processorNotificationReceivedAt = processorNotificationReceivedAt;
+  if (transferArrangementIds !== undefined) updates.transferArrangementIds = transferArrangementIds;
+  if (affectedSystemAssetIds !== undefined) updates.affectedSystemAssetIds = affectedSystemAssetIds;
+  if (processorIncidentNotes !== undefined) updates.processorIncidentNotes = processorIncidentNotes;
 
   await breachRef.update(updates);
 
@@ -1645,7 +1741,7 @@ export const updateTenantBreach = onCall<UpdateBreachInput>(async (request) => {
 });
 
 export const listTenantBreaches = onCall<ListBreachesInput>(async (request) => {
-  const { tenantId, status, severity } = request.data;
+  const { tenantId, status, severity, involvesProcessor, processorProfileId, vendorId, reportingSource } = request.data;
   if (!tenantId) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
@@ -1661,9 +1757,152 @@ export const listTenantBreaches = onCall<ListBreachesInput>(async (request) => {
   let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('breaches');
   if (status) query = query.where('status', '==', status);
   if (severity) query = query.where('severity', '==', severity);
+  if (involvesProcessor !== undefined) query = query.where('involvesProcessor', '==', involvesProcessor);
+  if (processorProfileId) query = query.where('processorProfileIds', 'array-contains', processorProfileId);
+  if (vendorId) query = query.where('vendorIds', 'array-contains', vendorId);
+  if (reportingSource) query = query.where('reportingSource', '==', reportingSource);
 
   const snap = await query.get();
   const breaches: PersonalDataBreach[] = snap.docs.map((d) => d.data() as PersonalDataBreach);
 
   return { success: true, count: breaches.length, breaches };
+});
+
+export interface LinkBreachToProcessorsInput {
+  tenantId: string;
+  breachId: string;
+  processorProfileIds: string[];
+  reportingSource?: BreachReportingSource | null;
+  processorNotificationReceivedAt?: string | null;
+  transferArrangementIds?: string[];
+  affectedSystemAssetIds?: string[];
+  processorIncidentNotes?: string | null;
+}
+
+export const linkBreachToProcessors = onCall<LinkBreachToProcessorsInput>(async (request) => {
+  const {
+    tenantId,
+    breachId,
+    processorProfileIds,
+    reportingSource,
+    processorNotificationReceivedAt,
+    transferArrangementIds = [],
+    affectedSystemAssetIds = [],
+    processorIncidentNotes,
+  } = request.data;
+
+  if (!tenantId || !breachId || !processorProfileIds || !Array.isArray(processorProfileIds)) {
+    throw new HttpsError('invalid-argument', 'tenantId, breachId, and processorProfileIds (array) are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'privacy_manager',
+    'security_manager',
+    'compliance_manager',
+  ]);
+
+  const breachRef = db.collection('tenants').doc(tenantId).collection('breaches').doc(breachId);
+  const snap = await breachRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Breach incident ${breachId} not found.`);
+  }
+
+  const prev = snap.data() as PersonalDataBreach;
+  const now = new Date().toISOString();
+
+  const mergedProfiles = Array.from(new Set([...(prev.processorProfileIds || []), ...processorProfileIds]));
+  const mergedTransfers = Array.from(new Set([...(prev.transferArrangementIds || []), ...transferArrangementIds]));
+  const mergedSystems = Array.from(new Set([...(prev.affectedSystemAssetIds || []), ...affectedSystemAssetIds]));
+
+  const vendorIdsSet = new Set<string>(prev.vendorIds || []);
+  const batch = db.batch();
+
+  for (const pId of processorProfileIds) {
+    const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(pId);
+    const pSnap = await pRef.get();
+    if (pSnap.exists) {
+      const pData = pSnap.data() as ProcessorProfile;
+      if (pData.vendorId) vendorIdsSet.add(pData.vendorId);
+      const prevBreaches = pData.linkedBreachIds || [];
+      if (!prevBreaches.includes(breachId)) {
+        batch.update(pRef, {
+          linkedBreachIds: [...prevBreaches, breachId],
+          updatedAt: now,
+          updatedBy: authContext.userId,
+        });
+      }
+    }
+  }
+
+  const updates: Partial<PersonalDataBreach> = {
+    involvesProcessor: true,
+    processorProfileIds: mergedProfiles,
+    vendorIds: Array.from(vendorIdsSet),
+    transferArrangementIds: mergedTransfers,
+    affectedSystemAssetIds: mergedSystems,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  };
+
+  if (reportingSource !== undefined) updates.reportingSource = reportingSource;
+  if (processorNotificationReceivedAt !== undefined) updates.processorNotificationReceivedAt = processorNotificationReceivedAt;
+  if (processorIncidentNotes !== undefined) updates.processorIncidentNotes = processorIncidentNotes;
+
+  batch.update(breachRef, updates);
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'personal_data_breach',
+    entityId: breachId,
+    action: 'link',
+    beforeSummary: { processorProfileIds: prev.processorProfileIds },
+    afterSummary: { breachId, processorProfileIds: mergedProfiles, reportingSource },
+    source: 'cloud_function',
+    workflowContext: 'breach_processor_linking',
+  });
+
+  return {
+    success: true,
+    breachId,
+    processorProfileIds: mergedProfiles,
+    transferArrangementIds: mergedTransfers,
+    reportingSource: updates.reportingSource || prev.reportingSource || null,
+  };
+});
+
+export interface GetProcessorBreachHistoryInput {
+  tenantId: string;
+  processorProfileId: string;
+}
+
+export const getProcessorBreachHistory = onCall<GetProcessorBreachHistoryInput>(async (request) => {
+  const { tenantId, processorProfileId } = request.data;
+  if (!tenantId || !processorProfileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and processorProfileId are required.');
+  }
+
+  await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'privacy_manager',
+    'security_manager',
+    'compliance_manager',
+    'auditor',
+  ]);
+
+  const snap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('breaches')
+    .where('processorProfileIds', 'array-contains', processorProfileId)
+    .get();
+
+  const breaches: PersonalDataBreach[] = snap.docs.map((d) => d.data() as PersonalDataBreach);
+  const history = summarizeProcessorBreachHistory(processorProfileId, breaches);
+
+  return { success: true, history };
 });

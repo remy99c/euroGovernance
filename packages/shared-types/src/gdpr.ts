@@ -127,6 +127,12 @@ export interface TIA extends BaseEntity {
   nextReviewDate?: string | null;
 }
 
+export type BreachReportingSource =
+  | 'reported_by_processor'
+  | 'identified_internally'
+  | 'third_party_notice'
+  | 'dpa_inquiry';
+
 /**
  * Personal Data Breach Register & 72h Tracker (/tenants/{tenantId}/breaches/{breachId})
  */
@@ -148,6 +154,14 @@ export interface PersonalDataBreach extends BaseEntity {
   dataSubjectsNotifiedAt: string | null;
   containmentActionsTaken: string;
   remedialIssueIds: string[];
+  involvesProcessor?: boolean;
+  processorProfileIds?: string[];
+  vendorIds?: string[];
+  reportingSource?: BreachReportingSource | null;
+  processorNotificationReceivedAt?: string | null; // GDPR Art. 33(2) notice received timestamp
+  transferArrangementIds?: string[];
+  affectedSystemAssetIds?: string[];
+  processorIncidentNotes?: string | null;
 }
 
 /**

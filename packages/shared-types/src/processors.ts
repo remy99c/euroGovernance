@@ -1,5 +1,6 @@
 import { BaseEntity } from './core.js';
 import { Evidence, EvidenceCategory } from './grc.js';
+import { PersonalDataBreach, BreachReportingSource, BreachSeverity, BreachStatus } from './gdpr.js';
 
 export type ProcessorRole =
   | 'data_processor'
@@ -96,6 +97,7 @@ export interface ProcessorProfile extends BaseEntity {
   linkedDpaEvidenceId?: string | null; // Link to Evidence document in Evidence repository
   linkedTiaId?: string | null; // Link to TIA if cross-border transfer is involved
   linkedRopaIds?: string[]; // Link to ROPA processing activities
+  linkedBreachIds?: string[]; // Link to Breach incident records
 }
 
 export interface ValidateProcessorProfileResult {
@@ -1007,5 +1009,72 @@ export function synthesizeDPIAProcessorContext(
       missingTiaCount,
       riskHighlights,
     },
+  };
+}
+
+// -----------------------------------------------------------------------------
+// PROCESSOR BREACH & INCIDENT HISTORY
+// -----------------------------------------------------------------------------
+
+export interface ProcessorBreachSummaryItem {
+  id: string;
+  incidentReference: string;
+  title: string;
+  severity: BreachSeverity;
+  status: BreachStatus;
+  discoveredAt: string;
+  reportingSource: BreachReportingSource | null;
+  processorNotificationReceivedAt: string | null;
+  dpaNotified: boolean;
+  affectedSystemAssetIds: string[];
+  transferArrangementIds: string[];
+}
+
+export interface ProcessorBreachHistory {
+  processorProfileId: string;
+  totalBreachCount: number;
+  activeBreachCount: number;
+  reportedByProcessorCount: number;
+  identifiedInternallyCount: number;
+  hasCriticalOrHighBreaches: boolean;
+  breaches: ProcessorBreachSummaryItem[];
+}
+
+/**
+ * Summarizes the personal data breach history involving a specific processor profile.
+ */
+export function summarizeProcessorBreachHistory(
+  processorProfileId: string,
+  breaches: PersonalDataBreach[]
+): ProcessorBreachHistory {
+  const relevantBreaches = breaches.filter((b) => b.processorProfileIds?.includes(processorProfileId));
+
+  const items: ProcessorBreachSummaryItem[] = relevantBreaches.map((b) => ({
+    id: b.id,
+    incidentReference: b.incidentReference,
+    title: b.title,
+    severity: b.severity,
+    status: b.status,
+    discoveredAt: b.discoveredAt,
+    reportingSource: b.reportingSource || null,
+    processorNotificationReceivedAt: b.processorNotificationReceivedAt || null,
+    dpaNotified: Boolean(b.dpaNotifiedAt),
+    affectedSystemAssetIds: b.affectedSystemAssetIds || [],
+    transferArrangementIds: b.transferArrangementIds || [],
+  }));
+
+  const activeBreaches = items.filter((b) => b.status !== 'closed');
+  const reportedByProcessor = items.filter((b) => b.reportingSource === 'reported_by_processor');
+  const identifiedInternally = items.filter((b) => b.reportingSource === 'identified_internally');
+  const hasCriticalOrHigh = items.some((b) => b.severity === 'critical' || b.severity === 'high');
+
+  return {
+    processorProfileId,
+    totalBreachCount: items.length,
+    activeBreachCount: activeBreaches.length,
+    reportedByProcessorCount: reportedByProcessor.length,
+    identifiedInternallyCount: identifiedInternally.length,
+    hasCriticalOrHighBreaches: hasCriticalOrHigh,
+    breaches: items,
   };
 }

@@ -93,6 +93,8 @@ export {
   logTenantBreach,
   updateTenantBreach,
   listTenantBreaches,
+  linkBreachToProcessors,
+  getProcessorBreachHistory,
 } from './handlers/gdpr.js';
 
 // EU AI Act Phase 1 Module Handlers
