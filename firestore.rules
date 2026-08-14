@@ -37,29 +37,32 @@ service cloud.firestore {
       return isAuthenticated() && (
         isPlatformAdmin() ||
         (exists(membershipPath(tenantId)) &&
-         get(membershipPath(tenantId)).data.status == 'active')
+         get(membershipPath(tenantId)).data.get('status', '') == 'active')
       );
     }
 
     function getTenantRole(tenantId) {
       return isPlatformAdmin() ? 'platform_admin' : (
-        exists(membershipPath(tenantId)) ? get(membershipPath(tenantId)).data.role : ''
+        exists(membershipPath(tenantId)) ? get(membershipPath(tenantId)).data.get('role', '') : ''
       );
     }
 
     function isTenantAdmin(tenantId) {
       return isAuthenticated() && (
         isPlatformAdmin() ||
-        getTenantRole(tenantId) == 'tenant_admin'
+        (exists(membershipPath(tenantId)) &&
+         get(membershipPath(tenantId)).data.get('role', '') == 'tenant_admin')
       );
     }
 
     function isAuditor(tenantId) {
-      return getTenantRole(tenantId) == 'auditor';
+      return exists(membershipPath(tenantId)) &&
+             get(membershipPath(tenantId)).data.get('role', '') == 'auditor';
     }
 
     function isViewer(tenantId) {
-      return getTenantRole(tenantId) == 'viewer';
+      return exists(membershipPath(tenantId)) &&
+             get(membershipPath(tenantId)).data.get('role', '') == 'viewer';
     }
 
     function isReadOnlyRole(tenantId) {
@@ -69,7 +72,9 @@ service cloud.firestore {
     function hasAnyRole(tenantId, roles) {
       return isAuthenticated() && (
         isPlatformAdmin() ||
-        (isTenantMember(tenantId) && roles.hasAny([getTenantRole(tenantId)]))
+        (exists(membershipPath(tenantId)) &&
+         get(membershipPath(tenantId)).data.get('status', '') == 'active' &&
+         roles.hasAny([get(membershipPath(tenantId)).data.get('role', '')]))
       );
     }
 
