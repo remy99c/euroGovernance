@@ -8,6 +8,17 @@ import {
   ISOObjective,
   ObjectiveStatus,
   StatementOfApplicabilityEntry,
+  SoADecisionType,
+  SoASourceType,
+  SoAApprovalStatus,
+  SoAExclusionCategory,
+  validateSoAEntry,
+  transitionSoAApproval,
+  generateSoAFromScopeAndDecisions,
+  buildSoASummaryReport,
+  TenantApplicabilityDecision,
+  TenantControlInstance,
+  CANONICAL_MASTER_DATA,
   ISOInternalAudit,
   AuditStatus,
   ISOFinding,
@@ -436,8 +447,15 @@ export interface CreateSoAEntryInput {
   controlCode: string;
   controlTitle: string;
   isApplicable: boolean;
-  justification: string;
+  decisionType?: SoADecisionType;
+  sourceType?: SoASourceType;
+  approvalStatus?: SoAApprovalStatus;
+  justification?: string;
+  exclusionCategory?: SoAExclusionCategory | null;
+  linkedScopeStatementId?: string | null;
   linkedTenantControlId?: string | null;
+  requirementId?: string | null;
+  version?: string;
   ownerId?: string;
 }
 
@@ -445,8 +463,32 @@ export interface UpdateSoAEntryInput {
   tenantId: string;
   soaId: string;
   isApplicable?: boolean;
+  decisionType?: SoADecisionType;
   justification?: string;
+  exclusionCategory?: SoAExclusionCategory | null;
   linkedTenantControlId?: string | null;
+}
+
+export interface SubmitSoAForApprovalInput {
+  tenantId: string;
+  soaIds: string[];
+}
+
+export interface ApproveSoAEntryInput {
+  tenantId: string;
+  soaIds: string[];
+  notes?: string;
+}
+
+export interface GenerateSoAFromScopeInput {
+  tenantId: string;
+  frameworkType: ISOFrameworkType;
+  scopeStatementId?: string;
+}
+
+export interface GetSoASummaryInput {
+  tenantId: string;
+  frameworkType: ISOFrameworkType;
 }
 
 export interface DeleteSoAEntryInput {
@@ -458,6 +500,7 @@ export interface ListSoAEntriesInput {
   tenantId: string;
   frameworkType?: ISOFrameworkType;
   isApplicable?: boolean;
+  approvalStatus?: SoAApprovalStatus;
 }
 
 export const createISOSoAEntry = onCall<CreateSoAEntryInput>(async (request) => {
@@ -467,16 +510,39 @@ export const createISOSoAEntry = onCall<CreateSoAEntryInput>(async (request) => 
     controlCode,
     controlTitle,
     isApplicable,
-    justification,
+    decisionType,
+    sourceType = 'manual_override',
+    approvalStatus = 'draft',
+    justification = '',
+    exclusionCategory = null,
+    linkedScopeStatementId = null,
     linkedTenantControlId = null,
+    requirementId = null,
+    version = '1.0',
     ownerId,
   } = request.data;
 
-  if (!tenantId || !frameworkType || !controlCode || !controlTitle || isApplicable === undefined || !justification) {
+  if (!tenantId || !frameworkType || !controlCode || !controlTitle || isApplicable === undefined) {
     throw new HttpsError(
       'invalid-argument',
-      'tenantId, frameworkType, controlCode, controlTitle, isApplicable, and justification are required.'
+      'tenantId, frameworkType, controlCode, controlTitle, and isApplicable are required.'
     );
+  }
+
+  const effectiveDecisionType: SoADecisionType = decisionType || (isApplicable ? 'included' : 'excluded');
+
+  const validation = validateSoAEntry({
+    controlCode,
+    controlTitle,
+    frameworkType,
+    isApplicable,
+    decisionType: effectiveDecisionType,
+    justification,
+    exclusionCategory,
+  });
+
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', validation.error || 'Invalid SoA entry data.');
   }
 
   const authContext = await requireTenantMember(request, tenantId, [
@@ -496,9 +562,20 @@ export const createISOSoAEntry = onCall<CreateSoAEntryInput>(async (request) => 
     controlCode: controlCode.trim().toUpperCase(),
     controlTitle: controlTitle.trim(),
     isApplicable,
+    decisionType: effectiveDecisionType,
+    sourceType,
+    approvalStatus,
     justification: justification.trim(),
+    exclusionCategory: isApplicable ? null : exclusionCategory || 'custom_rationale',
+    linkedScopeStatementId,
     linkedTenantControlId,
+    requirementId,
+    reviewedBy: authContext.userId,
     reviewedAt: now,
+    approvedBy: approvalStatus === 'approved' ? authContext.userId : null,
+    approvedAt: approvalStatus === 'approved' ? now : null,
+    rejectionReason: null,
+    version,
     status: 'active',
     ownerId: ownerId || authContext.userId,
     createdAt: now,
@@ -517,7 +594,7 @@ export const createISOSoAEntry = onCall<CreateSoAEntryInput>(async (request) => 
     entityType: 'iso_soa_entry',
     entityId: soaRef.id,
     action: 'create',
-    afterSummary: { frameworkType, controlCode: soaDoc.controlCode, isApplicable },
+    afterSummary: { frameworkType, controlCode: soaDoc.controlCode, isApplicable, approvalStatus },
     source: 'cloud_function',
     workflowContext: 'iso_soa_entry_creation',
   });
@@ -545,10 +622,22 @@ export const updateISOSoAEntry = onCall<UpdateSoAEntryInput>(async (request) => 
   }
 
   const prev = snap.data() as StatementOfApplicabilityEntry;
-  const now = new Date().toISOString();
+  const merged: StatementOfApplicabilityEntry = {
+    ...prev,
+    ...updates,
+    decisionType: updates.decisionType || (updates.isApplicable !== undefined ? (updates.isApplicable ? 'included' : 'excluded') : prev.decisionType),
+  };
 
+  const validation = validateSoAEntry(merged);
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', validation.error || 'Invalid SoA entry updates.');
+  }
+
+  const now = new Date().toISOString();
   const payload: Partial<StatementOfApplicabilityEntry> = {
     ...updates,
+    decisionType: merged.decisionType,
+    reviewedBy: authContext.userId,
     reviewedAt: now,
     updatedAt: now,
     updatedBy: authContext.userId,
@@ -571,6 +660,229 @@ export const updateISOSoAEntry = onCall<UpdateSoAEntryInput>(async (request) => 
   });
 
   return { success: true, soaId, updatedFields: payload };
+});
+
+export const submitISOSoAForApproval = onCall<SubmitSoAForApprovalInput>(async (request) => {
+  const { tenantId, soaIds } = request.data || {};
+  if (!tenantId || !Array.isArray(soaIds) || soaIds.length === 0) {
+    throw new HttpsError('invalid-argument', 'tenantId and non-empty soaIds array are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'ai_governance_manager',
+  ]);
+
+  const batch = db.batch();
+  const updatedEntries: StatementOfApplicabilityEntry[] = [];
+
+  for (const soaId of soaIds) {
+    const docRef = db.collection('tenants').doc(tenantId).collection('iso_soa_entries').doc(soaId);
+    const snap = await docRef.get();
+    if (!snap.exists) continue;
+
+    const entry = snap.data() as StatementOfApplicabilityEntry;
+    const transitioned = transitionSoAApproval(entry, 'submit_for_approval', authContext.userId);
+    batch.set(docRef, transitioned, { merge: true });
+    updatedEntries.push(transitioned);
+  }
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'iso_soa_entry',
+    entityId: soaIds.join(','),
+    action: 'update',
+    afterSummary: { submittedCount: updatedEntries.length, approvalStatus: 'pending_approval' },
+    source: 'cloud_function',
+    workflowContext: 'iso_soa_submit_for_approval',
+  });
+
+  return { success: true, submittedCount: updatedEntries.length, updatedEntries };
+});
+
+export const approveISOSoAEntry = onCall<ApproveSoAEntryInput>(async (request) => {
+  const { tenantId, soaIds, notes } = request.data || {};
+  if (!tenantId || !Array.isArray(soaIds) || soaIds.length === 0) {
+    throw new HttpsError('invalid-argument', 'tenantId and non-empty soaIds array are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+  ]);
+
+  const batch = db.batch();
+  const approvedEntries: StatementOfApplicabilityEntry[] = [];
+
+  for (const soaId of soaIds) {
+    const docRef = db.collection('tenants').doc(tenantId).collection('iso_soa_entries').doc(soaId);
+    const snap = await docRef.get();
+    if (!snap.exists) continue;
+
+    const entry = snap.data() as StatementOfApplicabilityEntry;
+    const transitioned = transitionSoAApproval(entry, 'approve', authContext.userId, notes);
+    batch.set(docRef, transitioned, { merge: true });
+    approvedEntries.push(transitioned);
+  }
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'iso_soa_entry',
+    entityId: soaIds.join(','),
+    action: 'update',
+    afterSummary: { approvedCount: approvedEntries.length, approvalStatus: 'approved' },
+    source: 'cloud_function',
+    workflowContext: 'iso_soa_approval',
+  });
+
+  return { success: true, approvedCount: approvedEntries.length, approvedEntries };
+});
+
+export const generateTenantSoAFromScope = onCall<GenerateSoAFromScopeInput>(async (request) => {
+  const { tenantId, frameworkType, scopeStatementId } = request.data || {};
+  if (!tenantId || !frameworkType) {
+    throw new HttpsError('invalid-argument', 'tenantId and frameworkType are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'ai_governance_manager',
+  ]);
+
+  // 1. Fetch Scope Statement
+  let scopeStatement: ISOScopeStatement | undefined;
+  if (scopeStatementId) {
+    const scopeSnap = await db.collection('tenants').doc(tenantId).collection('iso_scope_statements').doc(scopeStatementId).get();
+    if (scopeSnap.exists) {
+      scopeStatement = { id: scopeSnap.id, ...scopeSnap.data() } as ISOScopeStatement;
+    }
+  }
+
+  if (!scopeStatement) {
+    // Check fallback doc path
+    const fallbackSnap = await db.collection('tenants').doc(tenantId).collection('iso_management').doc(`scopes_${frameworkType}`).get();
+    if (fallbackSnap.exists) {
+      scopeStatement = { id: fallbackSnap.id, ...fallbackSnap.data() } as ISOScopeStatement;
+    }
+  }
+
+  if (!scopeStatement) {
+    // Generate default scope container
+    scopeStatement = {
+      id: `scope_${frameworkType}_default`,
+      tenantId,
+      frameworkType,
+      title: `${frameworkType.toUpperCase()} Organizational Management System Scope`,
+      scopeBoundaries: 'All corporate cloud services, development repositories, and production environments.',
+      includedLocations: ['EU Production Region'],
+      includedBusinessUnits: ['Engineering', 'Operations', 'Compliance'],
+      exclusionsJustification: 'No physical hardware manufacturing.',
+      approvedBy: authContext.userId,
+      approvedAt: new Date().toISOString(),
+      version: '1.0',
+      ownerId: authContext.userId,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: authContext.userId,
+      updatedBy: authContext.userId,
+    };
+  }
+
+  // 2. Fetch tenant applicability decisions
+  const decSnap = await db.collection('tenants').doc(tenantId).collection('applicability_decisions').get();
+  const decisions: TenantApplicabilityDecision[] = decSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  // 3. Fetch master controls
+  const masterControls = CANONICAL_MASTER_DATA.masterControls;
+
+  // 4. Fetch existing tenant controls
+  const ctrlSnap = await db.collection('tenants').doc(tenantId).collection('controls').get();
+  const tenantControls: TenantControlInstance[] = ctrlSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  // 5. Generate SoA draft entries
+  const soaEntries = generateSoAFromScopeAndDecisions({
+    tenantId,
+    defaultOwnerId: authContext.userId,
+    scopeStatement,
+    decisions,
+    masterControls,
+    tenantControls,
+  });
+
+  // 6. Commit to Firestore
+  const batch = db.batch();
+  for (const entry of soaEntries) {
+    const docRef = db.collection('tenants').doc(tenantId).collection('iso_soa_entries').doc(entry.id);
+    batch.set(docRef, entry, { merge: true });
+  }
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'iso_soa_entry',
+    entityId: scopeStatement.id,
+    action: 'create',
+    afterSummary: { generatedCount: soaEntries.length, frameworkType },
+    source: 'cloud_function',
+    workflowContext: 'iso_soa_generation_from_scope',
+  });
+
+  return {
+    success: true,
+    generatedCount: soaEntries.length,
+    scopeStatement,
+    soaEntries,
+  };
+});
+
+export const getTenantSoASummary = onCall<GetSoASummaryInput>(async (request) => {
+  const { tenantId, frameworkType } = request.data || {};
+  if (!tenantId || !frameworkType) {
+    throw new HttpsError('invalid-argument', 'tenantId and frameworkType are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // Fetch entries
+  const snap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('iso_soa_entries')
+    .where('frameworkType', '==', frameworkType)
+    .get();
+
+  const entries: StatementOfApplicabilityEntry[] = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  // Fetch scope statement
+  let scopeStatement: ISOScopeStatement | undefined;
+  const scopeSnap = await db.collection('tenants').doc(tenantId).collection('iso_management').doc(`scopes_${frameworkType}`).get();
+  if (scopeSnap.exists) {
+    scopeStatement = { id: scopeSnap.id, ...scopeSnap.data() } as ISOScopeStatement;
+  }
+
+  const summary = buildSoASummaryReport(frameworkType, entries, scopeStatement);
+
+  return { summary };
 });
 
 export const deleteISOSoAEntry = onCall<DeleteSoAEntryInput>(async (request) => {
@@ -607,7 +919,7 @@ export const deleteISOSoAEntry = onCall<DeleteSoAEntryInput>(async (request) => 
 });
 
 export const listISOSoAEntries = onCall<ListSoAEntriesInput>(async (request) => {
-  const { tenantId, frameworkType, isApplicable } = request.data;
+  const { tenantId, frameworkType, isApplicable, approvalStatus } = request.data;
   if (!tenantId) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
@@ -617,6 +929,7 @@ export const listISOSoAEntries = onCall<ListSoAEntriesInput>(async (request) => 
   let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('iso_soa_entries');
   if (frameworkType) query = query.where('frameworkType', '==', frameworkType);
   if (isApplicable !== undefined) query = query.where('isApplicable', '==', isApplicable);
+  if (approvalStatus) query = query.where('approvalStatus', '==', approvalStatus);
 
   const snap = await query.get();
   const entries: StatementOfApplicabilityEntry[] = snap.docs.map((d) => d.data() as StatementOfApplicabilityEntry);
