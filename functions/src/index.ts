@@ -22,6 +22,15 @@ export {
   listTenantControls,
 } from './handlers/controls.js';
 
+// Policy Module Handlers
+export {
+  createTenantPolicy,
+  updateTenantPolicy,
+  transitionPolicyStatus,
+  deleteTenantPolicy,
+  listTenantPolicies,
+} from './handlers/policies.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,
@@ -38,7 +47,6 @@ export {
 
 // Regulatory Workflows & Classification Handlers
 export {
-  transitionPolicyStatus,
   transitionDPIAStatus,
   transitionTIAStatus,
   createROPAFromTemplate,
