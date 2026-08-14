@@ -45,6 +45,7 @@ export default function DashboardPage() {
   const [aiSystemsList, setAiSystemsList] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
   const [exportJobsList, setExportJobsList] = useState<any[]>([]);
+  const [adoptedFrameworksList, setAdoptedFrameworksList] = useState<any[]>([]);
 
   const showNotice = (msg: string) => {
     setActionNotice(msg);
@@ -180,6 +181,15 @@ export default function DashboardPage() {
       (err) => console.warn('Exports snapshot notice:', err.message)
     );
 
+    // Adopted Frameworks
+    const unsubFrameworks = onSnapshot(
+      collection(db, 'tenants', tenantId, 'adopted_frameworks'),
+      (snap) => {
+        setAdoptedFrameworksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Frameworks snapshot notice:', err.message)
+    );
+
     return () => {
       unsubMetrics();
       unsubAudit();
@@ -194,6 +204,7 @@ export default function DashboardPage() {
       unsubAI();
       unsubMembers();
       unsubExports();
+      unsubFrameworks();
     };
   }, [tenantId, user]);
 
@@ -332,6 +343,50 @@ export default function DashboardPage() {
       showNotice(`✅ AI System reclassified to: ${res.data.determinedRiskTier.toUpperCase()}!`);
     } catch (err: any) {
       showNotice(`❌ AI classification failed: ${err.message}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  // Actions: Framework Adoption & Scoping
+  const handleAdoptFramework = async (frameworkId: string, frameworkName: string) => {
+    const scope = window.prompt(
+      `Enter organizational compliance scope for ${frameworkName}:`,
+      'Primary EU Operations, Cloud Infrastructure & Customer Data Processing'
+    );
+    if (!scope) return;
+
+    setLoadingAction(`adopt_${frameworkId}`);
+    try {
+      const fn = httpsCallable(functions, 'adoptFramework');
+      await fn({
+        tenantId,
+        frameworkId,
+        scopeDescription: scope,
+        scopingBoundaries: ['Frankfurt Production Cloud', 'EU Data Centers'],
+      });
+      showNotice(`✅ Successfully adopted ${frameworkName}! Initialized scoping and applicability matrix.`);
+    } catch (err: any) {
+      showNotice(`❌ Framework adoption failed: ${err.message}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  // Actions: Instantiate Framework Controls
+  const handleInstantiateFramework = async (frameworkId: string, frameworkName: string) => {
+    setLoadingAction(`instantiate_${frameworkId}`);
+    try {
+      const fn = httpsCallable(functions, 'instantiateFrameworkControls');
+      const res: any = await fn({
+        tenantId,
+        frameworkId,
+      });
+      showNotice(
+        `✅ Instantiated ${res.data.createdControlsCount} controls from ${frameworkName} into tenant catalog!`
+      );
+    } catch (err: any) {
+      showNotice(`❌ Control instantiation failed: ${err.message}`);
     } finally {
       setLoadingAction(null);
     }
@@ -597,7 +652,7 @@ export default function DashboardPage() {
         {/* TAB 2: UNIFIED CONTROLS */}
         {activeTab === 'controls' && (
           <div>
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div>
                 <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Unified Controls Catalog</h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
@@ -618,9 +673,105 @@ export default function DashboardPage() {
                   cursor: 'pointer',
                 }}
               >
-                + Adopt New Control
+                + Custom Control
               </button>
             </header>
+
+            {/* Framework Adoption & Instantiation Deck */}
+            <div style={{ marginBottom: '24px', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '16px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>
+                Adopt Canonical Frameworks & Instantiate Controls
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
+                {[
+                  { id: 'gdpr', name: 'GDPR (EU 2016/679)', domain: 'Privacy & Data Protection' },
+                  { id: 'eu_ai_act', name: 'EU AI Act (2024/1689)', domain: 'High-Risk AI Governance' },
+                  { id: 'iso_27001', name: 'ISO/IEC 27001:2022', domain: 'Information Security' },
+                ].map((fw) => {
+                  const adopted = adoptedFrameworksList.find((a) => a.frameworkId === fw.id || a.id === fw.id);
+                  return (
+                    <div
+                      key={fw.id}
+                      style={{
+                        padding: '14px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: 'var(--bg-surface-hover)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: 600, fontSize: '13px' }}>{fw.name}</span>
+                          <span
+                            style={{
+                              fontSize: '10px',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 600,
+                              backgroundColor: adopted ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.15)',
+                              color: adopted ? 'var(--status-success)' : 'var(--text-muted)',
+                            }}
+                          >
+                            {adopted ? adopted.status?.toUpperCase() : 'NOT ADOPTED'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                          {fw.domain}
+                        </div>
+                        {adopted && (
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                            Scope: {adopted.scopeDescription?.slice(0, 45)}...
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                        {!adopted ? (
+                          <button
+                            onClick={() => handleAdoptFramework(fw.id, fw.name)}
+                            disabled={loadingAction === `adopt_${fw.id}`}
+                            style={{
+                              flex: 1,
+                              backgroundColor: 'var(--accent-blue)',
+                              color: '#fff',
+                              padding: '6px 10px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              border: 'none',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {loadingAction === `adopt_${fw.id}` ? 'Adopting...' : 'Adopt & Scope'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleInstantiateFramework(fw.id, fw.name)}
+                            disabled={loadingAction === `instantiate_${fw.id}`}
+                            style={{
+                              flex: 1,
+                              backgroundColor: 'var(--accent-blue)',
+                              color: '#fff',
+                              padding: '6px 10px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              border: 'none',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {loadingAction === `instantiate_${fw.id}` ? 'Instantiating...' : '⚡ Instantiate Controls'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
             <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>

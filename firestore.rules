@@ -447,6 +447,26 @@ service cloud.firestore {
                       && request.resource.data.requestedBy == request.auth.uid;
         allow update, delete: if false; // Status transitions managed by backend
       }
+
+      // Framework Adoption & Scoping
+      match /adopted_frameworks/{frameworkId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      // Requirement Applicability & Scoping Decisions
+      match /requirement_applicability/{reqId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
+      }
     }
   }
 }

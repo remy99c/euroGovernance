@@ -256,3 +256,45 @@ export interface SystemAsset extends BaseEntity {
   containsSpecialCategoryData: boolean;
   containsTrainingData: boolean;
 }
+
+export type AdoptedFrameworkStatus =
+  | 'evaluating'
+  | 'in_scoping'
+  | 'adopted'
+  | 'active'
+  | 'retired';
+
+/**
+ * Tenant Adopted Framework (/tenants/{tenantId}/adopted_frameworks/{frameworkId})
+ */
+export interface AdoptedFramework extends BaseEntity {
+  frameworkId: string; // matches /frameworks/{frameworkId}
+  frameworkCode: string;
+  frameworkName: string;
+  status: AdoptedFrameworkStatus;
+  scopeDescription: string;
+  scopingBoundaries: string[]; // e.g. ['Frankfurt Cloud Services', 'Customer Data Processing', 'AI Recommendation Engine']
+  targetCertificationDate: string | null;
+  totalMasterControlsCount: number;
+  instantiatedControlsCount: number;
+  applicableControlsCount: number;
+  notApplicableControlsCount: number;
+  adoptedBy: string;
+  adoptedAt: string;
+  lastInstantiatedAt: string | null;
+}
+
+/**
+ * Tenant Requirement Applicability & Scoping (/tenants/{tenantId}/requirement_applicability/{reqId})
+ */
+export interface RequirementApplicability extends BaseEntity {
+  requirementId: string;
+  frameworkId: string;
+  sectionCode: string;
+  requirementTitle: string;
+  isApplicable: boolean;
+  justification: string;
+  scopingNotes: string;
+  assessedBy: string;
+  assessedAt: string;
+}

@@ -171,3 +171,15 @@ export {
 export {
   checkEvidenceExpiriesAndReminders,
 } from './handlers/scheduled.js';
+
+// Framework Adoption, Scoping & Instantiation Handlers
+export {
+  listAvailableFrameworks,
+  adoptFramework,
+  updateFrameworkScope,
+  setRequirementApplicability,
+  instantiateFrameworkControls,
+  retireAdoptedFramework,
+  listTenantAdoptedFrameworks,
+  listTenantRequirementApplicability,
+} from './handlers/frameworks.js';
