@@ -96,6 +96,33 @@ export {
   listPostMarketLogs,
 } from './handlers/ai-act.js';
 
+// ISO Management Layer Handlers
+export {
+  createISOScopeStatement,
+  updateISOScopeStatement,
+  deleteISOScopeStatement,
+  listISOScopeStatements,
+  createISOObjective,
+  updateISOObjective,
+  deleteISOObjective,
+  listISOObjectives,
+  createISOSoAEntry,
+  updateISOSoAEntry,
+  deleteISOSoAEntry,
+  listISOSoAEntries,
+  createISOInternalAudit,
+  updateISOInternalAudit,
+  deleteISOInternalAudit,
+  listISOInternalAudits,
+  logISOFinding,
+  updateISOFinding,
+  listISOFindings,
+  createISOManagementReview,
+  updateISOManagementReview,
+  deleteISOManagementReview,
+  listISOManagementReviews,
+} from './handlers/iso.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,
