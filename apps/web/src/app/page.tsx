@@ -13,9 +13,11 @@ import {
   getDoc,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import FrameworkAdoptionWizard from './framework-adoption-wizard';
 
 type TabType =
   | 'overview'
+  | 'frameworks'
   | 'controls'
   | 'evidence'
   | 'risks_tasks'
@@ -463,6 +465,7 @@ export default function DashboardPage() {
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {[
               { id: 'overview', label: '📊 Executive Overview' },
+              { id: 'frameworks', label: '🚀 Framework Wizard' },
               { id: 'controls', label: '🛡️ Unified Controls' },
               { id: 'evidence', label: '📁 Evidence Inbox' },
               { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
@@ -555,22 +558,39 @@ export default function DashboardPage() {
                   Materialized derived compliance metrics verified across live regulatory registers.
                 </p>
               </div>
-              <button
-                onClick={handleRecalculateMetrics}
-                disabled={loadingAction === 'metrics'}
-                style={{
-                  backgroundColor: 'var(--accent-blue)',
-                  color: '#fff',
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                {loadingAction === 'metrics' ? 'Calculating...' : '🔄 Re-calculate Live Metrics'}
-              </button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => setActiveTab('frameworks')}
+                  style={{
+                    backgroundColor: 'var(--status-success)',
+                    color: '#fff',
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  🚀 Framework Wizard
+                </button>
+                <button
+                  onClick={handleRecalculateMetrics}
+                  disabled={loadingAction === 'metrics'}
+                  style={{
+                    backgroundColor: 'var(--accent-blue)',
+                    color: '#fff',
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {loadingAction === 'metrics' ? 'Calculating...' : '🔄 Re-calculate Live Metrics'}
+                </button>
+              </div>
             </header>
 
             {/* Metrics KPI Cards */}
@@ -1171,6 +1191,11 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
+        )}
+
+        {/* TAB: FRAMEWORK ADOPTION WIZARD & COVERAGE DASHBOARD */}
+        {activeTab === 'frameworks' && (
+          <FrameworkAdoptionWizard tenantId={tenantId} onComplete={() => showNotice('✅ Framework adoption & control instantiation complete!')} />
         )}
       </main>
     </div>
