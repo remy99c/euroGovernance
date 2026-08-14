@@ -1,0 +1,69 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function isPlatformAdmin() {
+      return isAuthenticated() &&
+        request.auth.token.get('platform_admin', false) == true;
+    }
+
+    function isValidFileSize(maxSizeMb) {
+      return request.resource.size < maxSizeMb * 1024 * 1024;
+    }
+
+    function isValidDocType() {
+      return request.resource.contentType.matches('application/pdf') ||
+             request.resource.contentType.matches('image/.*') ||
+             request.resource.contentType.matches('text/.*') ||
+             request.resource.contentType.matches('application/json') ||
+             request.resource.contentType.matches('application/zip') ||
+             request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.*') ||
+             request.resource.contentType.matches('application/msword') ||
+             request.resource.contentType.matches('application/vnd.ms-excel');
+    }
+
+    // Default Deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Evidence artifacts
+    match /tenants/{tenantId}/evidence/{evidenceId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        isPlatformAdmin() ||
+        request.auth.token.tenantId == tenantId ||
+        request.auth.token.get('tenants', []).hasAny([tenantId])
+      );
+
+      allow create: if isAuthenticated() && (
+        isPlatformAdmin() ||
+        request.auth.token.tenantId == tenantId ||
+        request.auth.token.get('tenants', []).hasAny([tenantId])
+      ) && isValidFileSize(50) && isValidDocType();
+
+      // Evidence files are immutable once uploaded; replacement creates a new version/evidenceId
+      allow update: if false;
+      allow delete: if isAuthenticated() && (
+        isPlatformAdmin() ||
+        request.auth.token.get('role', '') == 'tenant_admin'
+      );
+    }
+
+    // Tenant audit and compliance export artifacts
+    match /tenants/{tenantId}/exports/{exportId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        isPlatformAdmin() ||
+        request.auth.token.tenantId == tenantId ||
+        request.auth.token.get('tenants', []).hasAny([tenantId])
+      );
+      // Writes to export artifacts are handled solely via Cloud Functions Admin SDK
+      allow write: if false;
+    }
+  }
+}

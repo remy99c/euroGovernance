@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "eurogovernance-dev",
+    "development": "eurogovernance-dev",
+    "staging": "eurogovernance-staging",
+    "production": "eurogovernance-prod"
+  }
+}

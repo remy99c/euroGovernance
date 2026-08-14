@@ -1,0 +1,28 @@
+{
+  "name": "eurogovernance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-Tenant B2B GRC SaaS on Firebase covering GDPR, EU AI Act, EU Data Act, ISO 27001, and ISO 42001",
+  "workspaces": [
+    "packages/*",
+    "functions",
+    "tests/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "emulators:start": "firebase emulators:start --import=./emulator-data --export-on-exit",
+    "emulators:exec": "firebase emulators:exec --import=./emulator-data",
+    "deploy:rules": "firebase deploy --only firestore:rules,storage",
+    "deploy:functions": "firebase deploy --only functions",
+    "deploy:hosting": "firebase deploy --only hosting"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

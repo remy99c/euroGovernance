@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build artifacts
+dist/
+build/
+.next/
+out/
+lib/
+*.tsbuildinfo
+
+# Firebase
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+emulator-data/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+service-account*.json
+
+# OS files
+.DS_Store
+Thumbs.db
