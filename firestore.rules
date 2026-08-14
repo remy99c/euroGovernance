@@ -111,6 +111,34 @@ service cloud.firestore {
         allow read: if isAuthenticated();
         allow write: if isPlatformAdmin();
       }
+
+      match /mappings/{mappingId} {
+        allow read: if isAuthenticated();
+        allow write: if isPlatformAdmin();
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Cross-Framework Control Mappings & Harmonization
+    // -------------------------------------------------------------------------
+    match /control_mappings/{mappingId} {
+      allow read: if isAuthenticated();
+      allow write: if isPlatformAdmin();
+    }
+
+    match /scope_questionnaires/{questionnaireId} {
+      allow read: if isAuthenticated();
+      allow write: if isPlatformAdmin();
+
+      match /questions/{questionId} {
+        allow read: if isAuthenticated();
+        allow write: if isPlatformAdmin();
+      }
+    }
+
+    match /applicability_rules/{ruleId} {
+      allow read: if isAuthenticated();
+      allow write: if isPlatformAdmin();
     }
 
     // -------------------------------------------------------------------------

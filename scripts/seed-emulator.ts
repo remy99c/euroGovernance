@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
+import { CANONICAL_MASTER_DATA } from '@eurogovernance/shared-types';
 
 const projectId = process.env.GCLOUD_PROJECT || 'eurogovernance-dev';
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
@@ -20,105 +21,26 @@ export async function seedEmulatorData() {
   const tenantId = 'tenant_eurocorp_de';
   const now = new Date().toISOString();
 
-  // 1. Seed Global Master Frameworks
-  console.log('📦 Seeding Global Master Frameworks...');
-  const frameworks = [
-    {
-      id: 'gdpr',
-      code: 'GDPR',
-      name: 'General Data Protection Regulation (EU 2016/679)',
-      jurisdiction: 'EU',
-      category: 'privacy',
-      version: '2016/679',
-      sourceUrl: 'https://eur-lex.europa.eu/eli/reg/2016/679/oj',
-      requirementsCount: 99,
-      isActive: true,
-    },
-    {
-      id: 'eu_ai_act',
-      code: 'EU-AI-ACT',
-      name: 'EU Artificial Intelligence Act (EU 2024/1689)',
-      jurisdiction: 'EU',
-      category: 'ai_governance',
-      version: '2024/1689',
-      sourceUrl: 'https://eur-lex.europa.eu/eli/reg/2024/1689/oj',
-      requirementsCount: 113,
-      isActive: true,
-    },
-    {
-      id: 'iso_27001',
-      code: 'ISO-27001',
-      name: 'ISO/IEC 27001:2022 Information Security',
-      jurisdiction: 'International',
-      category: 'security',
-      version: '2022',
-      sourceUrl: 'https://www.iso.org/standard/27001',
-      requirementsCount: 93,
-      isActive: true,
-    },
-  ];
-
-  for (const fw of frameworks) {
+  // 1. Seed Global Master Frameworks & Controls Catalog
+  console.log('📦 Seeding Global Master Frameworks, Requirements, and Controls...');
+  for (const fw of CANONICAL_MASTER_DATA.frameworks) {
     await db.doc(`frameworks/${fw.id}`).set(fw);
   }
 
-  // 2. Seed Master Requirements & Controls
-  const masterReqs = [
-    { fw: 'gdpr', id: 'art_30', sectionCode: 'Art. 30', title: 'Records of Processing Activities (ROPA)', mandatory: true, category: 'governance' },
-    { fw: 'gdpr', id: 'art_32', sectionCode: 'Art. 32', title: 'Security of Processing', mandatory: true, category: 'security' },
-    { fw: 'gdpr', id: 'art_33', sectionCode: 'Art. 33', title: 'Notification of Personal Data Breach', mandatory: true, category: 'incident' },
-    { fw: 'gdpr', id: 'art_35', sectionCode: 'Art. 35', title: 'Data Protection Impact Assessment (DPIA)', mandatory: true, category: 'assessment' },
-    { fw: 'eu_ai_act', id: 'art_09', sectionCode: 'Art. 9', title: 'Risk Management System', mandatory: true, category: 'risk' },
-    { fw: 'eu_ai_act', id: 'art_10', sectionCode: 'Art. 10', title: 'Data and Data Governance', mandatory: true, category: 'data' },
-    { fw: 'eu_ai_act', id: 'art_13', sectionCode: 'Art. 13', title: 'Transparency and Information', mandatory: true, category: 'transparency' },
-    { fw: 'eu_ai_act', id: 'art_14', sectionCode: 'Art. 14', title: 'Human Oversight', mandatory: true, category: 'governance' },
-    { fw: 'eu_ai_act', id: 'art_72', sectionCode: 'Art. 72', title: 'Post-Market Monitoring', mandatory: true, category: 'monitoring' },
-    { fw: 'iso_27001', id: 'annex_a51', sectionCode: 'A.5.1', title: 'Policies for Information Security', mandatory: true, category: 'organizational' },
-    { fw: 'iso_27001', id: 'annex_a81', sectionCode: 'A.8.1', title: 'User Endpoint Devices', mandatory: true, category: 'technological' },
-    { fw: 'iso_27001', id: 'annex_a82', sectionCode: 'A.8.2', title: 'Privileged Access Rights', mandatory: true, category: 'technological' },
-    { fw: 'iso_27001', id: 'annex_a824', sectionCode: 'A.8.24', title: 'Use of Cryptography', mandatory: true, category: 'technological' },
-  ];
-
-  for (const r of masterReqs) {
-    await db.doc(`frameworks/${r.fw}/requirements/${r.id}`).set({
-      id: r.id,
-      frameworkId: r.fw,
-      sectionCode: r.sectionCode,
-      title: r.title,
-      description: `Official statutory guidance for ${r.title}.`,
-      isMandatory: r.mandatory,
-      category: r.category,
-      guidanceText: `Implementation guidance for ${r.sectionCode}.`,
-      sortOrder: 1,
-    });
+  for (const r of CANONICAL_MASTER_DATA.requirements) {
+    await db.doc(`frameworks/${r.frameworkId}/requirements/${r.id}`).set(r);
   }
 
-  const masterControls = [
-    { fw: 'gdpr', id: 'ctl_master_gdpr_art30', code: 'CTL-GDPR-30', title: 'ROPA Register Maintenance', domain: 'privacy', desc: 'Maintain and review Article 30 ROPA entries.', reqId: 'art_30' },
-    { fw: 'gdpr', id: 'ctl_master_gdpr_art32', code: 'CTL-GDPR-32', title: 'Encryption at Rest and in Transit', domain: 'security', desc: 'Enforce AES-256 and TLS 1.3 across data repositories.', reqId: 'art_32' },
-    { fw: 'gdpr', id: 'ctl_master_gdpr_art33', code: 'CTL-GDPR-33', title: '72-Hour Breach Escalation Protocol', domain: 'incident', desc: 'Execute incident response and supervisory notification within 72 hours.', reqId: 'art_33' },
-    { fw: 'gdpr', id: 'ctl_master_gdpr_art35', code: 'CTL-GDPR-35', title: 'DPIA Mandatory Screening', domain: 'privacy', desc: 'Screen processing operations for high risk and execute DPIA.', reqId: 'art_35' },
-    { fw: 'eu_ai_act', id: 'ctl_master_aia_art09', code: 'CTL-AIA-09', title: 'Continuous AI Risk Management', domain: 'ai_governance', desc: 'Systematic identification and evaluation of AI risks across lifecycle.', reqId: 'art_09' },
-    { fw: 'eu_ai_act', id: 'ctl_master_aia_art10', code: 'CTL-AIA-10', title: 'Training Data Governance & Bias Audits', domain: 'ai_governance', desc: 'Audit training, validation, and test datasets for bias and data hygiene.', reqId: 'art_10' },
-    { fw: 'eu_ai_act', id: 'ctl_master_aia_art13', code: 'CTL-AIA-13', title: 'AI Transparency & Instructions for Use', domain: 'ai_governance', desc: 'Provide clear documentation and instructions for deployers.', reqId: 'art_13' },
-    { fw: 'eu_ai_act', id: 'ctl_master_aia_art14', code: 'CTL-AIA-14', title: 'Dual-Key Human-in-the-Loop Oversight', domain: 'ai_governance', desc: 'Design operational stops and human override mechanisms for high-risk AI.', reqId: 'art_14' },
-    { fw: 'eu_ai_act', id: 'ctl_master_aia_art72', code: 'CTL-AIA-72', title: 'Post-Market AI Performance Monitoring', domain: 'monitoring', desc: 'Collect and analyze continuous post-market runtime logs.', reqId: 'art_72' },
-    { fw: 'iso_27001', id: 'ctl_master_iso_a51', code: 'A.5.1', title: 'Information Security Policy Suite', domain: 'governance', desc: 'Annual executive review and sign-off of security policies.', reqId: 'annex_a51' },
-    { fw: 'iso_27001', id: 'ctl_master_iso_a81', code: 'A.8.1', title: 'Managed Device Endpoint Security', domain: 'endpoint', desc: 'Enforce MDM, disk encryption, and EDR on all devices.', reqId: 'annex_a81' },
-    { fw: 'iso_27001', id: 'ctl_master_iso_a82', code: 'A.8.2', title: 'Privileged Access Just-In-Time Elevation', domain: 'identity', desc: 'Restrict administrative access with MFA and audit logging.', reqId: 'annex_a82' },
-    { fw: 'iso_27001', id: 'ctl_master_iso_a824', code: 'A.8.24', title: 'Cryptographic Key Management Lifecycle', domain: 'security', desc: 'Manage KMS key rotation, storage, and HSM backing.', reqId: 'annex_a824' },
-  ];
+  for (const mc of CANONICAL_MASTER_DATA.masterControls) {
+    await db.doc(`frameworks/${mc.frameworkId}/master_controls/${mc.id}`).set(mc);
+  }
 
-  for (const mc of masterControls) {
-    await db.doc(`frameworks/${mc.fw}/master_controls/${mc.id}`).set({
-      id: mc.id,
-      frameworkId: mc.fw,
-      code: mc.code,
-      title: mc.title,
-      description: mc.desc,
-      domain: mc.domain,
-      recommendedFrequencyDays: 90,
-    });
+  for (const map of CANONICAL_MASTER_DATA.requirementControlMappings) {
+    await db.doc(`frameworks/${map.frameworkId}/mappings/${map.id}`).set(map);
+  }
+
+  for (const crossMap of CANONICAL_MASTER_DATA.canonicalControlMappings) {
+    await db.doc(`control_mappings/${crossMap.id}`).set(crossMap);
   }
 
   // 3. Seed Tenant Organization

@@ -30,6 +30,24 @@ export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'completed' | 'can
 export type VendorRiskTier = 'low' | 'medium' | 'high' | 'critical';
 export type SystemCriticality = 'low' | 'medium' | 'high' | 'mission_critical';
 
+export type FrameworkType =
+  | 'regulation'
+  | 'directive'
+  | 'international_standard'
+  | 'national_standard'
+  | 'industry_standard';
+
+export type FrameworkStatus = 'active' | 'draft' | 'deprecated' | 'superseded';
+
+export type FrameworkCategory =
+  | 'privacy'
+  | 'ai_governance'
+  | 'data_governance'
+  | 'security'
+  | 'cross_domain'
+  | 'financial_resilience'
+  | 'critical_infrastructure';
+
 /**
  * Global Reference Framework (/frameworks/{frameworkId})
  */
@@ -38,11 +56,17 @@ export interface Framework {
   code: string;
   name: string;
   version: string;
-  category: 'privacy' | 'ai_governance' | 'data_governance' | 'security' | 'cross_domain';
+  category: FrameworkCategory;
+  jurisdiction: string; // e.g. 'European Union', 'International'
+  type: FrameworkType;
+  status: FrameworkStatus;
   description: string;
   officialReferenceUrl: string;
   totalRequirementsCount: number;
+  totalMasterControlsCount: number;
   isSystem: boolean;
+  effectiveDate?: string;
+  enforcementDate?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -61,6 +85,16 @@ export interface Requirement {
   isMandatory: boolean;
   parentRequirementId: string | null;
   sortOrder: number;
+  jurisdiction?: string;
+  legalBasisUrl?: string | null;
+  mappedMasterControlIds?: string[];
+}
+
+export interface MasterControlApplicabilityProfile {
+  mandatoryExclusionsAllowed: boolean;
+  standardInclusionCriteria: string;
+  standardExclusionCriteria: string;
+  recommendedGuidance: string;
 }
 
 /**
@@ -69,11 +103,30 @@ export interface Requirement {
 export interface MasterControl {
   id: string;
   frameworkId: string;
-  code: string; // e.g. 'CTL-AIA-01'
+  code: string; // e.g. 'CTL-GDPR-30', 'CTL-AIA-09', 'A.8.24'
   title: string;
   description: string;
   domain: string;
+  controlObjective: string;
+  evidenceExpectations: string[];
   recommendedFrequencyDays: number;
+  applicabilityProfile: MasterControlApplicabilityProfile;
+  canonicalControlMappingKey: string | null; // e.g. 'harmonized_encryption_at_rest'
+  requirementIds?: string[];
+}
+
+/**
+ * Requirement to Control Master Mapping (/frameworks/{frameworkId}/mappings/{mappingId})
+ */
+export interface MasterRequirementControlMapping {
+  id: string;
+  frameworkId: string;
+  requirementId: string;
+  masterControlId: string;
+  coverageType: 'full' | 'partial' | 'supporting';
+  rationale: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
