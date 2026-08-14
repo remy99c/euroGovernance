@@ -285,6 +285,10 @@ export interface Risk extends BaseEntity {
   treatmentPlan: string;
   mitigatingControlIds: string[];
   affectedAssetIds: string[];
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
+  vendorIds?: string[];
+  derivedRuleCode?: string | null;
 }
 
 /**

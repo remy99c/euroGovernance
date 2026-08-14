@@ -11,6 +11,11 @@ import {
   IssueSeverity,
   Task,
   TaskStatus,
+  ProcessorProfile,
+  TransferArrangement,
+  Evidence,
+  evaluateProcessorRiskFlags,
+  DerivedProcessorRiskRuleCode,
 } from '@eurogovernance/shared-types';
 
 export interface CreateRiskInput {
@@ -27,6 +32,10 @@ export interface CreateRiskInput {
   treatmentPlan?: string;
   mitigatingControlIds?: string[];
   affectedAssetIds?: string[];
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
+  vendorIds?: string[];
+  derivedRuleCode?: DerivedProcessorRiskRuleCode | string | null;
   ownerId?: string;
   status?: RiskStatus;
 }
@@ -46,6 +55,10 @@ export interface UpdateRiskInput {
   treatmentPlan?: string;
   mitigatingControlIds?: string[];
   affectedAssetIds?: string[];
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
+  vendorIds?: string[];
+  derivedRuleCode?: DerivedProcessorRiskRuleCode | string | null;
   ownerId?: string;
 }
 
@@ -58,6 +71,10 @@ export interface ListRisksInput {
   tenantId: string;
   status?: RiskStatus;
   category?: string;
+  processorProfileId?: string;
+  transferArrangementId?: string;
+  vendorId?: string;
+  derivedRuleCode?: string;
 }
 
 export interface CreateIssueInput {
@@ -152,6 +169,10 @@ export const createTenantRisk = onCall<CreateRiskInput>(async (request) => {
     treatmentPlan = '',
     mitigatingControlIds = [],
     affectedAssetIds = [],
+    processorProfileIds = [],
+    transferArrangementIds = [],
+    vendorIds = [],
+    derivedRuleCode = null,
     ownerId,
     status = 'identified',
   } = request.data;
@@ -189,6 +210,10 @@ export const createTenantRisk = onCall<CreateRiskInput>(async (request) => {
     treatmentPlan,
     mitigatingControlIds,
     affectedAssetIds,
+    processorProfileIds,
+    transferArrangementIds,
+    vendorIds,
+    derivedRuleCode,
     ownerId: ownerId || authContext.userId,
     createdAt: now,
     updatedAt: now,
@@ -198,6 +223,43 @@ export const createTenantRisk = onCall<CreateRiskInput>(async (request) => {
 
   await riskRef.set(riskDoc);
 
+  // Sync reverse links on Processor Profiles and Transfer Arrangements
+  if (processorProfileIds.length > 0 || transferArrangementIds.length > 0) {
+    const batch = db.batch();
+    for (const profId of processorProfileIds) {
+      const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId);
+      const pSnap = await pRef.get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        const prevRisks = pData.linkedRiskIds || [];
+        if (!prevRisks.includes(riskRef.id)) {
+          batch.update(pRef, {
+            linkedRiskIds: [...prevRisks, riskRef.id],
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+
+    for (const transId of transferArrangementIds) {
+      const tRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(transId);
+      const tSnap = await tRef.get();
+      if (tSnap.exists) {
+        const tData = tSnap.data() as TransferArrangement;
+        const prevRisks = tData.linkedRiskIds || [];
+        if (!prevRisks.includes(riskRef.id)) {
+          batch.update(tRef, {
+            linkedRiskIds: [...prevRisks, riskRef.id],
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+    await batch.commit();
+  }
+
   await recordAuditLog({
     tenantId,
     actorId: authContext.userId,
@@ -206,7 +268,7 @@ export const createTenantRisk = onCall<CreateRiskInput>(async (request) => {
     entityType: 'risk',
     entityId: riskRef.id,
     action: 'create',
-    afterSummary: { code: riskDoc.code, title: riskDoc.title, category, inherentScore: riskDoc.inherentScore },
+    afterSummary: { code: riskDoc.code, title: riskDoc.title, category, inherentScore: riskDoc.inherentScore, processorProfileIds },
     source: 'cloud_function',
     workflowContext: 'risk_creation',
   });
@@ -239,6 +301,27 @@ export const updateTenantRisk = onCall<UpdateRiskInput>(async (request) => {
 
   const resLikelihood = updates.residualLikelihood ?? prev.residualLikelihood;
   const resImpact = updates.residualImpact ?? prev.residualImpact;
+
+  // If processorProfileIds or transferArrangementIds are being updated, sync reverse links
+  if (updates.processorProfileIds && Array.isArray(updates.processorProfileIds)) {
+    const batch = db.batch();
+    for (const profId of updates.processorProfileIds) {
+      const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId);
+      const pSnap = await pRef.get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        const prevRisks = pData.linkedRiskIds || [];
+        if (!prevRisks.includes(riskId)) {
+          batch.update(pRef, {
+            linkedRiskIds: [...prevRisks, riskId],
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+    await batch.commit();
+  }
 
   const payload: Partial<Risk> = {
     ...updates,
@@ -300,7 +383,7 @@ export const deleteTenantRisk = onCall<DeleteRiskInput>(async (request) => {
 });
 
 export const listTenantRisks = onCall<ListRisksInput>(async (request) => {
-  const { tenantId, status, category } = request.data;
+  const { tenantId, status, category, processorProfileId, transferArrangementId, vendorId, derivedRuleCode } = request.data;
   if (!tenantId) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
@@ -310,11 +393,292 @@ export const listTenantRisks = onCall<ListRisksInput>(async (request) => {
   let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('risks');
   if (status) query = query.where('status', '==', status);
   if (category) query = query.where('category', '==', category);
+  if (processorProfileId) query = query.where('processorProfileIds', 'array-contains', processorProfileId);
+  if (transferArrangementId) query = query.where('transferArrangementIds', 'array-contains', transferArrangementId);
+  if (vendorId) query = query.where('vendorIds', 'array-contains', vendorId);
+  if (derivedRuleCode) query = query.where('derivedRuleCode', '==', derivedRuleCode);
 
   const snap = await query.get();
   const risks: Risk[] = snap.docs.map((d) => d.data() as Risk);
 
   return { success: true, count: risks.length, risks };
+});
+
+export interface LinkRiskToProcessorOrTransferInput {
+  tenantId: string;
+  riskId: string;
+  processorProfileId?: string;
+  transferArrangementId?: string;
+  vendorId?: string;
+}
+
+export const linkRiskToProcessorOrTransfer = onCall<LinkRiskToProcessorOrTransferInput>(async (request) => {
+  const { tenantId, riskId, processorProfileId, transferArrangementId, vendorId } = request.data;
+  if (!tenantId || !riskId || (!processorProfileId && !transferArrangementId && !vendorId)) {
+    throw new HttpsError(
+      'invalid-argument',
+      'tenantId, riskId, and at least one of processorProfileId, transferArrangementId, or vendorId are required.'
+    );
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+  ]);
+
+  const riskRef = db.collection('tenants').doc(tenantId).collection('risks').doc(riskId);
+  const snap = await riskRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Risk ${riskId} not found.`);
+  }
+
+  const prev = snap.data() as Risk;
+  const now = new Date().toISOString();
+  const batch = db.batch();
+
+  const mergedProfiles = processorProfileId
+    ? Array.from(new Set([...(prev.processorProfileIds || []), processorProfileId]))
+    : prev.processorProfileIds || [];
+
+  const mergedTransfers = transferArrangementId
+    ? Array.from(new Set([...(prev.transferArrangementIds || []), transferArrangementId]))
+    : prev.transferArrangementIds || [];
+
+  const mergedVendors = vendorId
+    ? Array.from(new Set([...(prev.vendorIds || []), vendorId]))
+    : prev.vendorIds || [];
+
+  if (processorProfileId) {
+    const profRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+    const profSnap = await profRef.get();
+    if (profSnap.exists) {
+      const pData = profSnap.data() as ProcessorProfile;
+      const prevRisks = pData.linkedRiskIds || [];
+      if (!prevRisks.includes(riskId)) {
+        batch.update(profRef, {
+          linkedRiskIds: [...prevRisks, riskId],
+          updatedAt: now,
+          updatedBy: authContext.userId,
+        });
+      }
+    }
+  }
+
+  if (transferArrangementId) {
+    const transRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(transferArrangementId);
+    const transSnap = await transRef.get();
+    if (transSnap.exists) {
+      const tData = transSnap.data() as TransferArrangement;
+      const prevRisks = tData.linkedRiskIds || [];
+      if (!prevRisks.includes(riskId)) {
+        batch.update(transRef, {
+          linkedRiskIds: [...prevRisks, riskId],
+          updatedAt: now,
+          updatedBy: authContext.userId,
+        });
+      }
+    }
+  }
+
+  batch.update(riskRef, {
+    processorProfileIds: mergedProfiles,
+    transferArrangementIds: mergedTransfers,
+    vendorIds: mergedVendors,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'risk',
+    entityId: riskId,
+    action: 'link',
+    beforeSummary: { processorProfileIds: prev.processorProfileIds, transferArrangementIds: prev.transferArrangementIds },
+    afterSummary: { riskId, processorProfileId, transferArrangementId, vendorId },
+    source: 'cloud_function',
+    workflowContext: 'risk_processor_linking',
+  });
+
+  return {
+    success: true,
+    riskId,
+    processorProfileIds: mergedProfiles,
+    transferArrangementIds: mergedTransfers,
+    vendorIds: mergedVendors,
+  };
+});
+
+export interface GetProcessorRiskSummaryInput {
+  tenantId: string;
+  processorProfileId: string;
+}
+
+export const getProcessorRiskSummary = onCall<GetProcessorRiskSummaryInput>(async (request) => {
+  const { tenantId, processorProfileId } = request.data;
+  if (!tenantId || !processorProfileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and processorProfileId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const profRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+  const profSnap = await profRef.get();
+  if (!profSnap.exists) {
+    throw new HttpsError('not-found', `Processor profile ${processorProfileId} not found.`);
+  }
+  const profile = profSnap.data() as ProcessorProfile;
+
+  const transSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('transfer_arrangements')
+    .where('processorProfileId', '==', processorProfileId)
+    .get();
+  const transfers = transSnap.docs.map((d) => d.data() as TransferArrangement);
+
+  const evSnap = await db.collection('tenants').doc(tenantId).collection('evidence').get();
+  const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
+
+  const summary = evaluateProcessorRiskFlags(profile, transfers, evidenceDocs);
+
+  return { success: true, summary };
+});
+
+export interface SyncDerivedProcessorRisksInput {
+  tenantId: string;
+  processorProfileId: string;
+  autoCreateRisks?: boolean;
+}
+
+export const syncDerivedProcessorRisks = onCall<SyncDerivedProcessorRisksInput>(async (request) => {
+  const { tenantId, processorProfileId, autoCreateRisks = false } = request.data;
+  if (!tenantId || !processorProfileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and processorProfileId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+  ]);
+
+  const profRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+  const profSnap = await profRef.get();
+  if (!profSnap.exists) {
+    throw new HttpsError('not-found', `Processor profile ${processorProfileId} not found.`);
+  }
+  const profile = profSnap.data() as ProcessorProfile;
+
+  const transSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('transfer_arrangements')
+    .where('processorProfileId', '==', processorProfileId)
+    .get();
+  const transfers = transSnap.docs.map((d) => d.data() as TransferArrangement);
+
+  const evSnap = await db.collection('tenants').doc(tenantId).collection('evidence').get();
+  const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
+
+  const summary = evaluateProcessorRiskFlags(profile, transfers, evidenceDocs);
+  const createdRiskIds: string[] = [];
+
+  if (autoCreateRisks && summary.flags.length > 0) {
+    const existingRisksSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('risks')
+      .where('processorProfileIds', 'array-contains', processorProfileId)
+      .get();
+
+    const existingRisks = existingRisksSnap.docs.map((d) => d.data() as Risk);
+    const now = new Date().toISOString();
+    const batch = db.batch();
+
+    for (const flag of summary.flags) {
+      // Deduplication: check if active risk with this derivedRuleCode already exists for this processor & entity
+      const alreadyExists = existingRisks.some(
+        (r) =>
+          r.derivedRuleCode === flag.ruleCode &&
+          (flag.transferArrangementId ? r.transferArrangementIds?.includes(flag.transferArrangementId) : true) &&
+          r.status !== 'closed'
+      );
+
+      if (!alreadyExists) {
+        const newRiskRef = db.collection('tenants').doc(tenantId).collection('risks').doc();
+        const code = `RSK-PROC-${Math.floor(1000 + Math.random() * 9000)}`;
+
+        const newRiskDoc: Risk = {
+          id: newRiskRef.id,
+          tenantId,
+          code,
+          title: flag.title,
+          description: flag.description,
+          category: 'third_party',
+          status: 'identified',
+          inherentLikelihood: flag.inherentLikelihood,
+          inherentImpact: flag.inherentImpact,
+          inherentScore: flag.inherentScore,
+          residualLikelihood: flag.inherentLikelihood,
+          residualImpact: flag.inherentImpact,
+          residualScore: flag.inherentScore,
+          treatmentStrategy: 'mitigate',
+          treatmentPlan: flag.suggestedTreatment,
+          mitigatingControlIds: [],
+          affectedAssetIds: profile.linkedSystemAssetIds || [],
+          processorProfileIds: [processorProfileId],
+          transferArrangementIds: flag.transferArrangementId ? [flag.transferArrangementId] : [],
+          vendorIds: profile.vendorId ? [profile.vendorId] : [],
+          derivedRuleCode: flag.ruleCode,
+          ownerId: authContext.userId,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: authContext.userId,
+          updatedBy: authContext.userId,
+        };
+
+        batch.set(newRiskRef, newRiskDoc);
+        createdRiskIds.push(newRiskRef.id);
+      }
+    }
+
+    if (createdRiskIds.length > 0) {
+      const prevLinkedRisks = profile.linkedRiskIds || [];
+      batch.update(profRef, {
+        linkedRiskIds: Array.from(new Set([...prevLinkedRisks, ...createdRiskIds])),
+        updatedAt: now,
+        updatedBy: authContext.userId,
+      });
+      await batch.commit();
+
+      await recordAuditLog({
+        tenantId,
+        actorId: authContext.userId,
+        actorEmail: authContext.email,
+        actorRole: authContext.role,
+        entityType: 'processor_profile',
+        entityId: processorProfileId,
+        action: 'create',
+        afterSummary: { createdRiskIds, totalCreated: createdRiskIds.length },
+        source: 'cloud_function',
+        workflowContext: 'derived_processor_risk_synchronization',
+      });
+    }
+  }
+
+  return {
+    success: true,
+    summary,
+    autoCreatedRiskIds: createdRiskIds,
+  };
 });
 
 // -----------------------------------------------------------------------------

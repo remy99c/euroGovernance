@@ -98,6 +98,7 @@ export interface ProcessorProfile extends BaseEntity {
   linkedTiaId?: string | null; // Link to TIA if cross-border transfer is involved
   linkedRopaIds?: string[]; // Link to ROPA processing activities
   linkedBreachIds?: string[]; // Link to Breach incident records
+  linkedRiskIds?: string[]; // Link to Risk register entries
   systemAssetRelationships?: Array<{
     systemAssetId: string;
     relationshipType: ProcessorSystemRelationshipType;
@@ -328,6 +329,7 @@ export interface TransferArrangement extends BaseEntity {
   subprocessorsInvolved?: string[]; // Names or IDs of third-country subprocessors
   linkedTiaId: string | null; // Foreign Key to /tenants/{tenantId}/tia_assessments/{tiaId}
   linkedEvidenceIds: string[]; // Foreign Keys to Evidence documents (e.g. executed SCC PDF, DPF cert)
+  linkedRiskIds?: string[]; // Foreign Keys to linked Risk register entries
   rationale: string | null;
   notes: string | null;
 }
@@ -1245,5 +1247,261 @@ export function buildProcessorSystemView(
     criticality: profile.criticality,
     systemCount: systemItems.length,
     systems: systemItems,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// PROCESSOR RISK EVALUATION & DERIVED RISK FLAGS
+// -----------------------------------------------------------------------------
+
+export type DerivedProcessorRiskRuleCode =
+  | 'RESTRICTED_TRANSFER_NO_MECHANISM'
+  | 'SCC_NO_EVIDENCE_ATTACHED'
+  | 'TRANSFER_MECHANISM_EXPIRED_OR_REVIEW_OVERDUE'
+  | 'HIGH_CRITICALITY_REVIEW_OVERDUE'
+  | 'SUBPROCESSORS_NO_SUPPORTING_DOCS'
+  | 'RESTRICTED_TRANSFER_MISSING_TIA'
+  | 'SPECIAL_CATEGORY_MISSING_DPA';
+
+export interface DerivedProcessorRiskFlag {
+  ruleCode: DerivedProcessorRiskRuleCode;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  description: string;
+  suggestedTreatment: string;
+  inherentLikelihood: number; // 1-5
+  inherentImpact: number; // 1-5
+  inherentScore: number;
+  entityType: 'processor_profile' | 'transfer_arrangement';
+  entityId: string;
+  processorProfileId: string;
+  transferArrangementId?: string;
+  isActionable: boolean;
+}
+
+export interface ProcessorRiskEvaluationSummary {
+  processorProfileId: string;
+  overallRiskLevel: 'low' | 'medium' | 'high' | 'critical';
+  totalDerivedFlagsCount: number;
+  criticalFlagsCount: number;
+  highFlagsCount: number;
+  mediumFlagsCount: number;
+  lowFlagsCount: number;
+  flags: DerivedProcessorRiskFlag[];
+  linkedRiskIds: string[];
+}
+
+/**
+ * Pure deterministic risk rule engine for processor and transfer arrangements.
+ * Evaluates risk flags for compliance gaps, overdue reviews, missing safeguards, and missing evidence.
+ */
+export function evaluateProcessorRiskFlags(
+  profile: ProcessorProfile,
+  transfers: TransferArrangement[] = [],
+  evidenceDocs: Evidence[] = [],
+  asOfDate: Date = new Date()
+): ProcessorRiskEvaluationSummary {
+  const flags: DerivedProcessorRiskFlag[] = [];
+  const seenFlagKeys = new Set<string>();
+
+  const addFlag = (flag: DerivedProcessorRiskFlag) => {
+    const key = `${flag.ruleCode}_${flag.entityId}`;
+    if (!seenFlagKeys.has(key)) {
+      seenFlagKeys.add(key);
+      flags.push(flag);
+    }
+  };
+
+  const nowMillis = asOfDate.getTime();
+
+  // 1. HIGH_CRITICALITY_REVIEW_OVERDUE
+  if (
+    (profile.criticality === 'critical' || profile.criticality === 'high') &&
+    profile.nextReviewDate &&
+    new Date(profile.nextReviewDate).getTime() < nowMillis
+  ) {
+    addFlag({
+      ruleCode: 'HIGH_CRITICALITY_REVIEW_OVERDUE',
+      severity: 'high',
+      title: `High Criticality Processor Review Overdue (${profile.engagementName || profile.id})`,
+      description: `Processor engagement "${profile.engagementName || profile.id}" is designated as ${profile.criticality} criticality, but its scheduled privacy review due on ${profile.nextReviewDate} is overdue.`,
+      suggestedTreatment: 'Conduct formal Article 28 supplier assessment and update next review schedule.',
+      inherentLikelihood: 3,
+      inherentImpact: 4,
+      inherentScore: 12,
+      entityType: 'processor_profile',
+      entityId: profile.id,
+      processorProfileId: profile.id,
+      isActionable: true,
+    });
+  }
+
+  // 2. SPECIAL_CATEGORY_MISSING_DPA
+  if (profile.isSpecialCategoryData && !profile.dpaSigned) {
+    addFlag({
+      ruleCode: 'SPECIAL_CATEGORY_MISSING_DPA',
+      severity: 'critical',
+      title: `Special Category Data Processed Without Executed DPA (${profile.engagementName || profile.id})`,
+      description: `Processor engagement "${profile.engagementName || profile.id}" processes GDPR Article 9 Special Category Data without a countersigned Data Processing Agreement.`,
+      suggestedTreatment: 'Immediately execute binding Article 28 DPA or halt special category data flows.',
+      inherentLikelihood: 4,
+      inherentImpact: 5,
+      inherentScore: 20,
+      entityType: 'processor_profile',
+      entityId: profile.id,
+      processorProfileId: profile.id,
+      isActionable: true,
+    });
+  }
+
+  // 3. SUBPROCESSORS_NO_SUPPORTING_DOCS (Profile level)
+  const hasSubprocessorListEvidence = evidenceDocs.some(
+    (e) =>
+      e.category === 'subprocessor_list' ||
+      e.category === 'security_report' ||
+      e.category === 'soc_report' ||
+      e.category === 'iso_certificate'
+  );
+  if (profile.processorRole === 'subprocessor' && !hasSubprocessorListEvidence) {
+    addFlag({
+      ruleCode: 'SUBPROCESSORS_NO_SUPPORTING_DOCS',
+      severity: 'medium',
+      title: `Subprocessor Role Lacks Supporting Audit Evidence (${profile.engagementName || profile.id})`,
+      description: `Processor is classified as a downstream subprocessor but has no attached subprocessor authorization or third-party security assurance reports.`,
+      suggestedTreatment: 'Attach vendor subprocessor notification, ISO 27001 certificate, or SOC 2 Type II report.',
+      inherentLikelihood: 3,
+      inherentImpact: 3,
+      inherentScore: 9,
+      entityType: 'processor_profile',
+      entityId: profile.id,
+      processorProfileId: profile.id,
+      isActionable: true,
+    });
+  }
+
+  // Transfer Arrangement level checks
+  for (const t of transfers) {
+    // 4. RESTRICTED_TRANSFER_NO_MECHANISM
+    if (t.restrictedTransfer && (t.transferMechanismType === 'no_mechanism_selected' || !t.transferMechanismType)) {
+      addFlag({
+        ruleCode: 'RESTRICTED_TRANSFER_NO_MECHANISM',
+        severity: 'critical',
+        title: `Restricted International Transfer without Valid GDPR Transfer Mechanism (${t.name})`,
+        description: `Transfer "${t.name}" transfers personal data outside the EU/EEA to non-adequate third countries (${t.destinationCountries.join(', ')}) without a selected Chapter V legal transfer mechanism.`,
+        suggestedTreatment: 'Execute Standard Contractual Clauses (SCC) or verify Binding Corporate Rules (BCR).',
+        inherentLikelihood: 4,
+        inherentImpact: 5,
+        inherentScore: 20,
+        entityType: 'transfer_arrangement',
+        entityId: t.id,
+        processorProfileId: profile.id,
+        transferArrangementId: t.id,
+        isActionable: true,
+      });
+    }
+
+    // 5. SCC_NO_EVIDENCE_ATTACHED
+    if (
+      t.transferMechanismType === 'standard_contractual_clauses' &&
+      (!t.linkedEvidenceIds || t.linkedEvidenceIds.length === 0)
+    ) {
+      addFlag({
+        ruleCode: 'SCC_NO_EVIDENCE_ATTACHED',
+        severity: 'high',
+        title: `Standard Contractual Clauses Selected Without Executed Evidence (${t.name})`,
+        description: `Transfer "${t.name}" relies on Standard Contractual Clauses (SCC) but has no executed SCC agreement attached in the evidence repository.`,
+        suggestedTreatment: 'Upload signed SCC agreement with Module annexes to Evidence repository.',
+        inherentLikelihood: 3,
+        inherentImpact: 4,
+        inherentScore: 12,
+        entityType: 'transfer_arrangement',
+        entityId: t.id,
+        processorProfileId: profile.id,
+        transferArrangementId: t.id,
+        isActionable: true,
+      });
+    }
+
+    // 6. TRANSFER_MECHANISM_EXPIRED_OR_REVIEW_OVERDUE
+    if (
+      t.transferMechanismStatus === 'expired' ||
+      (t.reviewDueDate && new Date(t.reviewDueDate).getTime() < nowMillis)
+    ) {
+      addFlag({
+        ruleCode: 'TRANSFER_MECHANISM_EXPIRED_OR_REVIEW_OVERDUE',
+        severity: 'high',
+        title: `Transfer Mechanism Expired or Review Overdue (${t.name})`,
+        description: `Transfer "${t.name}" mechanism status is ${t.transferMechanismStatus} or its scheduled review date (${t.reviewDueDate}) is past due.`,
+        suggestedTreatment: 'Conduct transfer mechanism re-assessment and renew documentation.',
+        inherentLikelihood: 3,
+        inherentImpact: 4,
+        inherentScore: 12,
+        entityType: 'transfer_arrangement',
+        entityId: t.id,
+        processorProfileId: profile.id,
+        transferArrangementId: t.id,
+        isActionable: true,
+      });
+    }
+
+    // 7. RESTRICTED_TRANSFER_MISSING_TIA
+    if (t.restrictedTransfer && !t.linkedTiaId) {
+      addFlag({
+        ruleCode: 'RESTRICTED_TRANSFER_MISSING_TIA',
+        severity: 'high',
+        title: `Restricted Third-Country Transfer Missing TIA (${t.name})`,
+        description: `Transfer "${t.name}" transfers personal data to ${t.destinationCountries.join(', ')} without a linked Transfer Impact Assessment (Schrems II requirement).`,
+        suggestedTreatment: 'Create and complete a Transfer Impact Assessment assessing destination country legal surveillance risks.',
+        inherentLikelihood: 4,
+        inherentImpact: 4,
+        inherentScore: 16,
+        entityType: 'transfer_arrangement',
+        entityId: t.id,
+        processorProfileId: profile.id,
+        transferArrangementId: t.id,
+        isActionable: true,
+      });
+    }
+
+    // 8. SUBPROCESSORS_NO_SUPPORTING_DOCS (Transfer level)
+    if (t.subprocessorInvolvement && (!t.linkedEvidenceIds || t.linkedEvidenceIds.length === 0)) {
+      addFlag({
+        ruleCode: 'SUBPROCESSORS_NO_SUPPORTING_DOCS',
+        severity: 'medium',
+        title: `Subprocessors Involved in Transfer Without Attached Documentation (${t.name})`,
+        description: `Transfer arrangement "${t.name}" involves third-country onward subprocessors without attached subprocessor list or SOC/ISO audit evidence.`,
+        suggestedTreatment: 'Link subprocessor schedule or security certification evidence to transfer arrangement.',
+        inherentLikelihood: 3,
+        inherentImpact: 3,
+        inherentScore: 9,
+        entityType: 'transfer_arrangement',
+        entityId: t.id,
+        processorProfileId: profile.id,
+        transferArrangementId: t.id,
+        isActionable: true,
+      });
+    }
+  }
+
+  const criticalCount = flags.filter((f) => f.severity === 'critical').length;
+  const highCount = flags.filter((f) => f.severity === 'high').length;
+  const mediumCount = flags.filter((f) => f.severity === 'medium').length;
+  const lowCount = flags.filter((f) => f.severity === 'low').length;
+
+  let overallRiskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
+  if (criticalCount > 0) overallRiskLevel = 'critical';
+  else if (highCount > 0) overallRiskLevel = 'high';
+  else if (mediumCount > 0) overallRiskLevel = 'medium';
+
+  return {
+    processorProfileId: profile.id,
+    overallRiskLevel,
+    totalDerivedFlagsCount: flags.length,
+    criticalFlagsCount: criticalCount,
+    highFlagsCount: highCount,
+    mediumFlagsCount: mediumCount,
+    lowFlagsCount: lowCount,
+    flags,
+    linkedRiskIds: profile.linkedRiskIds || [],
   };
 }
