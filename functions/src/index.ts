@@ -47,6 +47,18 @@ export {
   listTenantTasks,
 } from './handlers/risks.js';
 
+// Vendor & System Asset Handlers
+export {
+  createTenantVendor,
+  updateTenantVendor,
+  deleteTenantVendor,
+  listTenantVendors,
+  createTenantSystemAsset,
+  updateTenantSystemAsset,
+  deleteTenantSystemAsset,
+  listTenantSystemAssets,
+} from './handlers/vendors-and-assets.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,
