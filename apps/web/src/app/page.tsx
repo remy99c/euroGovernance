@@ -36,6 +36,9 @@ interface EvidenceItem {
   submittedBy: string;
   reviewDueDate: string;
   fileName: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  decisionNotes?: string;
 }
 
 interface ROPAItem {
@@ -252,20 +255,50 @@ export default function DashboardPage() {
   const [selectedTenant, setSelectedTenant] = useState('EuroCorp Technologies SE (Frankfurt)');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
-  // Four-Eyes evidence approval simulation
+  // Four-Eyes evidence approval flow with decision notes and attribution
   const handleApproveEvidence = (id: string) => {
+    const notes = typeof window !== 'undefined'
+      ? window.prompt('Enter Approval Decision Notes (optional):', 'Verified compliance with applicable European regulatory clauses and technical safeguards.') || 'Verified compliance.'
+      : 'Verified compliance.';
+
     setEvidenceList((prev) =>
-      prev.map((ev) => (ev.id === id ? { ...ev, status: 'valid', reviewDueDate: 'In 90 days' } : ev))
+      prev.map((ev) =>
+        ev.id === id
+          ? {
+              ...ev,
+              status: 'valid',
+              reviewDueDate: 'In 90 days',
+              reviewedBy: 'Elena Rostova (Compliance Lead)',
+              reviewedAt: new Date().toISOString().split('T')[0],
+              decisionNotes: notes,
+            }
+          : ev
+      )
     );
     setActionNotice('✅ Evidence approved via Four-Eyes authorization! Immutable audit log recorded.');
     setTimeout(() => setActionNotice(null), 4000);
   };
 
   const handleRejectEvidence = (id: string) => {
+    const reason = typeof window !== 'undefined'
+      ? window.prompt('Enter Mandatory Rejection Rationale:', 'Requires updated signature and ISO control mapping before approval.') || 'Incomplete submission'
+      : 'Incomplete submission';
+
     setEvidenceList((prev) =>
-      prev.map((ev) => (ev.id === id ? { ...ev, status: 'rejected', reviewDueDate: 'Action Required' } : ev))
+      prev.map((ev) =>
+        ev.id === id
+          ? {
+              ...ev,
+              status: 'rejected',
+              reviewDueDate: 'Action Required',
+              reviewedBy: 'Elena Rostova (Compliance Lead)',
+              reviewedAt: new Date().toISOString().split('T')[0],
+              decisionNotes: reason,
+            }
+          : ev
+      )
     );
-    setActionNotice('⚠️ Evidence marked as rejected. Contributor notified for new revision.');
+    setActionNotice('⚠️ Evidence marked as rejected. Decision rationale captured in audit trail.');
     setTimeout(() => setActionNotice(null), 4000);
   };
 
@@ -648,6 +681,16 @@ export default function DashboardPage() {
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
                       File: <span style={{ color: 'var(--accent-blue)' }}>{ev.fileName}</span> • Framework: {ev.framework} • Author: {ev.submittedBy}
                     </div>
+                    {ev.decisionNotes && (
+                      <div style={{ marginTop: '8px', padding: '6px 10px', backgroundColor: 'var(--bg-primary)', borderRadius: '6px', fontSize: '11px', borderLeft: ev.status === 'valid' ? '3px solid var(--status-success)' : '3px solid var(--status-danger)' }}>
+                        <span style={{ fontWeight: 600 }}>Decision Rationale:</span> {ev.decisionNotes}
+                      </div>
+                    )}
+                    {ev.reviewedBy && (
+                      <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Audited by: <span style={{ fontWeight: 500 }}>{ev.reviewedBy}</span> {ev.reviewedAt && `on ${ev.reviewedAt}`}
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', gap: '8px' }}>
@@ -685,7 +728,9 @@ export default function DashboardPage() {
                         </button>
                       </>
                     ) : (
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Verified by Compliance Lead</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>
+                        {ev.status === 'valid' ? '✅ Signed off & Active' : '❌ Revision Requested'}
+                      </span>
                     )}
                   </div>
                 </div>

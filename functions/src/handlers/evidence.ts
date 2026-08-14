@@ -40,12 +40,14 @@ export interface ApproveEvidenceInput {
   tenantId: string;
   evidenceId: string;
   nextReviewDate?: string;
+  decisionNotes?: string;
 }
 
 export interface RejectEvidenceInput {
   tenantId: string;
   evidenceId: string;
   rejectionReason: string;
+  decisionNotes?: string;
 }
 
 export interface ListEvidenceInput {
@@ -289,10 +291,10 @@ export const createEvidenceVersion = onCall<CreateEvidenceVersionInput>(async (r
 
 /**
  * Callable Function: approveEvidence
- * Privileged state transition with Four-Eyes separation
+ * Privileged state transition with Four-Eyes separation and status transition validation
  */
 export const approveEvidence = onCall<ApproveEvidenceInput>(async (request) => {
-  const { tenantId, evidenceId, nextReviewDate } = request.data;
+  const { tenantId, evidenceId, nextReviewDate, decisionNotes } = request.data;
   if (!tenantId || !evidenceId) {
     throw new HttpsError('invalid-argument', 'tenantId and evidenceId are required.');
   }
@@ -311,6 +313,11 @@ export const approveEvidence = onCall<ApproveEvidenceInput>(async (request) => {
   }
 
   const evidence = snap.data() as Evidence;
+
+  // Status transition validation
+  if (evidence.status === 'valid') {
+    throw new HttpsError('failed-precondition', 'Evidence is already approved and in valid status.');
+  }
 
   // Four-Eyes Approval Enforcement: Creator cannot self-approve unless caller is tenant_admin
   if (evidence.createdBy === authContext.userId && authContext.role !== 'tenant_admin') {
@@ -342,20 +349,25 @@ export const approveEvidence = onCall<ApproveEvidenceInput>(async (request) => {
     entityId: evidenceId,
     action: 'approve',
     beforeSummary: { status: evidence.status, reviewedBy: evidence.reviewedBy },
-    afterSummary: { status: 'valid', reviewedBy: authContext.userId, reviewDueDate: calculatedNextReview },
+    afterSummary: {
+      status: 'valid',
+      reviewedBy: authContext.userId,
+      reviewDueDate: calculatedNextReview,
+      decisionNotes: decisionNotes || null,
+    },
     source: 'cloud_function',
     workflowContext: 'evidence_approval_workflow',
   });
 
-  return { success: true, evidenceId, status: 'valid', reviewedAt: now };
+  return { success: true, evidenceId, status: 'valid', reviewedAt: now, reviewerId: authContext.userId };
 });
 
 /**
  * Callable Function: rejectEvidence
- * Rejects an evidence submission and captures audit rationale.
+ * Rejects an evidence submission and captures audit rationale and decision comments
  */
 export const rejectEvidence = onCall<RejectEvidenceInput>(async (request) => {
-  const { tenantId, evidenceId, rejectionReason } = request.data;
+  const { tenantId, evidenceId, rejectionReason, decisionNotes } = request.data;
   if (!tenantId || !evidenceId || !rejectionReason) {
     throw new HttpsError('invalid-argument', 'tenantId, evidenceId, and rejectionReason are required.');
   }
@@ -374,13 +386,17 @@ export const rejectEvidence = onCall<RejectEvidenceInput>(async (request) => {
   }
 
   const evidence = snap.data() as Evidence;
+  if (evidence.status === 'rejected') {
+    throw new HttpsError('failed-precondition', 'Evidence is already rejected.');
+  }
+
   const now = new Date().toISOString();
 
   await evidenceRef.update({
     status: 'rejected',
     reviewedBy: authContext.userId,
     reviewedAt: now,
-    rejectionReason,
+    rejectionReason: rejectionReason.trim(),
     updatedAt: now,
     updatedBy: authContext.userId,
   });
@@ -394,12 +410,17 @@ export const rejectEvidence = onCall<RejectEvidenceInput>(async (request) => {
     entityId: evidenceId,
     action: 'reject',
     beforeSummary: { status: evidence.status },
-    afterSummary: { status: 'rejected', rejectionReason },
+    afterSummary: {
+      status: 'rejected',
+      rejectionReason: rejectionReason.trim(),
+      decisionNotes: decisionNotes || null,
+      reviewedBy: authContext.userId,
+    },
     source: 'cloud_function',
     workflowContext: 'evidence_rejection_workflow',
   });
 
-  return { success: true, evidenceId, status: 'rejected', rejectionReason };
+  return { success: true, evidenceId, status: 'rejected', rejectionReason: rejectionReason.trim(), reviewerId: authContext.userId };
 });
 
 /**

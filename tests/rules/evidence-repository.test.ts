@@ -222,4 +222,24 @@ describe('Evidence Repository Security Rules & Immutability Test Suite', () => {
       })
     );
   });
+
+  // 6. Contributor vs Approver Role Capabilities & Deletion Isolation
+  test('Contributor cannot mutate evidence status; Tenant Admin can delete evidence records', async () => {
+    const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
+    const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
+
+    // Contributor attempt to reject evidence via direct client update is denied
+    await assertFails(
+      contribDb.doc(`tenants/${tenantA}/evidence/${evidenceId}`).update({
+        status: 'rejected',
+        rejectionReason: 'Unauthorized contributor rejection',
+      })
+    );
+
+    // Contributor attempt to delete evidence is denied
+    await assertFails(contribDb.doc(`tenants/${tenantA}/evidence/${evidenceId}`).delete());
+
+    // Tenant Admin can delete evidence
+    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/evidence/${evidenceId}`).delete());
+  });
 });
