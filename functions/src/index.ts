@@ -184,3 +184,14 @@ export {
   listTenantAdoptedFrameworks,
   listTenantRequirementApplicability,
 } from './handlers/frameworks.js';
+
+// Structured Scope Profiles & Scope Facts Handlers
+export {
+  createScopeProfile,
+  updateScopeProfile,
+  approveScopeProfile,
+  recordScopeFact,
+  batchRecordScopeFacts,
+  listTenantScopeProfiles,
+  listTenantScopeFacts,
+} from './handlers/scoping.js';

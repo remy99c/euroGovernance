@@ -495,6 +495,26 @@ service cloud.firestore {
                       && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
       }
+
+      // Tenant Scope Profiles
+      match /scope_profiles/{profileId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      // Tenant Scope Facts
+      match /scope_facts/{factId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager']);
+      }
     }
   }
 }

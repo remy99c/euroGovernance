@@ -22,6 +22,25 @@ export const VALID_FRAMEWORK_ADOPTION_STATUSES: readonly FrameworkAdoptionStatus
   'retired',
 ] as const;
 
+export type ScopeProfileType =
+  | 'general_compliance'
+  | 'iso_isms'
+  | 'iso_aims'
+  | 'gdpr_privacy'
+  | 'ai_governance'
+  | 'data_act'
+  | 'integrated_grc';
+
+export const VALID_SCOPE_PROFILE_TYPES: readonly ScopeProfileType[] = [
+  'general_compliance',
+  'iso_isms',
+  'iso_aims',
+  'gdpr_privacy',
+  'ai_governance',
+  'data_act',
+  'integrated_grc',
+] as const;
+
 export type ScopeProfileStatus = 'draft' | 'under_review' | 'approved' | 'superseded';
 
 export const VALID_SCOPE_PROFILE_STATUSES: readonly ScopeProfileStatus[] = [
@@ -255,18 +274,36 @@ export interface TenantFrameworkAdoption extends BaseEntity {
 export interface TenantScopeProfile extends BaseEntity {
   title: string;
   description: string;
+  profileType: ScopeProfileType;
   status: ScopeProfileStatus;
   version: string;
+  revisionNumber: number;
+  revisionRationale: string;
+  supersededProfileId: string | null;
   applicableFrameworkIds: string[];
-  // Relational Entity Bindings
+  narrativeStatement: string; // Formal scope statement (e.g. Clause 4.3 ISMS or GDPR statutory scope text)
+  // Structured Scope Facts & Entity Bindings
+  includedLegalEntities: string[];
+  includedBusinessUnits: string[];
+  includedLocations: string[];
+  includedJurisdictions: string[];
+  processesPersonalData: boolean;
+  processesSpecialCategoryData: boolean;
+  deploysAISystems: boolean;
+  deploysHighRiskAI: boolean;
+  hasInternationalTransfers: boolean;
+  cloudProviders: string[];
   inScopeAssetIds: string[]; // -> /system_assets
   inScopeVendorIds: string[]; // -> /vendors
   inScopeAISystemIds: string[]; // -> /ai_systems
   inScopeRopaIds: string[]; // -> /ropa_entries
-  includedLocations: string[]; // e.g. ['Frankfurt DC', 'Stockholm Office']
-  includedLegalEntities: string[]; // e.g. ['EuroCorp SE', 'EuroCorp France SAS']
-  excludedOperations: string[]; // Formal exclusions
+  excludedOperations: string[];
   exclusionsJustification: string;
+  frameworkSpecificFacts?: Record<string, unknown>;
+  // Completeness & Approval Tracking
+  completenessPercentage: number; // 0 to 100
+  isComplete: boolean;
+  missingFactKeys: string[];
   approvedBy: string | null;
   approvedAt: string | null;
   reviewFrequencyDays: number;
@@ -278,7 +315,10 @@ export interface TenantScopeProfile extends BaseEntity {
  * Discrete factual declaration evaluated by applicability rules.
  */
 export interface TenantScopeFact extends BaseEntity {
+  scopeProfileId: string | null;
+  frameworkId: string | null;
   factKey: string; // Unique within tenant e.g. 'operates_physical_datacenters'
+  factTitle?: string;
   category: ScopeFactCategory;
   dataType: ScopeFactDataType;
   valueBoolean: boolean | null;
@@ -404,8 +444,95 @@ export function isValidFrameworkAdoptionStatus(status: unknown): status is Frame
   return typeof status === 'string' && VALID_FRAMEWORK_ADOPTION_STATUSES.includes(status as FrameworkAdoptionStatus);
 }
 
+export function isValidScopeProfileType(type: unknown): type is ScopeProfileType {
+  return typeof type === 'string' && VALID_SCOPE_PROFILE_TYPES.includes(type as ScopeProfileType);
+}
+
 export function isValidScopeProfileStatus(status: unknown): status is ScopeProfileStatus {
   return typeof status === 'string' && VALID_SCOPE_PROFILE_STATUSES.includes(status as ScopeProfileStatus);
+}
+
+/**
+ * Calculates scope completeness percentage and identifies missing fact keys.
+ */
+export function calculateScopeCompleteness(profile: Partial<TenantScopeProfile>): {
+  completenessPercentage: number;
+  isComplete: boolean;
+  missingFactKeys: string[];
+} {
+  const checks: Array<{ key: string; passed: boolean }> = [
+    { key: 'title', passed: !!profile.title && profile.title.trim().length > 0 },
+    { key: 'narrativeStatement', passed: !!profile.narrativeStatement && profile.narrativeStatement.trim().length >= 10 },
+    { key: 'includedLegalEntities', passed: Array.isArray(profile.includedLegalEntities) && profile.includedLegalEntities.length > 0 },
+    { key: 'includedBusinessUnits', passed: Array.isArray(profile.includedBusinessUnits) && profile.includedBusinessUnits.length > 0 },
+    { key: 'includedLocations', passed: Array.isArray(profile.includedLocations) && profile.includedLocations.length > 0 },
+    { key: 'includedJurisdictions', passed: Array.isArray(profile.includedJurisdictions) && profile.includedJurisdictions.length > 0 },
+    { key: 'processesPersonalData', passed: typeof profile.processesPersonalData === 'boolean' },
+    { key: 'deploysAISystems', passed: typeof profile.deploysAISystems === 'boolean' },
+    { key: 'cloudProviders', passed: Array.isArray(profile.cloudProviders) && profile.cloudProviders.length > 0 },
+    { key: 'exclusionsJustification', passed: typeof profile.exclusionsJustification === 'string' && profile.exclusionsJustification.trim().length > 0 },
+  ];
+
+  const missingFactKeys = checks.filter((c) => !c.passed).map((c) => c.key);
+  const passedCount = checks.length - missingFactKeys.length;
+  const completenessPercentage = Math.round((passedCount / checks.length) * 100);
+  const isComplete = missingFactKeys.length === 0;
+
+  return { completenessPercentage, isComplete, missingFactKeys };
+}
+
+/**
+ * Validates a TenantScopeProfile conforming to its declared profileType.
+ */
+export function validateScopeProfile(profile: Partial<TenantScopeProfile>): { valid: boolean; error?: string } {
+  if (!profile.title || typeof profile.title !== 'string' || profile.title.trim().length === 0) {
+    return { valid: false, error: 'Scope profile title is required.' };
+  }
+  if (!profile.profileType || !isValidScopeProfileType(profile.profileType)) {
+    return { valid: false, error: `Invalid or missing profileType: ${profile.profileType}` };
+  }
+  if (!profile.version || typeof profile.version !== 'string') {
+    return { valid: false, error: 'Scope profile version string is required.' };
+  }
+
+  // Type-specific statutory & standard validations
+  switch (profile.profileType) {
+    case 'iso_isms':
+    case 'iso_aims':
+      if (!profile.narrativeStatement || profile.narrativeStatement.trim().length < 15) {
+        return { valid: false, error: 'ISO scope profiles require a formal Clause 4.3 narrative scope statement.' };
+      }
+      if (!profile.includedLocations || profile.includedLocations.length === 0) {
+        return { valid: false, error: 'ISO scope profiles require at least one included location/data center.' };
+      }
+      if (!profile.includedBusinessUnits || profile.includedBusinessUnits.length === 0) {
+        return { valid: false, error: 'ISO scope profiles require at least one included business unit.' };
+      }
+      if (!profile.exclusionsJustification || profile.exclusionsJustification.trim().length === 0) {
+        return { valid: false, error: 'ISO scope profiles require an explicit exclusions justification.' };
+      }
+      break;
+
+    case 'gdpr_privacy':
+      if (profile.processesPersonalData !== true) {
+        return { valid: false, error: 'GDPR privacy scope profiles require processesPersonalData to be explicitly true.' };
+      }
+      if (!profile.includedJurisdictions || profile.includedJurisdictions.length === 0) {
+        return { valid: false, error: 'GDPR privacy scope profiles require at least one target jurisdiction.' };
+      }
+      break;
+
+    case 'ai_governance':
+      if (typeof profile.deploysAISystems !== 'boolean') {
+        return { valid: false, error: 'AI Governance scope profiles require an explicit deploysAISystems declaration.' };
+      }
+      if (profile.deploysHighRiskAI && (!profile.inScopeAISystemIds || profile.inScopeAISystemIds.length === 0)) {
+        return { valid: false, error: 'AI Governance scope profiles declaring high-risk AI must link inScopeAISystemIds.' };
+      }
+      break;
+  }
+
+  return { valid: true };
 }
 
 export function isValidApplicabilityType(type: unknown): type is ApplicabilityType {
