@@ -59,6 +59,26 @@ export {
   listTenantSystemAssets,
 } from './handlers/vendors-and-assets.js';
 
+// GDPR Phase 1 Module Handlers
+export {
+  createTenantROPA,
+  updateTenantROPA,
+  deleteTenantROPA,
+  listTenantROPA,
+  createTenantDPIA,
+  transitionTenantDPIAStatus,
+  listTenantDPIAs,
+  createTenantTIA,
+  transitionTenantTIAStatus,
+  listTenantTIAs,
+  createTenantDSR,
+  updateTenantDSR,
+  listTenantDSRs,
+  logTenantBreach,
+  updateTenantBreach,
+  listTenantBreaches,
+} from './handlers/gdpr.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,
