@@ -14,10 +14,12 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import FrameworkAdoptionWizard from './framework-adoption-wizard';
+import ApplicabilityReviewTab from './applicability-review';
 
 type TabType =
   | 'overview'
   | 'frameworks'
+  | 'applicability_review'
   | 'controls'
   | 'evidence'
   | 'risks_tasks'
@@ -466,6 +468,7 @@ export default function DashboardPage() {
             {[
               { id: 'overview', label: '📊 Executive Overview' },
               { id: 'frameworks', label: '🚀 Framework Wizard' },
+              { id: 'applicability_review', label: '⚖️ Applicability Review' },
               { id: 'controls', label: '🛡️ Unified Controls' },
               { id: 'evidence', label: '📁 Evidence Inbox' },
               { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
@@ -1196,6 +1199,11 @@ export default function DashboardPage() {
         {/* TAB: FRAMEWORK ADOPTION WIZARD & COVERAGE DASHBOARD */}
         {activeTab === 'frameworks' && (
           <FrameworkAdoptionWizard tenantId={tenantId} onComplete={() => showNotice('✅ Framework adoption & control instantiation complete!')} />
+        )}
+
+        {/* TAB: APPLICABILITY REVIEW & DECISIONS */}
+        {activeTab === 'applicability_review' && (
+          <ApplicabilityReviewTab tenantId={tenantId} userRole={userRole} />
         )}
       </main>
     </div>
