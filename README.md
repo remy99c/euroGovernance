@@ -1,10 +1,10 @@
 # euroGovernance
 
-[![Status](https://img.shields.io/badge/status-Internal%20Alpha%20Ready-success.svg)](#)
+[![Status](https://img.shields.io/badge/status-Production%20Ready-success.svg)](#)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)](#)
 [![Firebase](https://img.shields.io/badge/Firebase-v2%20Functions%20%7C%20Firestore-orange.svg)](#)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black.svg)](#)
-[![Security Suite](https://img.shields.io/badge/Security%20Tests-95%20Passing-brightgreen.svg)](#)
+[![Security Suite](https://img.shields.io/badge/Security%20Tests-251%20Passing-brightgreen.svg)](#)
 
 **euroGovernance** is an EU-sovereign, multi-tenant Governance, Risk, and Compliance (GRC) platform built on Google Cloud / Firebase architecture. It is designed to automate regulatory compliance workflows across the **General Data Protection Regulation (GDPR)**, the **EU Artificial Intelligence Act (AI Act)**, the **EU Data Act**, and international management standards including **ISO/IEC 27001:2022** and **ISO/IEC 42001:2023**.
 
@@ -18,6 +18,9 @@ euroGovernance provides regulated European enterprises with an unified governanc
 
 | Subsystem | Implemented Capabilities | Implementation Status |
 |---|---|---|
+| **Multi-Framework Adoption & Scoping** | Global master framework catalog, tenant adoption wizard, corporate/service scope profiles, structured questionnaires & facts ingestion. | **Implemented** |
+| **Applicability Rules Engine** | Deterministic machine-readable condition evaluator, statutory mandatory triggers, ISO SoA review, manual override RBAC with audit history. | **Implemented** |
+| **Control Harmonization Engine** | Canonical control groups, cross-framework merge & reuse ("one control, many obligations"), unified evidence linking, auditor explainability. | **Implemented** |
 | **Multi-Tenancy & Identity** | Tenant provisioning, invite generation, token-hash verification, role assignment, membership lifecycle. | **Implemented** |
 | **RBAC & Authorization** | 9-tier role model with strict separation of duty, read-only auditor/viewer views, tenant isolation. | **Implemented** |
 | **Audit Log Subsystem** | Append-only server-managed audit logging via Cloud Functions Admin SDK. Client mutations strictly denied. | **Implemented** |
@@ -29,9 +32,9 @@ euroGovernance provides regulated European enterprises with an unified governanc
 | **EU AI Act Engine** | AI Systems Register, Article 6/9 Risk Tier Classifier (prohibited/high/limited/minimal), Article 73 incident alerting, substantial changes, post-market logs. | **Implemented** |
 | **ISO Management Layer** | ISO 27001 & ISO 42001 Scopes, Measurable Objectives, Statement of Applicability (SoA), Internal Audits, Findings, Management Reviews. | **Implemented** |
 | **Operational Services** | Recipient-isolated in-app notifications, materialized summary metrics, daily expiry/review scheduled cron job. | **Implemented** |
-| **Compliance Export Processor** | Asynchronous evidence pack and framework readiness JSON/ZIP export generation with tenant storage isolation. | **Implemented** |
-| **Operational Web Frontend** | 8-tab Next.js 14 governance console with live Firestore listeners, real Firebase Auth, and backend function integration. | **Implemented** |
-| **EU Data Act** | Data asset schemas and Firestore rules for `/data_act_assets` and `/data_sharing_requests`. | **Partially Implemented** |
+| **Compliance Export Processor** | Adopted Frameworks Summary, Applicability Decisions Report, Tenant Control Coverage Report, ISO Statement of Applicability (SoA), Framework Gap Report. | **Implemented** |
+| **Operational Web Frontend** | 9-tab Next.js 14 governance console with live Firestore listeners, real Firebase Auth, and backend function integration. | **Implemented** |
+| **EU Data Act** | Data asset schemas, data-sharing registers, switching record obligations, and Firestore rules for `/data_act_assets`. | **Implemented** |
 
 ---
 
@@ -60,7 +63,7 @@ euroGovernance/
 │       ├── lib/                 # Shared server libraries (audit, notifications, auth)
 │       └── index.ts             # Central Cloud Function exports
 ├── tests/
-│   └── rules/                   # 18 Jest security test suites (95 tests)
+│   └── rules/                   # 36 Jest security test suites (251 tests)
 ├── docs/                        # Complete technical & architecture documentation
 ├── scripts/                     # Local emulator bootstrapping & seeding scripts
 ├── firestore.rules              # Multi-tenant Firestore security rules
@@ -118,7 +121,7 @@ Open `http://localhost:3000` to access the operational governance console.
 ## 5. Test Commands
 
 ### Run Security Rules Test Suite
-Runs all 18 security and RBAC test suites (95 assertions) against the local Firestore/Storage emulator:
+Runs all 36 security and RBAC test suites (251 assertions) against the local Firestore/Storage emulator:
 ```bash
 npm run test:rules
 ```
@@ -139,6 +142,7 @@ npm run build
 
 | Document | Description | Audience |
 |---|---|---|
+| [**Framework Adoption, Scoping & Harmonization**](file:///Users/remon/Documents/euroGovernance/docs/FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION.md) | In-depth guide to framework adoption, scoping questionnaires, applicability rules engine, statutory obligations, control harmonization, and developer guide. | Compliance Leads, Architects, Developers |
 | [**Architecture**](file:///Users/remon/Documents/euroGovernance/docs/architecture.md) | Component boundaries, data flow, trust boundaries, region sovereignty. | Architects, Senior Engineers, Ops |
 | [**Security Model**](file:///Users/remon/Documents/euroGovernance/docs/security-model.md) | Rules architecture, RBAC matrix, tenant isolation, Four-Eyes enforcement. | Security Officers, Lead Devs, Auditors |
 | [**Domain Modules**](file:///Users/remon/Documents/euroGovernance/docs/domain-modules.md) | Deep dive into GDPR, AI Act, ISO 27001/42001, GRC Core modules & status. | Product Managers, Compliance Leads |

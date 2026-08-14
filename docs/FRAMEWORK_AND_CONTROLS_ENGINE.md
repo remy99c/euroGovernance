@@ -269,3 +269,10 @@ interface TenantComplianceSummary {
 - [x] Control health score dynamically incorporates implementation status and evidence validity.
 - [x] Historical control reviews are stored in subcollections (`/reviews/{reviewId}`) to prevent document bloat.
 - [x] Traceability model supports end-to-end export generation: `Requirement -> Control -> Evidence -> Audit Log`.
+
+---
+
+## 8. Detailed Architectural Guides
+
+For full operational specifications of scoping, dynamic applicability rules evaluation, statutory obligation registers, and canonical harmonization merges, see:
+- [`FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION.md`](./FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION.md)
