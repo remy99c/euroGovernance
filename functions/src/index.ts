@@ -135,6 +135,14 @@ export {
   getTenantSummaryMetrics,
 } from './handlers/metrics.js';
 
+// Compliance Export Handlers
+export {
+  generateTenantEvidenceExport,
+  generateFrameworkReadinessReport,
+  getExportJob,
+  listTenantExportJobs,
+} from './handlers/exports.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,
@@ -158,12 +166,6 @@ export {
   transitionAIAssessmentStatus,
   logAIIncident,
 } from './handlers/workflows.js';
-
-// Compliance Export Handlers
-export {
-  generateTenantEvidenceExport,
-  generateFrameworkReadinessReport,
-} from './handlers/exports.js';
 
 // Scheduled Maintenance & Expiry Handlers
 export {
