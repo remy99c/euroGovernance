@@ -505,6 +505,31 @@ export interface TenantScopeAnswer extends BaseEntity {
   answeredAt: string;
 }
 
+export type DecisionSource = 'auto' | 'user_override' | 'reviewer_override';
+
+export interface AutoApplicabilityBaseline {
+  isApplicable: boolean;
+  status: ApplicabilityStatus;
+  matchedRuleId: string | null;
+  ruleEvaluationSummary: string | null;
+  evaluatedAt: string;
+}
+
+export interface ApplicabilityDecisionHistoryEntry {
+  timestamp: string;
+  actorId: string;
+  actorRole: string;
+  decisionSource: DecisionSource;
+  previousStatus: ApplicabilityStatus;
+  newStatus: ApplicabilityStatus;
+  previousIsApplicable: boolean;
+  newIsApplicable: boolean;
+  overrideRationale: string;
+  reviewerId?: string | null;
+  reviewerRole?: string | null;
+  notes?: string | null;
+}
+
 /**
  * 5. Tenant Applicability Decision (/tenants/{tenantId}/applicability_decisions/{decisionId})
  * Formal statement on whether a specific statutory requirement is applicable to the tenant.
@@ -517,16 +542,23 @@ export interface TenantApplicabilityDecision extends BaseEntity {
   isApplicable: boolean;
   status: ApplicabilityStatus;
   applicabilityType: ApplicabilityType;
-  // Audit-friendly justifications & overrides
+  // Decision Source Tracking & Override Details
+  decisionSource?: DecisionSource; // 'auto' | 'user_override' | 'reviewer_override'
+  isOverridden?: boolean;
+  autoResult?: AutoApplicabilityBaseline | null;
+  overrideReason: string | null; // Rationale for manual exclusion or inclusion
+  overrideRationale?: string | null;
+  // Audit-friendly justifications & history
   matchedRuleId: string | null; // Rule that derived this decision
   ruleEvaluationSummary: string | null;
   rationale: string;
-  overrideReason: string | null; // Mandatory if manual_exclusion or manual_inclusion contradicts rule
   previousStatus: ApplicabilityStatus | null;
   assessedBy: string;
   assessedAt: string;
   reviewedBy: string | null;
   reviewedAt: string | null;
+  reviewerRole?: string | null;
+  history?: ApplicabilityDecisionHistoryEntry[];
 }
 
 /**
@@ -1428,6 +1460,191 @@ export function evaluateFrameworkApplicabilityRules(
   facts: Record<string, TenantScopeFact | unknown>
 ): ApplicabilityRuleEvaluationResult[] {
   return rules.map((r) => evaluateApplicabilityRule(r, facts));
+}
+
+// =============================================================================
+// APPLICABILITY OVERRIDE & REVIEW LIFECYCLE HELPERS
+// =============================================================================
+
+/**
+ * Validates an applicability decision override request.
+ * Strictly enforces non-empty override rationale (minimum 10 characters).
+ */
+export function validateApplicabilityOverride(params: {
+  newStatus: ApplicabilityStatus;
+  isApplicable: boolean;
+  overrideRationale: string;
+  decisionSource: DecisionSource;
+  reviewerId?: string | null;
+}): { valid: boolean; error?: string } {
+  const { newStatus, overrideRationale, decisionSource, reviewerId } = params;
+
+  if (!isValidApplicabilityStatus(newStatus)) {
+    return { valid: false, error: `Invalid applicability status: '${newStatus}'.` };
+  }
+
+  if (!overrideRationale || typeof overrideRationale !== 'string' || overrideRationale.trim().length < 10) {
+    return {
+      valid: false,
+      error: 'Mandatory override rationale (minimum 10 characters) is required when manually overriding an applicability decision.',
+    };
+  }
+
+  if (decisionSource === 'reviewer_override' && (!reviewerId || reviewerId.trim().length === 0)) {
+    return {
+      valid: false,
+      error: 'Reviewer attribution (reviewerId) is required for reviewer_override decision source.',
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Applies a manual or reviewer override to an applicability decision,
+ * preserving original automatic baseline results for comparison and logging full historical attribution.
+ */
+export function applyApplicabilityOverride(params: {
+  decision: TenantApplicabilityDecision;
+  newStatus: ApplicabilityStatus;
+  isApplicable: boolean;
+  overrideRationale: string;
+  actorId: string;
+  actorRole: string;
+  decisionSource: DecisionSource;
+  reviewerId?: string | null;
+  reviewerRole?: string | null;
+  notes?: string | null;
+}): TenantApplicabilityDecision {
+  const {
+    decision,
+    newStatus,
+    isApplicable,
+    overrideRationale,
+    actorId,
+    actorRole,
+    decisionSource,
+    reviewerId,
+    reviewerRole,
+    notes,
+  } = params;
+
+  const validation = validateApplicabilityOverride({
+    newStatus,
+    isApplicable,
+    overrideRationale,
+    decisionSource,
+    reviewerId,
+  });
+
+  if (!validation.valid) {
+    throw new Error(`Invalid override: ${validation.error}`);
+  }
+
+  const now = new Date().toISOString();
+
+  // 1. Establish baseline auto result if not already captured
+  const autoResult: AutoApplicabilityBaseline = decision.autoResult || {
+    isApplicable: decision.isApplicable,
+    status: decision.status,
+    matchedRuleId: decision.matchedRuleId,
+    ruleEvaluationSummary: decision.ruleEvaluationSummary,
+    evaluatedAt: decision.assessedAt || decision.createdAt || now,
+  };
+
+  // 2. Build History Entry
+  const historyEntry: ApplicabilityDecisionHistoryEntry = {
+    timestamp: now,
+    actorId,
+    actorRole,
+    decisionSource,
+    previousStatus: decision.status,
+    newStatus,
+    previousIsApplicable: decision.isApplicable,
+    newIsApplicable: isApplicable,
+    overrideRationale: overrideRationale.trim(),
+    reviewerId: reviewerId || (decisionSource === 'reviewer_override' ? actorId : null),
+    reviewerRole: reviewerRole || (decisionSource === 'reviewer_override' ? actorRole : null),
+    notes: notes?.trim() || null,
+  };
+
+  const existingHistory = Array.isArray(decision.history) ? [...decision.history] : [];
+  existingHistory.push(historyEntry);
+
+  return {
+    ...decision,
+    status: newStatus,
+    isApplicable,
+    decisionSource,
+    isOverridden: true,
+    autoResult,
+    overrideReason: overrideRationale.trim(),
+    overrideRationale: overrideRationale.trim(),
+    previousStatus: decision.status,
+    reviewedBy: reviewerId || actorId,
+    reviewedAt: now,
+    reviewerRole: reviewerRole || actorRole,
+    history: existingHistory,
+    updatedAt: now,
+    updatedBy: actorId,
+  };
+}
+
+/**
+ * Reverts an overridden applicability decision back to its automatic baseline result,
+ * preserving full audit history of the reversion event.
+ */
+export function revertApplicabilityOverride(params: {
+  decision: TenantApplicabilityDecision;
+  actorId: string;
+  actorRole: string;
+  reason: string;
+}): TenantApplicabilityDecision {
+  const { decision, actorId, actorRole, reason } = params;
+
+  if (!decision.autoResult) {
+    throw new Error('Cannot revert applicability decision: No automatic baseline result (autoResult) found on record.');
+  }
+
+  const now = new Date().toISOString();
+  const baseline = decision.autoResult;
+
+  const historyEntry: ApplicabilityDecisionHistoryEntry = {
+    timestamp: now,
+    actorId,
+    actorRole,
+    decisionSource: 'auto',
+    previousStatus: decision.status,
+    newStatus: baseline.status,
+    previousIsApplicable: decision.isApplicable,
+    newIsApplicable: baseline.isApplicable,
+    overrideRationale: `Reverted to automatic baseline: ${reason.trim()}`,
+    reviewerId: actorId,
+    reviewerRole: actorRole,
+    notes: 'Reversion to automatic rule-evaluated baseline result.',
+  };
+
+  const existingHistory = Array.isArray(decision.history) ? [...decision.history] : [];
+  existingHistory.push(historyEntry);
+
+  return {
+    ...decision,
+    status: baseline.status,
+    isApplicable: baseline.isApplicable,
+    decisionSource: 'auto',
+    isOverridden: false,
+    matchedRuleId: baseline.matchedRuleId,
+    ruleEvaluationSummary: baseline.ruleEvaluationSummary,
+    overrideReason: null,
+    overrideRationale: null,
+    previousStatus: decision.status,
+    reviewedBy: actorId,
+    reviewedAt: now,
+    reviewerRole: actorRole,
+    history: existingHistory,
+    updatedAt: now,
+    updatedBy: actorId,
+  };
 }
 
 // =============================================================================

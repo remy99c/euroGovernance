@@ -15,6 +15,10 @@ import {
   instantiateTenantGRC,
   buildControlCoverageSummary,
   deriveStatutoryObligations,
+  applyApplicabilityOverride,
+  revertApplicabilityOverride,
+  DecisionSource,
+  ApplicabilityStatus,
   CANONICAL_APPLICABILITY_RULES,
   CANONICAL_MASTER_DATA,
 } from '@eurogovernance/shared-types';
@@ -528,4 +532,161 @@ export const listTenantObligationFlags = onCall(async (request) => {
   const obligationFlags = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   return { obligationFlags };
+});
+
+/**
+ * 11. Override Tenant Applicability Decision
+ */
+export interface OverrideApplicabilityDecisionInput {
+  tenantId: string;
+  decisionId: string;
+  newStatus: ApplicabilityStatus;
+  isApplicable: boolean;
+  overrideRationale: string;
+  decisionSource?: DecisionSource;
+  reviewerId?: string | null;
+  reviewerRole?: string | null;
+  notes?: string | null;
+}
+
+export const overrideTenantApplicabilityDecision = onCall<OverrideApplicabilityDecisionInput>(async (request) => {
+  const {
+    tenantId,
+    decisionId,
+    newStatus,
+    isApplicable,
+    overrideRationale,
+    decisionSource = 'user_override',
+    reviewerId,
+    reviewerRole,
+    notes,
+  } = request.data || {};
+
+  if (!tenantId || !decisionId || !newStatus || isApplicable === undefined || !overrideRationale) {
+    throw new HttpsError(
+      'invalid-argument',
+      'tenantId, decisionId, newStatus, isApplicable, and overrideRationale are required.'
+    );
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
+
+  const docRef = db.collection('tenants').doc(tenantId).collection('applicability_decisions').doc(decisionId);
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Applicability decision '${decisionId}' not found.`);
+  }
+
+  const prevDecision = snap.data() as TenantApplicabilityDecision;
+
+  const overridden = applyApplicabilityOverride({
+    decision: prevDecision,
+    newStatus,
+    isApplicable,
+    overrideRationale,
+    actorId: authContext.userId,
+    actorRole: authContext.role,
+    decisionSource,
+    reviewerId: reviewerId || (decisionSource === 'reviewer_override' ? authContext.userId : null),
+    reviewerRole: reviewerRole || (decisionSource === 'reviewer_override' ? authContext.role : null),
+    notes,
+  });
+
+  await docRef.set(overridden, { merge: true });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'tenant_applicability_decision',
+    entityId: decisionId,
+    action: 'update',
+    beforeSummary: { status: prevDecision.status, isApplicable: prevDecision.isApplicable },
+    afterSummary: { status: overridden.status, isApplicable: overridden.isApplicable, overrideRationale },
+    source: 'cloud_function',
+    workflowContext: 'applicability_decision_override',
+  });
+
+  return { success: true, decision: overridden };
+});
+
+/**
+ * 12. Revert Tenant Applicability Decision Back to Automatic Baseline
+ */
+export interface RevertApplicabilityDecisionInput {
+  tenantId: string;
+  decisionId: string;
+  reason: string;
+}
+
+export const revertTenantApplicabilityDecision = onCall<RevertApplicabilityDecisionInput>(async (request) => {
+  const { tenantId, decisionId, reason } = request.data || {};
+  if (!tenantId || !decisionId || !reason) {
+    throw new HttpsError('invalid-argument', 'tenantId, decisionId, and reason are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
+
+  const docRef = db.collection('tenants').doc(tenantId).collection('applicability_decisions').doc(decisionId);
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Applicability decision '${decisionId}' not found.`);
+  }
+
+  const prevDecision = snap.data() as TenantApplicabilityDecision;
+
+  const reverted = revertApplicabilityOverride({
+    decision: prevDecision,
+    actorId: authContext.userId,
+    actorRole: authContext.role,
+    reason,
+  });
+
+  await docRef.set(reverted, { merge: true });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'tenant_applicability_decision',
+    entityId: decisionId,
+    action: 'update',
+    beforeSummary: { status: prevDecision.status, isApplicable: prevDecision.isApplicable },
+    afterSummary: { status: reverted.status, isApplicable: reverted.isApplicable, revertedToAuto: true },
+    source: 'cloud_function',
+    workflowContext: 'applicability_decision_reversion',
+  });
+
+  return { success: true, decision: reverted };
+});
+
+/**
+ * 13. Get Applicability Decision History
+ */
+export const getTenantApplicabilityDecisionHistory = onCall(async (request) => {
+  const { tenantId, decisionId } = request.data || {};
+  if (!tenantId || !decisionId) {
+    throw new HttpsError('invalid-argument', 'tenantId and decisionId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const docRef = db.collection('tenants').doc(tenantId).collection('applicability_decisions').doc(decisionId);
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Applicability decision '${decisionId}' not found.`);
+  }
+
+  const decision = snap.data() as TenantApplicabilityDecision;
+
+  return {
+    decisionId,
+    requirementId: decision.requirementId,
+    decisionSource: decision.decisionSource || 'auto',
+    isOverridden: decision.isOverridden || false,
+    autoResult: decision.autoResult || null,
+    history: decision.history || [],
+  };
 });

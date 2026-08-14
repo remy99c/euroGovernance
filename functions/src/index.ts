@@ -216,4 +216,7 @@ export {
   listTenantControlMappings,
   evaluateStatutoryObligations,
   listTenantObligationFlags,
+  overrideTenantApplicabilityDecision,
+  revertTenantApplicabilityDecision,
+  getTenantApplicabilityDecisionHistory,
 } from './handlers/applicability.js';
