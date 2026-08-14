@@ -10,11 +10,15 @@
     "apps/*"
   ],
   "scripts": {
+    "dev": "npm run dev --workspace=@eurogovernance/web",
+    "dev:bootstrap": "npx tsx scripts/bootstrap-dev.ts",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run typecheck",
     "test": "npm run test --workspaces --if-present",
-    "emulators:start": "firebase emulators:start --import=./emulator-data --export-on-exit",
-    "emulators:exec": "firebase emulators:exec --import=./emulator-data",
+    "test:rules": "npm run test --workspace=@eurogovernance/rules-tests",
+    "emulators:start": "firebase emulators:start --only firestore,auth,storage,functions,ui",
+    "emulators:exec": "firebase emulators:exec --only firestore,auth,storage,functions,ui",
     "seed:emulator": "npx tsx scripts/seed-emulator.ts",
     "deploy:rules": "firebase deploy --only firestore:rules,storage",
     "deploy:functions": "firebase deploy --only functions",

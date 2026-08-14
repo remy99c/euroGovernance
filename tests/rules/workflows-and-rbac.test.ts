@@ -146,21 +146,22 @@ describe('RBAC & Privileged Workflow Security Rules Enforcement', () => {
     );
   });
 
-  // 4. ISO Management Subcollection Access Test
-  test('Compliance Manager can manage ISO Statement of Applicability and Audits', async () => {
-    const complianceDb = testEnv.authenticatedContext(userCompliance, { email: 'comp@eurocorp.de' }).firestore();
-    const soaRef = complianceDb.doc(`tenants/${tenantA}/iso_soa_entries/soa_01`);
-
-    await assertSucceeds(
-      soaRef.set({
-        id: 'soa_01',
-        tenantId: tenantA,
+  // 5. Cross-Tenant Data Isolation Test
+  test('User from Tenant A cannot read ISO SoA entries in Tenant B', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      await adminDb.doc(`tenants/${tenantB}/iso_soa_entries/soa_secret_b`).set({
+        id: 'soa_secret_b',
+        tenantId: tenantB,
         standard: 'iso_27001',
         controlCode: 'A.5.1',
         applicable: true,
-        createdBy: userCompliance,
-        createdAt: new Date().toISOString(),
-      })
-    );
+      });
+    });
+
+    const complianceDb = testEnv.authenticatedContext(userCompliance, { email: 'comp@eurocorp.de' }).firestore();
+    const crossTenantSoaRef = complianceDb.doc(`tenants/${tenantB}/iso_soa_entries/soa_secret_b`);
+
+    await assertFails(crossTenantSoaRef.get());
   });
 });
