@@ -38,7 +38,7 @@ export const checkEvidenceExpiriesAndReminders = onSchedule('0 4 * * *', async (
       batch.set(notificationRef, {
         id: notificationRef.id,
         tenantId,
-        recipientId: evidence.ownerId,
+        recipientId: evidence.createdBy,
         type: 'evidence_expiry_warning',
         title: 'Evidence Review Expired',
         body: `Evidence "${evidence.title}" has passed its review due date and is now marked as expired.`,

@@ -2,6 +2,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
+import { createNotification } from '../lib/notifications.js';
 import {
   ROPAEntry,
   ROPAStatus,
@@ -949,6 +950,19 @@ export const logTenantBreach = onCall<LogBreachInput>(async (request) => {
     source: 'cloud_function',
     workflowContext: 'breach_incident_log',
   });
+
+  if (breachDoc.ownerId) {
+    await createNotification({
+      tenantId,
+      recipientId: breachDoc.ownerId,
+      title: '🚨 GDPR Art. 33 72-Hour Breach Alert',
+      message: `Breach "${incidentReference}" logged with severity ${severity}. DPA notification deadline expires on ${dpaNotificationDeadline72h}.`,
+      type: 'breach_deadline_warning',
+      priority: 'urgent',
+      sourceEntityType: 'personal_data_breach',
+      sourceEntityId: breachRef.id,
+    });
+  }
 
   return { success: true, breachId: breachRef.id, breach: breachDoc };
 });

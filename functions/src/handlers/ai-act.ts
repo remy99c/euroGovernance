@@ -2,6 +2,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
+import { createNotification } from '../lib/notifications.js';
 import {
   AISystem,
   AIRoleType,
@@ -557,6 +558,19 @@ export const logTenantAIIncident = onCall<LogAIIncidentInput>(async (request) =>
     source: 'cloud_function',
     workflowContext: 'ai_incident_log',
   });
+
+  if (incidentDoc.ownerId) {
+    await createNotification({
+      tenantId,
+      recipientId: incidentDoc.ownerId,
+      title: '🚨 EU AI Act Art. 73 Serious Incident Logged',
+      message: `AI Incident "${incidentReference}" logged with severity ${severity}. Surveillance authority notification deadline is ${authorityNotificationDeadline}.`,
+      type: 'ai_incident_reported',
+      priority: severity === 'serious_incident' ? 'urgent' : 'high',
+      sourceEntityType: 'ai_incident',
+      sourceEntityId: incidentRef.id,
+    });
+  }
 
   return { success: true, incidentId: incidentRef.id, incident: incidentDoc };
 });
