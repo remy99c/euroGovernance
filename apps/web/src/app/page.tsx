@@ -15,9 +15,11 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import FrameworkAdoptionWizard from './framework-adoption-wizard';
 import ApplicabilityReviewTab from './applicability-review';
+import FrameworkCoverageDashboardTab from './framework-coverage-dashboard';
 
 type TabType =
   | 'overview'
+  | 'coverage_dashboard'
   | 'frameworks'
   | 'applicability_review'
   | 'controls'
@@ -467,6 +469,7 @@ export default function DashboardPage() {
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {[
               { id: 'overview', label: '📊 Executive Overview' },
+              { id: 'coverage_dashboard', label: '🌐 Framework Coverage' },
               { id: 'frameworks', label: '🚀 Framework Wizard' },
               { id: 'applicability_review', label: '⚖️ Applicability Review' },
               { id: 'controls', label: '🛡️ Unified Controls' },
@@ -1196,9 +1199,18 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* TAB: FRAMEWORK ADOPTION WIZARD & COVERAGE DASHBOARD */}
+        {/* TAB: FRAMEWORK ADOPTION WIZARD */}
         {activeTab === 'frameworks' && (
           <FrameworkAdoptionWizard tenantId={tenantId} onComplete={() => showNotice('✅ Framework adoption & control instantiation complete!')} />
+        )}
+
+        {/* TAB: MULTI-FRAMEWORK COVERAGE DASHBOARD */}
+        {activeTab === 'coverage_dashboard' && (
+          <FrameworkCoverageDashboardTab
+            tenantId={tenantId}
+            onNavigateToWizard={() => setActiveTab('frameworks')}
+            onNavigateToReview={() => setActiveTab('applicability_review')}
+          />
         )}
 
         {/* TAB: APPLICABILITY REVIEW & DECISIONS */}

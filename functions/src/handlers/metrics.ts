@@ -11,6 +11,15 @@ import {
   DSRRequest,
   AISystem,
   Issue,
+  computeTenantFrameworkCoverage,
+  CANONICAL_FRAMEWORKS,
+  CANONICAL_REQUIREMENTS,
+  TenantApplicabilityDecision,
+  TenantRequirementInstance,
+  TenantControlInstance,
+  StatutoryObligationFlag,
+  Framework,
+  Requirement,
 } from '@eurogovernance/shared-types';
 
 export interface MaterializeMetricsInput {
@@ -196,4 +205,81 @@ export const getTenantSummaryMetrics = onCall<GetMetricsInput>(async (request) =
   // Compute on-the-fly if not yet materialized
   const metrics = await computeAndStoreTenantMetrics(tenantId, 'auto_init');
   return { success: true, metrics };
+});
+
+/**
+ * Callable Function: getTenantFrameworkCoverageDashboard
+ * Real derivation of multi-framework coverage, requirements status, harmonized controls, and gap indicators.
+ */
+export const getTenantFrameworkCoverageDashboard = onCall<GetMetricsInput>(async (request) => {
+  const { tenantId } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const tenantRef = db.collection('tenants').doc(tenantId);
+
+  // 1. Fetch Adopted Frameworks
+  const adoptedSnap = await tenantRef.collection('adopted_frameworks').get();
+  const adoptedFrameworkIds: string[] = [];
+  for (const doc of adoptedSnap.docs) {
+    const data = doc.data();
+    if (data.frameworkId) {
+      adoptedFrameworkIds.push(data.frameworkId);
+    }
+  }
+
+  // 2. Fetch Applicability Decisions
+  const decisionsSnap = await tenantRef.collection('applicability_decisions').get();
+  const decisions = decisionsSnap.docs.map((d) => d.data() as TenantApplicabilityDecision);
+
+  // 3. Fetch Requirement Instances
+  const reqInstancesSnap = await tenantRef.collection('requirement_instances').get();
+  const requirementInstances = reqInstancesSnap.docs.map((d) => d.data() as TenantRequirementInstance);
+
+  // 4. Fetch Tenant Controls
+  const controlsSnap = await tenantRef.collection('controls').get();
+  const controls = controlsSnap.docs.map((d) => d.data() as (TenantControlInstance | Control));
+
+  // 5. Fetch Evidence
+  const evidenceSnap = await tenantRef.collection('evidence').get();
+  const evidence = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+  // 6. Fetch Statutory Obligations
+  const obligationsSnap = await tenantRef.collection('statutory_obligations').get();
+  const statutoryObligations = obligationsSnap.docs.map((d) => d.data() as StatutoryObligationFlag);
+
+  // 7. Load Master Frameworks and Requirements (with fallback to canonical data)
+  let frameworks: Framework[] = [];
+  const frameworksSnap = await db.collection('frameworks').get();
+  if (!frameworksSnap.empty) {
+    frameworks = frameworksSnap.docs.map((d) => d.data() as Framework);
+  } else {
+    frameworks = CANONICAL_FRAMEWORKS;
+  }
+
+  let requirements: Requirement[] = [];
+  const reqsGroupSnap = await db.collectionGroup('requirements').get();
+  if (!reqsGroupSnap.empty) {
+    requirements = reqsGroupSnap.docs.map((d) => d.data() as Requirement);
+  } else {
+    requirements = CANONICAL_REQUIREMENTS;
+  }
+
+  // 8. Compute Coverage Dashboard Data
+  const coverageData = computeTenantFrameworkCoverage({
+    tenantId,
+    adoptedFrameworkIds,
+    frameworks,
+    requirements,
+    decisions,
+    requirementInstances,
+    controls,
+    evidence,
+    statutoryObligations,
+  });
+
+  return { success: true, coverage: coverageData };
 });

@@ -137,6 +137,7 @@ export {
 export {
   materializeTenantMetrics,
   getTenantSummaryMetrics,
+  getTenantFrameworkCoverageDashboard,
 } from './handlers/metrics.js';
 
 // Compliance Export Handlers

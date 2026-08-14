@@ -5,6 +5,8 @@ import {
   Requirement,
   MasterControl,
   MasterRequirementControlMapping,
+  Control,
+  Evidence,
 } from './grc.js';
 
 // =============================================================================
@@ -2457,5 +2459,260 @@ export function deriveStatutoryObligations(params: {
     requiredRegisters,
     requiredAssessments,
     requiredOperationalRecords,
+  };
+}
+
+// =============================================================================
+// FRAMEWORK COVERAGE DASHBOARD DERIVATION ENGINE
+// =============================================================================
+
+export interface FrameworkCoverageMetrics {
+  frameworkId: string;
+  frameworkCode: string;
+  frameworkTitle: string;
+  category: string;
+  jurisdiction: string;
+  version: string;
+  isAdopted: boolean;
+  totalRequirementsCount: number;
+  applicableRequirementsCount: number;
+  nonApplicableRequirementsCount: number;
+  reviewNeededRequirementsCount: number;
+  inheritedRequirementsCount: number;
+  deferredRequirementsCount: number;
+  totalControlsCount: number;
+  implementedControlsCount: number;
+  harmonizedControlsCount: number;
+  openGapsCount: number;
+  overdueReviewsCount: number;
+  missingEvidenceCount: number;
+  readinessPercentage: number;
+}
+
+export interface TenantFrameworkCoverageDashboardData {
+  tenantId: string;
+  generatedAt: string;
+  adoptedFrameworksCount: number;
+  totalRequirementsCount: number;
+  totalApplicableCount: number;
+  totalNonApplicableCount: number;
+  totalReviewNeededCount: number;
+  totalControlsCount: number;
+  totalHarmonizedControlsCount: number;
+  totalOpenGapsCount: number;
+  totalOverdueReviewsCount: number;
+  totalMissingEvidenceCount: number;
+  overallReadinessScore: number;
+  frameworks: FrameworkCoverageMetrics[];
+  statutoryObligationsSummary: {
+    totalActiveObligations: number;
+    byFramework: Record<string, number>;
+  };
+}
+
+/**
+ * Computes deterministic framework coverage, obligation counts, gap indicators, and readiness metrics.
+ */
+export function computeTenantFrameworkCoverage(params: {
+  tenantId: string;
+  adoptedFrameworkIds: string[];
+  frameworks: Framework[];
+  requirements: Requirement[];
+  decisions: TenantApplicabilityDecision[];
+  requirementInstances?: TenantRequirementInstance[];
+  controls: (TenantControlInstance | Control)[];
+  evidence?: (Evidence | any)[];
+  statutoryObligations?: StatutoryObligationFlag[];
+}): TenantFrameworkCoverageDashboardData {
+  const {
+    tenantId,
+    adoptedFrameworkIds = [],
+    frameworks = [],
+    requirements = [],
+    decisions = [],
+    requirementInstances = [],
+    controls = [],
+    evidence = [],
+    statutoryObligations = [],
+  } = params;
+
+  const now = new Date().toISOString();
+
+  // Maps for fast lookup
+  const reqInstanceMap = new Map<string, TenantRequirementInstance>();
+  for (const ri of requirementInstances) {
+    reqInstanceMap.set(ri.requirementId, ri);
+  }
+
+  const decisionMap = new Map<string, TenantApplicabilityDecision>();
+  for (const d of decisions) {
+    decisionMap.set(d.requirementId, d);
+  }
+
+  // Evidence linked to controls
+  const evidenceControlIds = new Set<string>();
+  for (const ev of evidence) {
+    if (ev && typeof ev === 'object') {
+      if ('controlId' in ev && ev.controlId) {
+        evidenceControlIds.add(ev.controlId);
+      }
+      if ('controlIds' in ev && Array.isArray(ev.controlIds)) {
+        for (const cid of ev.controlIds) evidenceControlIds.add(cid);
+      }
+    }
+  }
+
+  const frameworkMetricsList: FrameworkCoverageMetrics[] = [];
+
+  let globalTotalRequirements = 0;
+  let globalTotalApplicable = 0;
+  let globalTotalNonApplicable = 0;
+  let globalTotalReviewNeeded = 0;
+  let globalTotalOpenGaps = 0;
+  let globalTotalOverdueReviews = 0;
+  let globalTotalMissingEvidence = 0;
+
+  for (const fw of frameworks) {
+    const isAdopted = adoptedFrameworkIds.includes(fw.id);
+    const fwReqs = requirements.filter((r) => r.frameworkId === fw.id);
+    const totalRequirementsCount = fwReqs.length;
+
+    // Filter controls mapping to this framework
+    const fwControls = controls.filter((c) => {
+      const fws = (c as any).frameworkIds || [];
+      const singleFw = (c as any).frameworkId;
+      return fws.includes(fw.id) || singleFw === fw.id;
+    });
+
+    const totalControlsCount = fwControls.length;
+    const implementedControlsCount = fwControls.filter((c) => c.status === 'implemented').length;
+    const harmonizedControlsCount = fwControls.filter((c) => (c as any).isHarmonized || ((c as any).frameworkIds && (c as any).frameworkIds.length > 1)).length;
+
+    let applicableRequirementsCount = 0;
+    let nonApplicableRequirementsCount = 0;
+    let reviewNeededRequirementsCount = 0;
+    let inheritedRequirementsCount = 0;
+    let deferredRequirementsCount = 0;
+    let openGapsCount = 0;
+    let overdueReviewsCount = 0;
+
+    for (const req of fwReqs) {
+      const decision = decisionMap.get(req.id);
+      const reqInstance = reqInstanceMap.get(req.id);
+
+      const status = decision?.status || (req.isMandatory ? 'applicable' : 'applicable');
+
+      if (status === 'applicable') {
+        applicableRequirementsCount++;
+        // Check if there are satisfying controls
+        const satisfyingCount = reqInstance?.satisfyingControlIds?.length || 0;
+        const hasImplementedControl = fwControls.some((c) => (reqInstance?.satisfyingControlIds || []).includes(c.id) && c.status === 'implemented');
+        if (satisfyingCount === 0 || !hasImplementedControl) {
+          openGapsCount++;
+        }
+      } else if (status === 'not_applicable') {
+        nonApplicableRequirementsCount++;
+      } else if (status === 'review_required') {
+        reviewNeededRequirementsCount++;
+        overdueReviewsCount++;
+      } else if (status === 'inherited') {
+        inheritedRequirementsCount++;
+      } else if (status === 'deferred') {
+        deferredRequirementsCount++;
+      }
+
+      // Check overdue assessment dates on requirement instances
+      if (reqInstance?.nextAssessmentDate && reqInstance.nextAssessmentDate < now) {
+        overdueReviewsCount++;
+      }
+    }
+
+    // Missing evidence: controls without verified evidence
+    let missingEvidenceCount = 0;
+    for (const c of fwControls) {
+      if (!evidenceControlIds.has(c.id)) {
+        missingEvidenceCount++;
+      }
+    }
+
+    const readinessPercentage =
+      totalRequirementsCount > 0
+        ? Math.round(
+            ((implementedControlsCount + inheritedRequirementsCount) /
+              Math.max(1, applicableRequirementsCount || totalRequirementsCount)) *
+              100
+          )
+        : 0;
+
+    const clampedReadiness = Math.min(100, Math.max(0, readinessPercentage));
+
+    if (isAdopted) {
+      globalTotalRequirements += totalRequirementsCount;
+      globalTotalApplicable += applicableRequirementsCount;
+      globalTotalNonApplicable += nonApplicableRequirementsCount;
+      globalTotalReviewNeeded += reviewNeededRequirementsCount;
+      globalTotalOpenGaps += openGapsCount;
+      globalTotalOverdueReviews += overdueReviewsCount;
+      globalTotalMissingEvidence += missingEvidenceCount;
+    }
+
+    frameworkMetricsList.push({
+      frameworkId: fw.id,
+      frameworkCode: fw.code,
+      frameworkTitle: fw.name,
+      category: fw.category,
+      jurisdiction: fw.jurisdiction,
+      version: fw.version,
+      isAdopted,
+      totalRequirementsCount,
+      applicableRequirementsCount,
+      nonApplicableRequirementsCount,
+      reviewNeededRequirementsCount,
+      inheritedRequirementsCount,
+      deferredRequirementsCount,
+      totalControlsCount,
+      implementedControlsCount,
+      harmonizedControlsCount,
+      openGapsCount,
+      overdueReviewsCount,
+      missingEvidenceCount,
+      readinessPercentage: clampedReadiness,
+    });
+  }
+
+  const globalTotalControls = controls.length;
+  const globalTotalHarmonized = controls.filter((c) => (c as any).isHarmonized || ((c as any).frameworkIds && (c as any).frameworkIds.length > 1)).length;
+  const globalImplementedControls = controls.filter((c) => c.status === 'implemented').length;
+
+  const overallReadinessScore =
+    globalTotalApplicable > 0
+      ? Math.min(100, Math.round((globalImplementedControls / Math.max(1, globalTotalApplicable)) * 100))
+      : 0;
+
+  // Statutory obligations summary
+  const byFramework: Record<string, number> = {};
+  for (const obl of statutoryObligations) {
+    byFramework[obl.frameworkId] = (byFramework[obl.frameworkId] || 0) + 1;
+  }
+
+  return {
+    tenantId,
+    generatedAt: now,
+    adoptedFrameworksCount: adoptedFrameworkIds.length,
+    totalRequirementsCount: globalTotalRequirements,
+    totalApplicableCount: globalTotalApplicable,
+    totalNonApplicableCount: globalTotalNonApplicable,
+    totalReviewNeededCount: globalTotalReviewNeeded,
+    totalControlsCount: globalTotalControls,
+    totalHarmonizedControlsCount: globalTotalHarmonized,
+    totalOpenGapsCount: globalTotalOpenGaps,
+    totalOverdueReviewsCount: globalTotalOverdueReviews,
+    totalMissingEvidenceCount: globalTotalMissingEvidence,
+    overallReadinessScore,
+    frameworks: frameworkMetricsList,
+    statutoryObligationsSummary: {
+      totalActiveObligations: statutoryObligations.length,
+      byFramework,
+    },
   };
 }
