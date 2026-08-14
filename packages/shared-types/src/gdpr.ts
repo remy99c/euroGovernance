@@ -65,6 +65,8 @@ export interface ROPAEntry extends BaseEntity {
   dataSecurityMeasuresSummary: string;
   jointControllerInfo: string | null;
   processorIds: string[]; // Linked Vendor IDs
+  processorProfileIds?: string[]; // Linked ProcessorProfile IDs
+  transferArrangementIds?: string[]; // Linked TransferArrangement IDs
   recipientCategories: string[];
   involvesInternationalTransfer: boolean;
   destinationCountries: string[];

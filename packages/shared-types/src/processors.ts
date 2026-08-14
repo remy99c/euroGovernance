@@ -759,3 +759,94 @@ export function evaluateTransferEvidenceCompleteness(
     requirements,
   };
 }
+
+// -----------------------------------------------------------------------------
+// ROPA INTEGRATION & SYNTHESIS
+// -----------------------------------------------------------------------------
+
+export interface ROPAPrefillResult {
+  processorProfileIds: string[];
+  processorIds: string[];
+  transferArrangementIds: string[];
+  personalDataCategories: string[];
+  dataSubjectCategories: string[];
+  isSpecialCategoryData: boolean;
+  specialCategoryBasis: string | null;
+  linkedSystemAssetIds: string[];
+  involvesInternationalTransfer: boolean;
+  destinationCountries: string[];
+  transferMechanism:
+    | 'standard_contractual_clauses'
+    | 'adequacy_decision'
+    | 'binding_corporate_rules'
+    | 'derogation_art49'
+    | 'other'
+    | null;
+  dataSecurityMeasuresSummary: string;
+}
+
+/**
+ * Synthesizes ROPA fields from one or more linked processor profiles and optional transfer arrangements.
+ */
+export function prefillROPAFromProcessors(
+  profiles: ProcessorProfile[],
+  transfers: TransferArrangement[] = []
+): ROPAPrefillResult {
+  const dataCategoriesSet = new Set<string>();
+  const dataSubjectsSet = new Set<string>();
+  const systemAssetsSet = new Set<string>();
+  const countriesSet = new Set<string>();
+  const vendorIdsSet = new Set<string>();
+  let hasSpecialCategory = false;
+  let hasInternationalTransfer = false;
+  let derivedTransferMechanism: ROPAPrefillResult['transferMechanism'] = null;
+
+  for (const profile of profiles) {
+    if (profile.vendorId) vendorIdsSet.add(profile.vendorId);
+    (profile.dataCategories || []).forEach((c) => dataCategoriesSet.add(c));
+    (profile.dataSubjects || []).forEach((s) => dataSubjectsSet.add(s));
+    (profile.linkedSystemAssetIds || []).forEach((a) => systemAssetsSet.add(a));
+    (profile.jurisdictions || []).forEach((j) => countriesSet.add(j));
+    if (profile.isSpecialCategoryData) hasSpecialCategory = true;
+  }
+
+  for (const transfer of transfers) {
+    (transfer.destinationCountries || []).forEach((c) => countriesSet.add(c));
+    if (transfer.restrictedTransfer) {
+      hasInternationalTransfer = true;
+      if (!derivedTransferMechanism && transfer.transferMechanismType) {
+        if (transfer.transferMechanismType === 'standard_contractual_clauses') {
+          derivedTransferMechanism = 'standard_contractual_clauses';
+        } else if (transfer.transferMechanismType === 'adequacy_decision') {
+          derivedTransferMechanism = 'adequacy_decision';
+        } else if (transfer.transferMechanismType === 'binding_corporate_rules') {
+          derivedTransferMechanism = 'binding_corporate_rules';
+        } else if (transfer.transferMechanismType === 'derogation_art49') {
+          derivedTransferMechanism = 'derogation_art49';
+        } else if (transfer.transferMechanismType === 'other') {
+          derivedTransferMechanism = 'other';
+        }
+      }
+    }
+  }
+
+  const securitySummary =
+    profiles.length > 0
+      ? `Processor engagements covered under GDPR Art. 28 DPAs; Security TOMs verified across ${profiles.length} processor profile(s).`
+      : '';
+
+  return {
+    processorProfileIds: profiles.map((p) => p.id),
+    processorIds: Array.from(vendorIdsSet),
+    transferArrangementIds: transfers.map((t) => t.id),
+    personalDataCategories: Array.from(dataCategoriesSet),
+    dataSubjectCategories: Array.from(dataSubjectsSet),
+    isSpecialCategoryData: hasSpecialCategory,
+    specialCategoryBasis: hasSpecialCategory ? 'Explicit consent (Art. 9(2)(a)) or Employment law (Art. 9(2)(b))' : null,
+    linkedSystemAssetIds: Array.from(systemAssetsSet),
+    involvesInternationalTransfer: hasInternationalTransfer,
+    destinationCountries: Array.from(countriesSet),
+    transferMechanism: derivedTransferMechanism,
+    dataSecurityMeasuresSummary: securitySummary,
+  };
+}

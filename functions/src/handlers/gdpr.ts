@@ -20,6 +20,7 @@ import {
   DSRStatus,
   TransferArrangement,
   ProcessorProfile,
+  prefillROPAFromProcessors,
 } from '@eurogovernance/shared-types';
 
 // -----------------------------------------------------------------------------
@@ -42,6 +43,8 @@ export interface CreateROPAInput {
   dataSecurityMeasuresSummary?: string;
   jointControllerInfo?: string | null;
   processorIds?: string[];
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
   recipientCategories?: string[];
   involvesInternationalTransfer?: boolean;
   destinationCountries?: string[];
@@ -69,6 +72,8 @@ export interface UpdateROPAInput {
   retentionPeriodMonths?: number;
   dataSecurityMeasuresSummary?: string;
   processorIds?: string[];
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
   involvesInternationalTransfer?: boolean;
   destinationCountries?: string[];
   transferMechanism?: TransferMechanism | null;
@@ -91,6 +96,8 @@ export interface ListROPAInput {
   legalBasis?: LegalBasisType;
   isSpecialCategoryData?: boolean;
   involvesInternationalTransfer?: boolean;
+  processorProfileId?: string;
+  transferArrangementId?: string;
 }
 
 export const createTenantROPA = onCall<CreateROPAInput>(async (request) => {
@@ -110,6 +117,8 @@ export const createTenantROPA = onCall<CreateROPAInput>(async (request) => {
     dataSecurityMeasuresSummary = '',
     jointControllerInfo = null,
     processorIds = [],
+    processorProfileIds = [],
+    transferArrangementIds = [],
     recipientCategories = [],
     involvesInternationalTransfer = false,
     destinationCountries = [],
@@ -148,6 +157,27 @@ export const createTenantROPA = onCall<CreateROPAInput>(async (request) => {
   const ropaRef = db.collection('tenants').doc(tenantId).collection('ropa_entries').doc();
   const now = new Date().toISOString();
 
+  // If processorProfileIds provided, gather vendorIds from profiles to ensure normalization
+  const vendorIdsSet = new Set<string>(processorIds);
+  if (processorProfileIds && processorProfileIds.length > 0) {
+    for (const profId of processorProfileIds) {
+      const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId).get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        if (pData.vendorId) vendorIdsSet.add(pData.vendorId);
+        // Sync reverse reference
+        const prevRopas = pData.linkedRopaIds || [];
+        if (!prevRopas.includes(ropaRef.id)) {
+          await pSnap.ref.update({
+            linkedRopaIds: [...prevRopas, ropaRef.id],
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+  }
+
   const ropaDoc: ROPAEntry = {
     id: ropaRef.id,
     tenantId,
@@ -164,7 +194,9 @@ export const createTenantROPA = onCall<CreateROPAInput>(async (request) => {
     retentionPeriodMonths,
     dataSecurityMeasuresSummary: dataSecurityMeasuresSummary.trim(),
     jointControllerInfo,
-    processorIds,
+    processorIds: Array.from(vendorIdsSet),
+    processorProfileIds,
+    transferArrangementIds,
     recipientCategories,
     involvesInternationalTransfer,
     destinationCountries,
@@ -191,7 +223,7 @@ export const createTenantROPA = onCall<CreateROPAInput>(async (request) => {
     entityType: 'ropa_entry',
     entityId: ropaRef.id,
     action: 'create',
-    afterSummary: { activityCode: ropaDoc.activityCode, activityName: ropaDoc.activityName, legalBasis },
+    afterSummary: { activityCode: ropaDoc.activityCode, activityName: ropaDoc.activityName, legalBasis, processorProfileIds },
     source: 'cloud_function',
     workflowContext: 'ropa_creation',
   });
@@ -219,6 +251,25 @@ export const updateTenantROPA = onCall<UpdateROPAInput>(async (request) => {
 
   const prev = snap.data() as ROPAEntry;
   const now = new Date().toISOString();
+
+  // If processorProfileIds updated, sync reverse reference on processor profiles
+  if (updates.processorProfileIds && Array.isArray(updates.processorProfileIds)) {
+    for (const profId of updates.processorProfileIds) {
+      const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId);
+      const pSnap = await pRef.get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        const prevRopas = pData.linkedRopaIds || [];
+        if (!prevRopas.includes(ropaId)) {
+          await pRef.update({
+            linkedRopaIds: [...prevRopas, ropaId],
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+  }
 
   const payload: Partial<ROPAEntry> = {
     ...updates,
@@ -279,7 +330,7 @@ export const deleteTenantROPA = onCall<DeleteROPAInput>(async (request) => {
 });
 
 export const listTenantROPA = onCall<ListROPAInput>(async (request) => {
-  const { tenantId, status, legalBasis, isSpecialCategoryData, involvesInternationalTransfer } = request.data;
+  const { tenantId, status, legalBasis, isSpecialCategoryData, involvesInternationalTransfer, processorProfileId, transferArrangementId } = request.data;
   if (!tenantId) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
@@ -291,11 +342,158 @@ export const listTenantROPA = onCall<ListROPAInput>(async (request) => {
   if (legalBasis) query = query.where('legalBasis', '==', legalBasis);
   if (isSpecialCategoryData !== undefined) query = query.where('isSpecialCategoryData', '==', isSpecialCategoryData);
   if (involvesInternationalTransfer !== undefined) query = query.where('involvesInternationalTransfer', '==', involvesInternationalTransfer);
+  if (processorProfileId) query = query.where('processorProfileIds', 'array-contains', processorProfileId);
+  if (transferArrangementId) query = query.where('transferArrangementIds', 'array-contains', transferArrangementId);
 
   const snap = await query.get();
   const ropaEntries: ROPAEntry[] = snap.docs.map((d) => d.data() as ROPAEntry);
 
   return { success: true, count: ropaEntries.length, ropaEntries };
+});
+
+export interface LinkProcessorProfilesToROPAInput {
+  tenantId: string;
+  ropaId: string;
+  processorProfileIds: string[];
+  transferArrangementIds?: string[];
+}
+
+export const linkProcessorProfilesToROPA = onCall<LinkProcessorProfilesToROPAInput>(async (request) => {
+  const { tenantId, ropaId, processorProfileIds, transferArrangementIds = [] } = request.data;
+  if (!tenantId || !ropaId || !processorProfileIds || !Array.isArray(processorProfileIds)) {
+    throw new HttpsError('invalid-argument', 'tenantId, ropaId, and processorProfileIds (array) are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'privacy_manager',
+    'compliance_manager',
+  ]);
+
+  // 1. Fetch ROPA Entry
+  const ropaRef = db.collection('tenants').doc(tenantId).collection('ropa_entries').doc(ropaId);
+  const ropaSnap = await ropaRef.get();
+  if (!ropaSnap.exists) {
+    throw new HttpsError('not-found', `ROPA entry ${ropaId} not found.`);
+  }
+  const ropa = ropaSnap.data() as ROPAEntry;
+
+  const now = new Date().toISOString();
+
+  // 2. Fetch and verify all Processor Profiles
+  const currentProfiles = ropa.processorProfileIds || [];
+  const mergedProfiles = Array.from(new Set([...currentProfiles, ...processorProfileIds]));
+
+  const currentTransfers = ropa.transferArrangementIds || [];
+  const mergedTransfers = Array.from(new Set([...currentTransfers, ...transferArrangementIds]));
+
+  const vendorIdsSet = new Set<string>(ropa.processorIds || []);
+  const batch = db.batch();
+
+  for (const profId of processorProfileIds) {
+    const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId);
+    const pSnap = await pRef.get();
+    if (pSnap.exists) {
+      const pData = pSnap.data() as ProcessorProfile;
+      if (pData.vendorId) vendorIdsSet.add(pData.vendorId);
+      const linkedRopas = pData.linkedRopaIds || [];
+      if (!linkedRopas.includes(ropaId)) {
+        batch.update(pRef, {
+          linkedRopaIds: [...linkedRopas, ropaId],
+          updatedAt: now,
+          updatedBy: authContext.userId,
+        });
+      }
+    }
+  }
+
+  // Update ROPA
+  batch.update(ropaRef, {
+    processorProfileIds: mergedProfiles,
+    transferArrangementIds: mergedTransfers,
+    processorIds: Array.from(vendorIdsSet),
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'ropa_entry',
+    entityId: ropaId,
+    action: 'link',
+    beforeSummary: { processorProfileIds: currentProfiles, transferArrangementIds: currentTransfers },
+    afterSummary: { ropaId, processorProfileIds: mergedProfiles, transferArrangementIds: mergedTransfers },
+    source: 'cloud_function',
+    workflowContext: 'ropa_processor_linking',
+  });
+
+  return { success: true, ropaId, processorProfileIds: mergedProfiles, transferArrangementIds: mergedTransfers };
+});
+
+export interface GetROPAForProcessorProfileInput {
+  tenantId: string;
+  processorProfileId: string;
+}
+
+export const getROPAForProcessorProfile = onCall<GetROPAForProcessorProfileInput>(async (request) => {
+  const { tenantId, processorProfileId } = request.data;
+  if (!tenantId || !processorProfileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and processorProfileId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // Query all ROPA entries referencing this processor profile
+  const snap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('ropa_entries')
+    .where('processorProfileIds', 'array-contains', processorProfileId)
+    .get();
+
+  const ropaEntries: ROPAEntry[] = snap.docs.map((d) => d.data() as ROPAEntry);
+
+  return { success: true, processorProfileId, count: ropaEntries.length, ropaEntries };
+});
+
+export interface GetROPAPrefillInput {
+  tenantId: string;
+  processorProfileIds: string[];
+  transferArrangementIds?: string[];
+}
+
+export const getROPAPrefillFromProcessors = onCall<GetROPAPrefillInput>(async (request) => {
+  const { tenantId, processorProfileIds, transferArrangementIds = [] } = request.data;
+  if (!tenantId || !processorProfileIds || !Array.isArray(processorProfileIds)) {
+    throw new HttpsError('invalid-argument', 'tenantId and processorProfileIds (array) are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const profiles: ProcessorProfile[] = [];
+  for (const profId of processorProfileIds) {
+    const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId).get();
+    if (pSnap.exists) {
+      profiles.push(pSnap.data() as ProcessorProfile);
+    }
+  }
+
+  const transfers: TransferArrangement[] = [];
+  for (const transId of transferArrangementIds) {
+    const tSnap = await db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(transId).get();
+    if (tSnap.exists) {
+      transfers.push(tSnap.data() as TransferArrangement);
+    }
+  }
+
+  const prefillData = prefillROPAFromProcessors(profiles, transfers);
+
+  return { success: true, prefillData };
 });
 
 // -----------------------------------------------------------------------------
