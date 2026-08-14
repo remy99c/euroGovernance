@@ -13,6 +13,15 @@ export {
   listTenantInvitations,
 } from './handlers/tenants.js';
 
+// Controls Module Handlers
+export {
+  createTenantControl,
+  updateTenantControl,
+  deleteTenantControl,
+  recordControlReview,
+  listTenantControls,
+} from './handlers/controls.js';
+
 // Evidence Approval Handlers
 export {
   approveEvidence,

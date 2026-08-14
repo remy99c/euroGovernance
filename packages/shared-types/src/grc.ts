@@ -7,6 +7,18 @@ export type ControlImplementationStatus =
   | 'partially_implemented'
   | 'not_applicable';
 
+export const VALID_CONTROL_STATUSES: readonly ControlImplementationStatus[] = [
+  'not_started',
+  'in_progress',
+  'implemented',
+  'partially_implemented',
+  'not_applicable',
+] as const;
+
+export function isValidControlStatus(status: unknown): status is ControlImplementationStatus {
+  return typeof status === 'string' && VALID_CONTROL_STATUSES.includes(status as ControlImplementationStatus);
+}
+
 export type ControlReviewStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected';
 export type EvidenceStatus = 'valid' | 'expired' | 'under_review' | 'rejected' | 'archived';
 export type PolicyStatus = 'draft' | 'under_review' | 'approved' | 'active' | 'retired';
