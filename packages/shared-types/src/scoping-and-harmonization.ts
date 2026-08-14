@@ -594,6 +594,90 @@ export interface TenantControlMapping extends BaseEntity {
   verifiedAt: string | null;
 }
 
+export type StatutoryArtifactKind =
+  | 'control_instance'
+  | 'obligation_flag'
+  | 'required_register'
+  | 'required_assessment'
+  | 'required_operational_record';
+
+export type StatutoryObligationType =
+  // GDPR
+  | 'gdpr_ropa_register'
+  | 'gdpr_dpia_assessment'
+  | 'gdpr_tia_assessment'
+  | 'gdpr_dsr_portal'
+  | 'gdpr_breach_register'
+  | 'gdpr_dpo_appointment'
+  | 'gdpr_cross_border_safeguards'
+  // EU AI Act
+  | 'ai_act_system_register'
+  | 'ai_act_risk_classification'
+  | 'ai_act_fria_assessment'
+  | 'ai_act_incident_register'
+  | 'ai_act_post_market_monitoring'
+  | 'ai_act_substantial_change_log'
+  | 'ai_act_transparency_notice'
+  // EU Data Act
+  | 'data_act_asset_register'
+  | 'data_act_b2b_sharing_register'
+  | 'data_act_cloud_switching_register'
+  | 'data_act_smart_contract_safeguard';
+
+/**
+ * 9. Statutory Obligation Flag (/tenants/{tenantId}/statutory_obligations/{flagId})
+ * Explicit statutory obligation or required register/assessment triggered by regulatory scope facts.
+ */
+export interface StatutoryObligationFlag extends BaseEntity {
+  frameworkId: string;
+  obligationType: StatutoryObligationType;
+  title: string;
+  description: string;
+  artifactKind: StatutoryArtifactKind;
+  targetCollection: string;
+  isMandatory: boolean;
+  status: 'active' | 'waived' | 'fulfilled' | 'deferred';
+  triggeringFactKeys: string[];
+  statutoryBasis: string;
+  suggestedArtifactTemplate?: Record<string, unknown>;
+  rationale: string;
+  derivedFromDecisionId?: string | null;
+}
+
+export interface RequiredRegisterSpec {
+  collection: string;
+  title: string;
+  obligationType: StatutoryObligationType;
+  statutoryBasis: string;
+  rationale: string;
+  initialEntryDraft?: Record<string, unknown>;
+}
+
+export interface RequiredAssessmentSpec {
+  assessmentType: string;
+  collection: string;
+  title: string;
+  obligationType: StatutoryObligationType;
+  statutoryBasis: string;
+  rationale: string;
+}
+
+export interface RequiredOperationalRecordSpec {
+  recordType: string;
+  collection: string;
+  title: string;
+  obligationType: StatutoryObligationType;
+  statutoryBasis: string;
+  rationale: string;
+}
+
+export interface StatutoryArtifactInstantiationResult {
+  obligationFlags: StatutoryObligationFlag[];
+  requiredRegisters: RequiredRegisterSpec[];
+  requiredAssessments: RequiredAssessmentSpec[];
+  requiredOperationalRecords: RequiredOperationalRecordSpec[];
+}
+
 // =============================================================================
 // VALIDATORS & TYPE GUARDS
 // =============================================================================
@@ -1763,5 +1847,398 @@ export function buildControlCoverageSummary(
     frameworksCovered,
     obligations,
     coverageSummaryExplanation,
+  };
+}
+
+/**
+ * Evaluates tenant regulatory scope facts against adopted frameworks to derive
+ * explicit, typed statutory obligations, required registers, assessments, and operational records.
+ *
+ * Distinctly models regulation-oriented requirements (GDPR, EU AI Act, EU Data Act) without
+ * forcing them into an ISO-style control-only model.
+ */
+export function deriveStatutoryObligations(params: {
+  tenantId: string;
+  defaultOwnerId: string;
+  scopeFacts: TenantScopeFact[];
+  decisions: TenantApplicabilityDecision[];
+  adoptedFrameworks: string[];
+}): StatutoryArtifactInstantiationResult {
+  const { tenantId, defaultOwnerId, scopeFacts, decisions, adoptedFrameworks } = params;
+  const now = new Date().toISOString();
+
+  const factsMap = new Map<string, unknown>();
+  for (const fact of scopeFacts) {
+    factsMap.set(fact.factKey, extractScopeFactRawValue(fact));
+  }
+
+  const decisionMap = new Map<string, TenantApplicabilityDecision>();
+  for (const d of decisions) {
+    decisionMap.set(d.requirementId, d);
+  }
+
+  const obligationFlags: StatutoryObligationFlag[] = [];
+  const requiredRegisters: RequiredRegisterSpec[] = [];
+  const requiredAssessments: RequiredAssessmentSpec[] = [];
+  const requiredOperationalRecords: RequiredOperationalRecordSpec[] = [];
+
+  const addObligation = (spec: {
+    frameworkId: string;
+    obligationType: StatutoryObligationType;
+    title: string;
+    description: string;
+    artifactKind: StatutoryArtifactKind;
+    targetCollection: string;
+    isMandatory: boolean;
+    triggeringFactKeys: string[];
+    statutoryBasis: string;
+    rationale: string;
+    requirementId?: string;
+    suggestedArtifactTemplate?: Record<string, unknown>;
+  }) => {
+    const derivedDecision = spec.requirementId ? decisionMap.get(spec.requirementId) : undefined;
+    const flagId = `obl_${spec.frameworkId}_${spec.obligationType}_${tenantId.substring(0, 8)}`;
+
+    const flag: StatutoryObligationFlag = {
+      id: flagId,
+      tenantId,
+      ownerId: defaultOwnerId,
+      frameworkId: spec.frameworkId,
+      obligationType: spec.obligationType,
+      title: spec.title,
+      description: spec.description,
+      artifactKind: spec.artifactKind,
+      targetCollection: spec.targetCollection,
+      isMandatory: spec.isMandatory,
+      status: 'active',
+      triggeringFactKeys: spec.triggeringFactKeys,
+      statutoryBasis: spec.statutoryBasis,
+      suggestedArtifactTemplate: spec.suggestedArtifactTemplate,
+      rationale: spec.rationale,
+      derivedFromDecisionId: derivedDecision ? derivedDecision.id : null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: defaultOwnerId,
+      updatedBy: defaultOwnerId,
+    };
+
+    obligationFlags.push(flag);
+
+    if (spec.artifactKind === 'required_register') {
+      requiredRegisters.push({
+        collection: spec.targetCollection,
+        title: spec.title,
+        obligationType: spec.obligationType,
+        statutoryBasis: spec.statutoryBasis,
+        rationale: spec.rationale,
+        initialEntryDraft: spec.suggestedArtifactTemplate,
+      });
+    } else if (spec.artifactKind === 'required_assessment') {
+      requiredAssessments.push({
+        assessmentType: spec.obligationType,
+        collection: spec.targetCollection,
+        title: spec.title,
+        obligationType: spec.obligationType,
+        statutoryBasis: spec.statutoryBasis,
+        rationale: spec.rationale,
+      });
+    } else if (spec.artifactKind === 'required_operational_record') {
+      requiredOperationalRecords.push({
+        recordType: spec.obligationType,
+        collection: spec.targetCollection,
+        title: spec.title,
+        obligationType: spec.obligationType,
+        statutoryBasis: spec.statutoryBasis,
+        rationale: spec.rationale,
+      });
+    }
+  };
+
+  // 1. GDPR REGIME OBLIGATIONS
+  if (adoptedFrameworks.includes('gdpr')) {
+    const processesPersonalData =
+      factsMap.get('processesPersonalData') === true ||
+      factsMap.get('gdpr.processesPersonalData') === true ||
+      (Array.isArray(factsMap.get('dataCategories')) && (factsMap.get('dataCategories') as string[]).length > 0);
+
+    if (processesPersonalData) {
+      addObligation({
+        frameworkId: 'gdpr',
+        obligationType: 'gdpr_ropa_register',
+        title: 'Records of Processing Activities (ROPA)',
+        description: 'Maintain centralized records of personal data processing operations under Article 30.',
+        artifactKind: 'required_register',
+        targetCollection: 'ropa_entries',
+        isMandatory: true,
+        triggeringFactKeys: ['processesPersonalData'],
+        statutoryBasis: 'GDPR Article 30',
+        rationale: 'Processing of personal data triggers statutory inventory and legal basis documentation.',
+        requirementId: 'gdpr_art_30',
+      });
+
+      addObligation({
+        frameworkId: 'gdpr',
+        obligationType: 'gdpr_breach_register',
+        title: 'Personal Data Breach Incident Register',
+        description: 'Log and track personal data security incidents within statutory 72-hour notification window.',
+        artifactKind: 'required_operational_record',
+        targetCollection: 'breach_logs',
+        isMandatory: true,
+        triggeringFactKeys: ['processesPersonalData'],
+        statutoryBasis: 'GDPR Articles 33 & 34',
+        rationale: 'Mandatory breach notification and documentation obligations under Article 33(5).',
+        requirementId: 'gdpr_art_33',
+      });
+
+      addObligation({
+        frameworkId: 'gdpr',
+        obligationType: 'gdpr_dsr_portal',
+        title: 'Data Subject Rights (DSR) Request Intake & Fulfillment Log',
+        description: 'Track and fulfill rights of access, erasure, rectification, and portability within 30 days.',
+        artifactKind: 'required_operational_record',
+        targetCollection: 'dsr_requests',
+        isMandatory: true,
+        triggeringFactKeys: ['processesPersonalData'],
+        statutoryBasis: 'GDPR Chapter III (Articles 12-23)',
+        rationale: 'Direct statutory individual rights obligations for data controllers.',
+        requirementId: 'gdpr_art_15',
+      });
+    }
+
+    const specialCategory =
+      factsMap.get('processesSpecialCategoryData') === true ||
+      factsMap.get('gdpr.processesSpecialCategoryData') === true ||
+      factsMap.get('highRiskProcessing') === true;
+
+    if (specialCategory) {
+      addObligation({
+        frameworkId: 'gdpr',
+        obligationType: 'gdpr_dpia_assessment',
+        title: 'Data Protection Impact Assessment (DPIA)',
+        description: 'Conduct and document formal risk assessment for high-risk and special category processing.',
+        artifactKind: 'required_assessment',
+        targetCollection: 'dpia_assessments',
+        isMandatory: true,
+        triggeringFactKeys: ['processesSpecialCategoryData', 'highRiskProcessing'],
+        statutoryBasis: 'GDPR Article 35',
+        rationale: 'High-risk processing operations likely to result in a high risk to rights and freedoms require prior DPIA.',
+        requirementId: 'gdpr_art_35',
+      });
+    }
+
+    const internationalTransfers =
+      factsMap.get('internationalDataTransfers') === true ||
+      factsMap.get('gdpr.transfersDataOutsideEEA') === true;
+
+    if (internationalTransfers) {
+      addObligation({
+        frameworkId: 'gdpr',
+        obligationType: 'gdpr_tia_assessment',
+        title: 'Transfer Impact Assessment (TIA)',
+        description: 'Evaluate destination country legal safeguards and supplementary technical measures (Schrems II).',
+        artifactKind: 'required_assessment',
+        targetCollection: 'tia_assessments',
+        isMandatory: true,
+        triggeringFactKeys: ['internationalDataTransfers'],
+        statutoryBasis: 'GDPR Chapter V (Articles 44-49)',
+        rationale: 'Data transfers outside EEA require documented verification of essentially equivalent protection.',
+        requirementId: 'gdpr_art_46',
+      });
+
+      addObligation({
+        frameworkId: 'gdpr',
+        obligationType: 'gdpr_cross_border_safeguards',
+        title: 'Standard Contractual Clauses (SCC) & Safeguards Register',
+        description: 'Maintain executed SCCs, BCRs, and supplementary transfer measures.',
+        artifactKind: 'obligation_flag',
+        targetCollection: 'transfer_safeguards',
+        isMandatory: true,
+        triggeringFactKeys: ['internationalDataTransfers'],
+        statutoryBasis: 'GDPR Article 46(2)(c)',
+        rationale: 'Statutory basis verification for international third-party processors.',
+        requirementId: 'gdpr_art_46',
+      });
+    }
+  }
+
+  // 2. EU AI ACT REGIME OBLIGATIONS
+  if (adoptedFrameworks.includes('eu_ai_act')) {
+    const deploysAI =
+      factsMap.get('deploysAISystems') === true ||
+      factsMap.get('ai.deploysAISystems') === true ||
+      factsMap.get('usesAI') === true;
+
+    if (deploysAI) {
+      addObligation({
+        frameworkId: 'eu_ai_act',
+        obligationType: 'ai_act_system_register',
+        title: 'EU AI Act AI System Register',
+        description: 'Maintain comprehensive inventory of all AI models, foundation models, and deployed systems.',
+        artifactKind: 'required_register',
+        targetCollection: 'ai_systems',
+        isMandatory: true,
+        triggeringFactKeys: ['deploysAISystems'],
+        statutoryBasis: 'EU AI Act Articles 4, 49, 71',
+        rationale: 'Mandatory organizational visibility into AI models, capabilities, and supply chain dependencies.',
+        requirementId: 'ai_act_art_49',
+      });
+
+      addObligation({
+        frameworkId: 'eu_ai_act',
+        obligationType: 'ai_act_incident_register',
+        title: 'AI Serious Incident & Malfunction Register',
+        description: 'Log, investigate, and report serious AI incidents and malfunctions to national supervisory authorities.',
+        artifactKind: 'required_operational_record',
+        targetCollection: 'ai_incidents',
+        isMandatory: true,
+        triggeringFactKeys: ['deploysAISystems'],
+        statutoryBasis: 'EU AI Act Article 73',
+        rationale: 'Statutory notification obligations for high-risk and general AI system incidents.',
+        requirementId: 'ai_act_art_73',
+      });
+
+      addObligation({
+        frameworkId: 'eu_ai_act',
+        obligationType: 'ai_act_transparency_notice',
+        title: 'AI Transparency & Synthetic Content Disclosures',
+        description: 'Provide clear user-facing disclosures when interacting with AI systems and synthetic media.',
+        artifactKind: 'obligation_flag',
+        targetCollection: 'ai_transparency_notices',
+        isMandatory: true,
+        triggeringFactKeys: ['deploysAISystems'],
+        statutoryBasis: 'EU AI Act Article 50',
+        rationale: 'Direct statutory disclosure obligations for deployers of generative AI and interactive systems.',
+        requirementId: 'ai_act_art_50',
+      });
+    }
+
+    const highRiskAI =
+      factsMap.get('highRiskAIUsage') === true ||
+      factsMap.get('ai.highRiskUsage') === true ||
+      factsMap.get('isHighRiskAI') === true;
+
+    if (highRiskAI) {
+      addObligation({
+        frameworkId: 'eu_ai_act',
+        obligationType: 'ai_act_risk_classification',
+        title: 'AI Classification Assessment (Annex III & Prohibited Practices)',
+        description: 'Formal risk tier determination verifying conformity with Annex III critical use cases.',
+        artifactKind: 'required_assessment',
+        targetCollection: 'ai_assessments',
+        isMandatory: true,
+        triggeringFactKeys: ['highRiskAIUsage'],
+        statutoryBasis: 'EU AI Act Articles 6, 9 & Annex III',
+        rationale: 'High-risk AI systems must undergo formal classification and continuous risk management system review.',
+        requirementId: 'ai_act_art_9',
+      });
+
+      addObligation({
+        frameworkId: 'eu_ai_act',
+        obligationType: 'ai_act_fria_assessment',
+        title: 'Fundamental Rights Impact Assessment (FRIA)',
+        description: 'Document impact on fundamental rights, non-discrimination, privacy, and human oversight.',
+        artifactKind: 'required_assessment',
+        targetCollection: 'fria_assessments',
+        isMandatory: true,
+        triggeringFactKeys: ['highRiskAIUsage'],
+        statutoryBasis: 'EU AI Act Article 27',
+        rationale: 'Deployers of high-risk AI systems in critical public and commercial services must conduct a FRIA.',
+        requirementId: 'ai_act_art_27',
+      });
+
+      addObligation({
+        frameworkId: 'eu_ai_act',
+        obligationType: 'ai_act_post_market_monitoring',
+        title: 'Post-Market Monitoring Plan & Log',
+        description: 'Continuous monitoring of high-risk AI system performance, drift, and bias during active operations.',
+        artifactKind: 'required_operational_record',
+        targetCollection: 'post_market_logs',
+        isMandatory: true,
+        triggeringFactKeys: ['highRiskAIUsage'],
+        statutoryBasis: 'EU AI Act Article 72',
+        rationale: 'Proactive post-deployment performance and reliability verification.',
+        requirementId: 'ai_act_art_72',
+      });
+
+      addObligation({
+        frameworkId: 'eu_ai_act',
+        obligationType: 'ai_act_substantial_change_log',
+        title: 'Substantial Modification Audit Log',
+        description: 'Track model weight updates, retraining, and architectural changes requiring re-assessment.',
+        artifactKind: 'required_operational_record',
+        targetCollection: 'substantial_changes',
+        isMandatory: true,
+        triggeringFactKeys: ['highRiskAIUsage'],
+        statutoryBasis: 'EU AI Act Article 43(4)',
+        rationale: 'Substantial changes to high-risk AI require triggering new conformity assessment.',
+        requirementId: 'ai_act_art_43',
+      });
+    }
+  }
+
+  // 3. EU DATA ACT REGIME OBLIGATIONS
+  if (adoptedFrameworks.includes('eu_data_act')) {
+    const isDataHolderOrConnected =
+      factsMap.get('manufacturesConnectedProducts') === true ||
+      factsMap.get('dataAct.isDataHolder') === true ||
+      factsMap.get('providesConnectedServices') === true;
+
+    if (isDataHolderOrConnected) {
+      addObligation({
+        frameworkId: 'eu_data_act',
+        obligationType: 'data_act_asset_register',
+        title: 'Connected Product & IoT Data Asset Register',
+        description: 'Catalog accessible product data, metadata endpoints, and default formats for users and recipients.',
+        artifactKind: 'required_register',
+        targetCollection: 'data_act_assets',
+        isMandatory: true,
+        triggeringFactKeys: ['manufacturesConnectedProducts'],
+        statutoryBasis: 'EU Data Act Chapter II (Articles 3-7)',
+        rationale: 'Data holders must make generated data easily, securely, and freely accessible to users.',
+        requirementId: 'data_act_art_3',
+      });
+
+      addObligation({
+        frameworkId: 'eu_data_act',
+        obligationType: 'data_act_b2b_sharing_register',
+        title: 'B2B Data Sharing & FRAND Terms Register',
+        description: 'Log third-party data access requests, compensation calculations, and trade secret safeguards.',
+        artifactKind: 'required_register',
+        targetCollection: 'data_sharing_requests',
+        isMandatory: true,
+        triggeringFactKeys: ['manufacturesConnectedProducts'],
+        statutoryBasis: 'EU Data Act Chapter III & IV (Articles 8-13)',
+        rationale: 'Mandatory fulfillment of fair, reasonable, and non-discriminatory (FRAND) data sharing obligations.',
+        requirementId: 'data_act_art_8',
+      });
+    }
+
+    const usesCloud =
+      factsMap.get('usesCloudInfrastructure') === true ||
+      factsMap.get('cloudProviders') !== undefined ||
+      factsMap.get('dataAct.usesCloudServices') === true;
+
+    if (usesCloud) {
+      addObligation({
+        frameworkId: 'eu_data_act',
+        obligationType: 'data_act_cloud_switching_register',
+        title: 'Cloud Switching & Provider Interoperability Register',
+        description: 'Document provider egress terms, functional equivalence assessments, and switching timelines.',
+        artifactKind: 'required_register',
+        targetCollection: 'switching_dependencies',
+        isMandatory: true,
+        triggeringFactKeys: ['usesCloudInfrastructure'],
+        statutoryBasis: 'EU Data Act Chapter VI (Articles 23-31)',
+        rationale: 'Customer rights to switch cloud data processing services without obstacle.',
+        requirementId: 'data_act_art_23',
+      });
+    }
+  }
+
+  return {
+    obligationFlags,
+    requiredRegisters,
+    requiredAssessments,
+    requiredOperationalRecords,
   };
 }

@@ -214,4 +214,6 @@ export {
   listTenantControlInstances,
   getTenantControlCoverageReport,
   listTenantControlMappings,
+  evaluateStatutoryObligations,
+  listTenantObligationFlags,
 } from './handlers/applicability.js';

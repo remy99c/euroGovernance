@@ -555,6 +555,16 @@ service cloud.firestore {
                       && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
       }
+
+      // Tenant Statutory Obligation Flags
+      match /statutory_obligations/{obligationId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
+      }
     }
   }
 }

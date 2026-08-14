@@ -14,6 +14,7 @@ import {
   validateApplicabilityRule,
   instantiateTenantGRC,
   buildControlCoverageSummary,
+  deriveStatutoryObligations,
   CANONICAL_APPLICABILITY_RULES,
   CANONICAL_MASTER_DATA,
 } from '@eurogovernance/shared-types';
@@ -440,4 +441,91 @@ export const listTenantControlMappings = onCall(async (request) => {
   const mappings = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   return { mappings };
+});
+
+/**
+ * 9. Evaluate Statutory Obligations (GDPR, EU AI Act, EU Data Act)
+ */
+export const evaluateStatutoryObligations = onCall(async (request) => {
+  const { tenantId, persistFlags = true } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
+
+  // 1. Fetch Adopted Frameworks
+  const adoptSnap = await db.collection('tenants').doc(tenantId).collection('adopted_frameworks').get();
+  const adoptedFrameworks: string[] = adoptSnap.empty
+    ? ['gdpr', 'eu_ai_act', 'eu_data_act', 'iso_27001']
+    : adoptSnap.docs.map((d) => d.data().frameworkId || d.id);
+
+  // 2. Fetch Scope Facts
+  const factsSnap = await db.collection('tenants').doc(tenantId).collection('scope_facts').get();
+  const scopeFacts: TenantScopeFact[] = factsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  // 3. Fetch Applicability Decisions
+  const decSnap = await db.collection('tenants').doc(tenantId).collection('applicability_decisions').get();
+  const decisions: TenantApplicabilityDecision[] = decSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  // 4. Derive Statutory Obligations
+  const result = deriveStatutoryObligations({
+    tenantId,
+    defaultOwnerId: authContext.userId,
+    scopeFacts,
+    decisions,
+    adoptedFrameworks,
+  });
+
+  // 5. Batch Persist Obligation Flags if requested
+  if (persistFlags && result.obligationFlags.length > 0) {
+    const batch = db.batch();
+    for (const flag of result.obligationFlags) {
+      const docRef = db.collection('tenants').doc(tenantId).collection('statutory_obligations').doc(flag.id);
+      batch.set(docRef, flag, { merge: true });
+    }
+    await batch.commit();
+  }
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'tenant_statutory_obligations',
+    entityId: `stat_obl_${tenantId}`,
+    action: 'update',
+    afterSummary: {
+      totalObligations: result.obligationFlags.length,
+      requiredRegisters: result.requiredRegisters.length,
+      requiredAssessments: result.requiredAssessments.length,
+      requiredOperationalRecords: result.requiredOperationalRecords.length,
+    },
+    source: 'cloud_function',
+    workflowContext: 'statutory_obligation_evaluation',
+  });
+
+  return { success: true, ...result };
+});
+
+/**
+ * 10. List Tenant Statutory Obligation Flags
+ */
+export const listTenantObligationFlags = onCall(async (request) => {
+  const { tenantId, frameworkId, artifactKind, status } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let q = db.collection('tenants').doc(tenantId).collection('statutory_obligations') as FirebaseFirestore.Query;
+  if (frameworkId) q = q.where('frameworkId', '==', frameworkId);
+  if (artifactKind) q = q.where('artifactKind', '==', artifactKind);
+  if (status) q = q.where('status', '==', status);
+
+  const snap = await q.get();
+  const obligationFlags = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return { obligationFlags };
 });
