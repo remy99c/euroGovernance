@@ -18,7 +18,12 @@ export type ExportType =
   | 'framework_readiness_pdf'
   | 'gdpr_ropa_xlsx'
   | 'eu_ai_act_technical_file_pdf'
-  | 'iso_soa_pdf';
+  | 'iso_soa_pdf'
+  | 'iso_soa_report'
+  | 'adopted_frameworks_summary'
+  | 'applicability_decisions_report'
+  | 'tenant_control_coverage_report'
+  | 'framework_gap_report';
 
 export type NotificationPriority = 'low' | 'medium' | 'high' | 'urgent';
 

@@ -46,7 +46,160 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
 
     const tenantRef = db.collection('tenants').doc(tenantId);
 
-    if (job.exportType === 'gdpr_ropa_xlsx' || job.exportType === 'framework_readiness_pdf') {
+    if (job.exportType === 'adopted_frameworks_summary') {
+      const adoptedSnap = await tenantRef.collection('adopted_frameworks').get();
+      const scopeFactsSnap = await tenantRef.collection('scope_facts').get();
+      const scopeProfilesSnap = await tenantRef.collection('scope_profiles').get();
+
+      const adoptedData = adoptedSnap.docs.map((d) => d.data());
+      const scopeFactsData = scopeFactsSnap.docs.map((d) => d.data());
+      const scopeProfilesData = scopeProfilesSnap.docs.map((d) => d.data());
+
+      fileName = `adopted_frameworks_summary_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Adopted Frameworks & Scope Summary',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            adoptedFrameworksCount: adoptedData.length,
+            recordedScopeFactsCount: scopeFactsData.length,
+          },
+          adoptedFrameworks: adoptedData,
+          scopeProfiles: scopeProfilesData,
+          structuredScopeFacts: scopeFactsData,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'applicability_decisions_report') {
+      const decSnap = await tenantRef.collection('applicability_decisions').get();
+      const decisionsData = decSnap.docs.map((d) => d.data());
+
+      const applicableCount = decisionsData.filter((d: any) => d.status === 'applicable').length;
+      const excludedCount = decisionsData.filter((d: any) => d.status === 'not_applicable').length;
+      const reviewNeededCount = decisionsData.filter((d: any) => d.status === 'review_required').length;
+      const overriddenCount = decisionsData.filter((d: any) => d.isOverridden === true).length;
+
+      fileName = `applicability_decisions_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Multi-Framework Applicability Determination & Rationale Report',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalDecisionsCount: decisionsData.length,
+            applicableCount,
+            excludedCount,
+            reviewNeededCount,
+            overriddenCount,
+          },
+          decisions: decisionsData,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'tenant_control_coverage_report') {
+      const controlsSnap = await tenantRef.collection('controls').get();
+      const reqInstancesSnap = await tenantRef.collection('requirement_instances').get();
+      const obligationsSnap = await tenantRef.collection('statutory_obligations').get();
+
+      const controlsData = controlsSnap.docs.map((d) => d.data());
+      const reqInstancesData = reqInstancesSnap.docs.map((d) => d.data());
+      const obligationsData = obligationsSnap.docs.map((d) => d.data());
+
+      const harmonizedControls = controlsData.filter(
+        (c: any) => c.isHarmonized || (c.frameworkIds && c.frameworkIds.length > 1)
+      );
+
+      fileName = `tenant_control_coverage_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Tenant Control Coverage & Harmonization Report',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalControlsCount: controlsData.length,
+            harmonizedControlsCount: harmonizedControls.length,
+            statutoryObligationsCount: obligationsData.length,
+          },
+          controls: controlsData,
+          harmonizedControls,
+          requirementInstances: reqInstancesData,
+          statutoryObligations: obligationsData,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'framework_gap_report') {
+      const decSnap = await tenantRef.collection('applicability_decisions').get();
+      const reqInstancesSnap = await tenantRef.collection('requirement_instances').get();
+      const controlsSnap = await tenantRef.collection('controls').get();
+      const evidenceSnap = await tenantRef.collection('evidence').get();
+
+      const decisionsData = decSnap.docs.map((d) => d.data());
+      const reqInstancesData = reqInstancesSnap.docs.map((d) => d.data());
+      const controlsData = controlsSnap.docs.map((d) => d.data());
+      const evidenceData = evidenceSnap.docs.map((d) => d.data());
+
+      // Identify open gaps: applicable requirements lacking implemented controls
+      const openGaps: any[] = [];
+      const overdueReviews: any[] = [];
+
+      for (const dec of decisionsData as any[]) {
+        if (dec.status === 'applicable') {
+          const reqInst = (reqInstancesData as any[]).find((ri) => ri.requirementId === dec.requirementId);
+          const hasSatisfyingControls = reqInst && reqInst.satisfyingControlIds && reqInst.satisfyingControlIds.length > 0;
+          if (!hasSatisfyingControls) {
+            openGaps.push({
+              requirementId: dec.requirementId,
+              sectionCode: dec.sectionCode,
+              requirementTitle: dec.requirementTitle,
+              frameworkId: dec.frameworkId,
+              statutoryRationale: dec.rationale || dec.ruleEvaluationSummary,
+              issue: 'Applicable statutory requirement has no mapped tenant controls.',
+              remediation: 'Instantiate or map an operational control to satisfy this requirement.',
+            });
+          }
+        } else if (dec.status === 'review_required') {
+          overdueReviews.push({
+            requirementId: dec.requirementId,
+            sectionCode: dec.sectionCode,
+            requirementTitle: dec.requirementTitle,
+            frameworkId: dec.frameworkId,
+            statutoryRationale: dec.rationale || dec.ruleEvaluationSummary,
+            issue: 'Applicability decision is pending manual/reviewer assessment.',
+          });
+        }
+      }
+
+      fileName = `framework_gap_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Multi-Framework Compliance Gap & Attention Report',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            openGapsCount: openGaps.length,
+            overdueReviewsCount: overdueReviews.length,
+          },
+          openGaps,
+          overdueReviews,
+          activeControlsCount: controlsData.length,
+          totalEvidenceCount: evidenceData.length,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'gdpr_ropa_xlsx' || job.exportType === 'framework_readiness_pdf') {
       const ropaSnap = await tenantRef.collection('ropa_entries').get();
       const controlsSnap = await tenantRef.collection('controls').get();
       const ropaData = ropaSnap.docs.map((d) => d.data());
@@ -87,7 +240,7 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
         null,
         2
       );
-    } else if (job.exportType === 'iso_soa_pdf') {
+    } else if (job.exportType === 'iso_soa_pdf' || job.exportType === 'iso_soa_report') {
       const soaSnap = await tenantRef.collection('iso_soa_entries').get();
       const scopesSnap = await tenantRef.collection('iso_scope_statements').get();
       const auditsSnap = await tenantRef.collection('iso_internal_audits').get();
@@ -98,7 +251,10 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
           exportHeader: {
             tenantId,
             exportType: job.exportType,
+            title: 'ISO/IEC 27001 Statement of Applicability (SoA)',
             generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalEntriesCount: soaSnap.docs.length,
           },
           scopeStatements: scopesSnap.docs.map((d) => d.data()),
           soaEntries: soaSnap.docs.map((d) => d.data()),

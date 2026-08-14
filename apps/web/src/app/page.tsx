@@ -1161,24 +1161,54 @@ export default function DashboardPage() {
               </p>
             </header>
 
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '24px', flexWrap: 'wrap' }}>
               <button
                 onClick={() => handleRequestExport('tenant_evidence_package_zip')}
-                style={{ backgroundColor: 'var(--accent-blue)', color: '#fff', padding: '8px 16px', borderRadius: '6px', border: 'none', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                style={{ backgroundColor: 'var(--accent-blue)', color: '#fff', padding: '8px 14px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
-                📦 Export Evidence Package
+                📦 Evidence Package
+              </button>
+              <button
+                onClick={() => handleRequestExport('adopted_frameworks_summary')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📋 Adopted Frameworks Summary
+              </button>
+              <button
+                onClick={() => handleRequestExport('applicability_decisions_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                ⚖️ Applicability Determinations
+              </button>
+              <button
+                onClick={() => handleRequestExport('tenant_control_coverage_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                🛡️ Control Coverage & Harmonization
+              </button>
+              <button
+                onClick={() => handleRequestExport('iso_soa_pdf')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📄 ISO 27001 Statement of Applicability
+              </button>
+              <button
+                onClick={() => handleRequestExport('framework_gap_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                ⚠️ Multi-Framework Gap Report
               </button>
               <button
                 onClick={() => handleRequestExport('gdpr_ropa_xlsx')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
-                📊 Export GDPR ROPA XLSX
+                📊 GDPR ROPA
               </button>
               <button
                 onClick={() => handleRequestExport('eu_ai_act_technical_file_pdf')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
-                🤖 Export AI Act Technical Dossier
+                🤖 AI Act Technical Dossier
               </button>
             </div>
 
