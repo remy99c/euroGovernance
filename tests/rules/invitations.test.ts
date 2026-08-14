@@ -4,17 +4,20 @@ import {
   assertFails,
   assertSucceeds,
 } from '@firebase/rules-unit-testing';
-import * as fs from 'fs';
-import * as path from 'path';
+import {
+  seedTenantWithMembers,
+  FIXTURE_TENANT_A,
+  PERSONAS,
+  getFirestoreRules,
+} from './fixtures/test-factories.js';
 
 let testEnv: RulesTestEnvironment;
 
 beforeAll(async () => {
-  const rulesPath = path.resolve(__dirname, '../../firestore.rules');
-  const rules = fs.readFileSync(rulesPath, 'utf8');
+  const rules = getFirestoreRules();
 
   testEnv = await initializeTestEnvironment({
-    projectId: 'eurogovernance-test',
+    projectId: 'eurogovernance-security-test',
     firestore: {
       rules,
       host: '127.0.0.1',
@@ -34,43 +37,27 @@ beforeEach(async () => {
 });
 
 describe('Invitation Workflow & Access Control Security Rules', () => {
-  const tenantOrg = 'tenant_eurocorp_de';
-  const adminUser = 'usr_tenant_admin';
-  const memberUser = 'usr_compliance_mgr';
+  const tenantOrg = FIXTURE_TENANT_A;
+  const adminUser = PERSONAS.adminA.uid;
+  const memberUser = PERSONAS.complianceA.uid;
   const invitedUserEmail = 'newhire@eurocorp.de';
   const invitedUserId = 'usr_newhire_01';
   const eavesdropperEmail = 'attacker@evil.com';
   const eavesdropperId = 'usr_attacker_01';
   const invitationId = 'inv_01HQ9T_VALID';
 
-  beforeEach(async () => {
+  async function seedTestSetup() {
+    await seedTenantWithMembers(
+      testEnv,
+      { tenantId: tenantOrg, name: 'EuroCorp Technologies SE' },
+      [
+        { tenantId: tenantOrg, userId: adminUser, role: 'tenant_admin' },
+        { tenantId: tenantOrg, userId: memberUser, role: 'compliance_manager' },
+      ]
+    );
+
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
-
-      // Seed Tenant
-      await adminDb.doc(`tenants/${tenantOrg}`).set({
-        id: tenantOrg,
-        name: 'EuroCorp Technologies SE',
-        status: 'active',
-      });
-
-      // Seed Admin Membership
-      await adminDb.doc(`tenants/${tenantOrg}/memberships/${adminUser}`).set({
-        userId: adminUser,
-        tenantId: tenantOrg,
-        role: 'tenant_admin',
-        status: 'active',
-      });
-
-      // Seed Standard Member Membership
-      await adminDb.doc(`tenants/${tenantOrg}/memberships/${memberUser}`).set({
-        userId: memberUser,
-        tenantId: tenantOrg,
-        role: 'compliance_manager',
-        status: 'active',
-      });
-
-      // Seed Pending Invitation
       await adminDb.doc(`invitations/${invitationId}`).set({
         id: invitationId,
         tenantId: tenantOrg,
@@ -85,49 +72,48 @@ describe('Invitation Workflow & Access Control Security Rules', () => {
         createdBy: adminUser,
       });
     });
-  });
+  }
 
-  // 1. Admin Can Read Invitation Test
   test('Tenant Admin can read invitation issued for their tenant', async () => {
+    await seedTestSetup();
     const adminDb = testEnv.authenticatedContext(adminUser, { email: 'admin@eurocorp.de' }).firestore();
     const inviteRef = adminDb.doc(`invitations/${invitationId}`);
 
     await assertSucceeds(inviteRef.get());
   });
 
-  // 2. Intended Recipient Can Read Invitation Test
   test('Intended recipient with matching email can read their invitation document', async () => {
+    await seedTestSetup();
     const recipientDb = testEnv.authenticatedContext(invitedUserId, { email: invitedUserEmail }).firestore();
     const inviteRef = recipientDb.doc(`invitations/${invitationId}`);
 
     await assertSucceeds(inviteRef.get());
   });
 
-  // 3. Eavesdropper / Non-Recipient Cannot Read Invitation Test
   test('Unintended user with different email CANNOT read another persons invitation', async () => {
+    await seedTestSetup();
     const eavesdropperDb = testEnv.authenticatedContext(eavesdropperId, { email: eavesdropperEmail }).firestore();
     const inviteRef = eavesdropperDb.doc(`invitations/${invitationId}`);
 
     await assertFails(inviteRef.get());
   });
 
-  // 4. Standard Non-Admin Member Cannot Read Other Invites
   test('Standard non-admin member in tenant cannot read invitations not addressed to them', async () => {
+    await seedTestSetup();
     const memberDb = testEnv.authenticatedContext(memberUser, { email: 'compliance@eurocorp.de' }).firestore();
     const inviteRef = memberDb.doc(`invitations/${invitationId}`);
 
     await assertFails(inviteRef.get());
   });
 
-  // 5. Direct Client Mutation Blocked
   test('Direct client writes, updates, and deletes to /invitations are strictly blocked', async () => {
+    await seedTestSetup();
     const adminDb = testEnv.authenticatedContext(adminUser, { email: 'admin@eurocorp.de' }).firestore();
     const recipientDb = testEnv.authenticatedContext(invitedUserId, { email: invitedUserEmail }).firestore();
 
     const inviteRef = adminDb.doc(`invitations/${invitationId}`);
     const newInviteRef = adminDb.doc('invitations/inv_new_unauthorized');
 
-    // Admin cannot directly create invite from client SDK (Must use Cloud Function)
     await assertFails(
       newInviteRef.set({
         id: 'inv_new_unauthorized',
@@ -138,14 +124,12 @@ describe('Invitation Workflow & Access Control Security Rules', () => {
       })
     );
 
-    // Recipient cannot directly self-accept via client update (Must use acceptTenantInvite Cloud Function)
     await assertFails(
       recipientDb.doc(`invitations/${invitationId}`).update({
         status: 'accepted',
       })
     );
 
-    // Admin cannot directly delete invite document from client
     await assertFails(inviteRef.delete());
   });
 });

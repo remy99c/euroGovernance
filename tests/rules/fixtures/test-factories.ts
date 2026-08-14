@@ -66,3 +66,34 @@ export const PERSONAS = {
   adminB: { uid: 'usr_admin_b', role: 'tenant_admin' as UserRole, email: 'admin@medtech.fr' },
   contributorB: { uid: 'usr_contrib_b', role: 'contributor' as UserRole, email: 'dev@medtech.fr' },
 };
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+export function getFirestoreRules(): string {
+  const possiblePaths = [
+    path.resolve(process.cwd(), 'firestore.rules'),
+    path.resolve(process.cwd(), '../../firestore.rules'),
+    path.resolve(process.cwd(), '../firestore.rules'),
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return fs.readFileSync(p, 'utf8');
+    }
+  }
+  throw new Error(`firestore.rules not found from cwd ${process.cwd()}`);
+}
+
+export function getStorageRules(): string {
+  const possiblePaths = [
+    path.resolve(process.cwd(), 'storage.rules'),
+    path.resolve(process.cwd(), '../../storage.rules'),
+    path.resolve(process.cwd(), '../storage.rules'),
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return fs.readFileSync(p, 'utf8');
+    }
+  }
+  throw new Error(`storage.rules not found from cwd ${process.cwd()}`);
+}

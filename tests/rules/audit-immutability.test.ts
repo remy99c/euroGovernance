@@ -4,14 +4,12 @@ import {
   assertFails,
   assertSucceeds,
 } from '@firebase/rules-unit-testing';
-import * as fs from 'fs';
-import * as path from 'path';
+import { getFirestoreRules } from './fixtures/test-factories.js';
 
 let testEnv: RulesTestEnvironment;
 
 beforeAll(async () => {
-  const rulesPath = path.resolve(__dirname, '../../firestore.rules');
-  const rules = fs.readFileSync(rulesPath, 'utf8');
+  const rules = getFirestoreRules();
 
   testEnv = await initializeTestEnvironment({
     projectId: 'eurogovernance-test',

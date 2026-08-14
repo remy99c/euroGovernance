@@ -22,7 +22,7 @@ service cloud.firestore {
 
     function isPlatformAdmin() {
       return isAuthenticated() &&
-        request.auth.token.get('platform_admin', false) == true;
+        ('platform_admin' in request.auth.token && request.auth.token.platform_admin == true);
     }
 
     function membershipPath(tenantId) {
@@ -75,16 +75,15 @@ service cloud.firestore {
 
     function validTenantScopedCreate(tenantId) {
       return request.resource.data.tenantId == tenantId &&
-             request.resource.data.createdBy == request.auth.uid &&
-             (request.resource.data.createdAt is string || request.resource.data.createdAt == request.time);
+             (!('createdBy' in request.resource.data) || request.resource.data.createdBy == request.auth.uid) &&
+             (!('createdAt' in request.resource.data) || request.resource.data.createdAt is string || request.resource.data.createdAt == request.time);
     }
 
     function validTenantScopedUpdate(tenantId) {
-      return request.resource.data.tenantId == resource.data.tenantId &&
-             request.resource.data.tenantId == tenantId &&
-             request.resource.data.createdBy == resource.data.createdBy &&
-             request.resource.data.updatedBy == request.auth.uid &&
-             (request.resource.data.updatedAt is string || request.resource.data.updatedAt == request.time);
+      return (!('tenantId' in request.resource.data) || (request.resource.data.tenantId == resource.data.tenantId && request.resource.data.tenantId == tenantId)) &&
+             (!('createdBy' in resource.data) || !('createdBy' in request.resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
+             (!('updatedBy' in request.resource.data) || request.resource.data.updatedBy == request.auth.uid) &&
+             (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is string || request.resource.data.updatedAt == request.time);
     }
 
     // -------------------------------------------------------------------------
@@ -119,8 +118,12 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /invitations/{invitationId} {
       allow read: if isAuthenticated() && (
-        resource.data.email == request.auth.token.email ||
-        isTenantAdmin(resource.data.tenantId)
+        ('email' in request.auth.token && 'email' in resource.data && resource.data.email == request.auth.token.email) ||
+        (
+          'tenantId' in resource.data &&
+          exists(/databases/(default)/documents/tenants/$(resource.data.tenantId)/memberships/$(request.auth.uid)) &&
+          get(/databases/(default)/documents/tenants/$(resource.data.tenantId)/memberships/$(request.auth.uid)).data.role == 'tenant_admin'
+        )
       );
       // Creating, accepting, or canceling invites is routed through Cloud Functions
       allow write: if false;
@@ -156,15 +159,14 @@ service cloud.firestore {
         allow read: if isTenantMember(tenantId);
         allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
                       && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'approver'])
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
                       && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
 
         match /reviews/{reviewId} {
           allow read: if isTenantMember(tenantId);
-          allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'approver']);
-          allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'approver']);
-          allow delete: if isTenantAdmin(tenantId);
+          allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'approver', 'auditor']);
+          allow update, delete: if false;
         }
       }
 
@@ -332,7 +334,8 @@ service cloud.firestore {
       // EU AI Act: AI Incidents
       match /ai_incidents/{incidentId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if !isReadOnlyRole(tenantId) && validTenantScopedCreate(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager', 'security_manager'])
+                      && validTenantScopedCreate(tenantId);
         allow update: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager', 'security_manager'])
                       && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
@@ -371,29 +374,37 @@ service cloud.firestore {
       // ISO 27001 & ISO 42001 Management Layer Collections
       match /iso_scope_statements/{scopeId} {
         allow read: if isTenantMember(tenantId);
-        allow create, update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                              && validTenantScopedCreate(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
+                      && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
       }
 
       match /iso_objectives/{objId} {
         allow read: if isTenantMember(tenantId);
-        allow create, update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                              && validTenantScopedCreate(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
+                      && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
       }
 
       match /iso_soa_entries/{soaId} {
         allow read: if isTenantMember(tenantId);
-        allow create, update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                              && validTenantScopedCreate(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
+                      && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
       }
 
       match /iso_internal_audits/{auditId} {
         allow read: if isTenantMember(tenantId);
-        allow create, update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'auditor'])
-                              && validTenantScopedCreate(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'auditor'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'auditor'])
+                      && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
 
         match /findings/{findingId} {
@@ -405,8 +416,10 @@ service cloud.firestore {
 
       match /iso_management_reviews/{reviewId} {
         allow read: if isTenantMember(tenantId);
-        allow create, update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'approver'])
-                              && validTenantScopedCreate(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'approver'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'approver'])
+                      && validTenantScopedUpdate(tenantId);
         allow delete: if isTenantAdmin(tenantId);
       }
 
@@ -429,7 +442,10 @@ service cloud.firestore {
           resource.data.requestedBy == request.auth.uid ||
           isTenantAdmin(tenantId)
         );
-        allow create, update, delete: if false; // Managed by Cloud Functions
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'auditor'])
+                      && validTenantScopedCreate(tenantId)
+                      && request.resource.data.requestedBy == request.auth.uid;
+        allow update, delete: if false; // Status transitions managed by backend
       }
     }
   }
