@@ -7,13 +7,19 @@ import {
   Evidence,
   EvidenceVersion,
   EvidenceStatus,
+  EvidenceCategory,
+  VALID_EVIDENCE_CATEGORIES,
+  ProcessorProfile,
+  TransferArrangement,
+  evaluateProcessorEvidenceCompleteness,
+  evaluateTransferEvidenceCompleteness,
 } from '@eurogovernance/shared-types';
 
 export interface CreateEvidenceInput {
   tenantId: string;
   title: string;
   description?: string;
-  category: 'audit_log' | 'screenshot' | 'policy_doc' | 'export_report' | 'assessment_doc' | 'configuration';
+  category: EvidenceCategory;
   fileName: string;
   storagePath: string;
   fileSizeBytes: number;
@@ -24,6 +30,9 @@ export interface CreateEvidenceInput {
   policyIds?: string[];
   riskIds?: string[];
   assessmentIds?: string[];
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
+  vendorIds?: string[];
 }
 
 export interface CreateEvidenceVersionInput {
@@ -56,6 +65,9 @@ export interface ListEvidenceInput {
   controlId?: string;
   status?: EvidenceStatus;
   category?: string;
+  processorProfileId?: string;
+  transferArrangementId?: string;
+  vendorId?: string;
 }
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB ceiling
@@ -110,6 +122,9 @@ export const createEvidence = onCall<CreateEvidenceInput>(async (request) => {
     policyIds = [],
     riskIds = [],
     assessmentIds = [],
+    processorProfileIds = [],
+    transferArrangementIds = [],
+    vendorIds = [],
   } = request.data;
 
   if (!tenantId || !title || !category || !fileName || !storagePath || !fileSizeBytes || !mimeType || !fileHashSha256) {
@@ -117,6 +132,10 @@ export const createEvidence = onCall<CreateEvidenceInput>(async (request) => {
       'invalid-argument',
       'tenantId, title, category, fileName, storagePath, fileSizeBytes, mimeType, and fileHashSha256 are required.'
     );
+  }
+
+  if (!VALID_EVIDENCE_CATEGORIES.includes(category)) {
+    throw new HttpsError('invalid-argument', `category must be one of: ${VALID_EVIDENCE_CATEGORIES.join(', ')}.`);
   }
 
   validateStorageFile(mimeType, fileSizeBytes, storagePath, tenantId);
@@ -150,6 +169,9 @@ export const createEvidence = onCall<CreateEvidenceInput>(async (request) => {
     policyIds,
     riskIds,
     assessmentIds,
+    processorProfileIds,
+    transferArrangementIds,
+    vendorIds,
     collectedAt: now,
     reviewDueDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
     reviewedBy: null,
@@ -455,7 +477,7 @@ export const rejectEvidence = onCall<RejectEvidenceInput>(async (request) => {
  * Querying and filtering evidence records
  */
 export const listTenantEvidence = onCall<ListEvidenceInput>(async (request) => {
-  const { tenantId, controlId, status, category } = request.data;
+  const { tenantId, controlId, status, category, processorProfileId, transferArrangementId, vendorId } = request.data;
   if (!tenantId) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
@@ -466,6 +488,15 @@ export const listTenantEvidence = onCall<ListEvidenceInput>(async (request) => {
 
   if (controlId) {
     query = query.where('controlIds', 'array-contains', controlId);
+  }
+  if (processorProfileId) {
+    query = query.where('processorProfileIds', 'array-contains', processorProfileId);
+  }
+  if (transferArrangementId) {
+    query = query.where('transferArrangementIds', 'array-contains', transferArrangementId);
+  }
+  if (vendorId) {
+    query = query.where('vendorIds', 'array-contains', vendorId);
   }
   if (status) {
     query = query.where('status', '==', status);
@@ -478,4 +509,253 @@ export const listTenantEvidence = onCall<ListEvidenceInput>(async (request) => {
   const evidenceList: Evidence[] = snap.docs.map((d) => d.data() as Evidence);
 
   return { success: true, count: evidenceList.length, evidence: evidenceList };
+});
+
+export interface LinkEvidenceToProcessorProfileInput {
+  tenantId: string;
+  evidenceId: string;
+  processorProfileId: string;
+}
+
+export const linkEvidenceToProcessorProfile = onCall<LinkEvidenceToProcessorProfileInput>(async (request) => {
+  const { tenantId, evidenceId, processorProfileId } = request.data;
+  if (!tenantId || !evidenceId || !processorProfileId) {
+    throw new HttpsError('invalid-argument', 'tenantId, evidenceId, and processorProfileId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'privacy_manager',
+    'security_manager',
+  ]);
+
+  // 1. Verify Evidence exists
+  const evidenceRef = db.collection('tenants').doc(tenantId).collection('evidence').doc(evidenceId);
+  const evidenceSnap = await evidenceRef.get();
+  if (!evidenceSnap.exists) {
+    throw new HttpsError('not-found', `Evidence record ${evidenceId} not found.`);
+  }
+  const evidence = evidenceSnap.data() as Evidence;
+
+  // 2. Verify ProcessorProfile exists
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+  const profileSnap = await profileRef.get();
+  if (!profileSnap.exists) {
+    throw new HttpsError('not-found', `Processor profile ${processorProfileId} not found.`);
+  }
+  const profile = profileSnap.data() as ProcessorProfile;
+
+  const now = new Date().toISOString();
+  const currentProfiles = evidence.processorProfileIds || [];
+  const updatedProfiles = currentProfiles.includes(processorProfileId)
+    ? currentProfiles
+    : [...currentProfiles, processorProfileId];
+
+  const currentVendors = evidence.vendorIds || [];
+  const updatedVendors = profile.vendorId && !currentVendors.includes(profile.vendorId)
+    ? [...currentVendors, profile.vendorId]
+    : currentVendors;
+
+  await evidenceRef.update({
+    processorProfileIds: updatedProfiles,
+    vendorIds: updatedVendors,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  // If evidence is DPA, link on processor profile as well
+  if (evidence.category === 'dpa') {
+    await profileRef.update({
+      linkedDpaEvidenceId: evidenceId,
+      dpaSigned: true,
+      updatedAt: now,
+      updatedBy: authContext.userId,
+    });
+  }
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'evidence',
+    entityId: evidenceId,
+    action: 'link',
+    beforeSummary: { previousProcessorProfileIds: currentProfiles },
+    afterSummary: { evidenceId, processorProfileId, category: evidence.category },
+    source: 'cloud_function',
+    workflowContext: 'evidence_linked_to_processor_profile',
+  });
+
+  return { success: true, evidenceId, processorProfileId, linked: true };
+});
+
+export interface LinkEvidenceToTransferArrangementInput {
+  tenantId: string;
+  evidenceId: string;
+  transferArrangementId: string;
+}
+
+export const linkEvidenceToTransferArrangement = onCall<LinkEvidenceToTransferArrangementInput>(async (request) => {
+  const { tenantId, evidenceId, transferArrangementId } = request.data;
+  if (!tenantId || !evidenceId || !transferArrangementId) {
+    throw new HttpsError('invalid-argument', 'tenantId, evidenceId, and transferArrangementId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'privacy_manager',
+    'security_manager',
+  ]);
+
+  // 1. Verify Evidence exists
+  const evidenceRef = db.collection('tenants').doc(tenantId).collection('evidence').doc(evidenceId);
+  const evidenceSnap = await evidenceRef.get();
+  if (!evidenceSnap.exists) {
+    throw new HttpsError('not-found', `Evidence record ${evidenceId} not found.`);
+  }
+  const evidence = evidenceSnap.data() as Evidence;
+
+  // 2. Verify TransferArrangement exists
+  const arrangementRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(transferArrangementId);
+  const arrangementSnap = await arrangementRef.get();
+  if (!arrangementSnap.exists) {
+    throw new HttpsError('not-found', `Transfer arrangement ${transferArrangementId} not found.`);
+  }
+  const arrangement = arrangementSnap.data() as TransferArrangement;
+
+  const now = new Date().toISOString();
+
+  // Update Evidence
+  const currentArrangements = evidence.transferArrangementIds || [];
+  const updatedArrangements = currentArrangements.includes(transferArrangementId)
+    ? currentArrangements
+    : [...currentArrangements, transferArrangementId];
+
+  const currentProfiles = evidence.processorProfileIds || [];
+  const updatedProfiles = arrangement.processorProfileId && !currentProfiles.includes(arrangement.processorProfileId)
+    ? [...currentProfiles, arrangement.processorProfileId]
+    : currentProfiles;
+
+  await evidenceRef.update({
+    transferArrangementIds: updatedArrangements,
+    processorProfileIds: updatedProfiles,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  // Update TransferArrangement
+  const currentLinkedEvidences = arrangement.linkedEvidenceIds || [];
+  const updatedLinkedEvidences = currentLinkedEvidences.includes(evidenceId)
+    ? currentLinkedEvidences
+    : [...currentLinkedEvidences, evidenceId];
+
+  await arrangementRef.update({
+    linkedEvidenceIds: updatedLinkedEvidences,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'transfer_arrangement',
+    entityId: transferArrangementId,
+    action: 'link',
+    beforeSummary: { previousLinkedEvidenceIds: currentLinkedEvidences },
+    afterSummary: { evidenceId, transferArrangementId, category: evidence.category },
+    source: 'cloud_function',
+    workflowContext: 'evidence_linked_to_transfer_arrangement',
+  });
+
+  return { success: true, evidenceId, transferArrangementId, linked: true };
+});
+
+export interface GetProcessorEvidenceSummaryInput {
+  tenantId: string;
+  processorProfileId: string;
+}
+
+export const getProcessorEvidenceSummary = onCall<GetProcessorEvidenceSummaryInput>(async (request) => {
+  const { tenantId, processorProfileId } = request.data;
+  if (!tenantId || !processorProfileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and processorProfileId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // 1. Fetch processor profile
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+  const profileSnap = await profileRef.get();
+  if (!profileSnap.exists) {
+    throw new HttpsError('not-found', `Processor profile ${processorProfileId} not found.`);
+  }
+  const profile = profileSnap.data() as ProcessorProfile;
+
+  // 2. Fetch all evidences relevant to this processor
+  const evidenceSnap = await db.collection('tenants').doc(tenantId).collection('evidence').get();
+  const allEvidences: Evidence[] = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+  const linkedEvidences = allEvidences.filter(
+    (e) =>
+      e.processorProfileIds?.includes(processorProfileId) ||
+      (profile.vendorId && e.vendorIds?.includes(profile.vendorId)) ||
+      e.id === profile.linkedDpaEvidenceId
+  );
+
+  const completeness = evaluateProcessorEvidenceCompleteness(profile, linkedEvidences);
+
+  return {
+    success: true,
+    processorProfileId,
+    completeness,
+    linkedEvidenceCount: linkedEvidences.length,
+    evidences: linkedEvidences,
+  };
+});
+
+export interface GetTransferArrangementEvidenceSummaryInput {
+  tenantId: string;
+  transferArrangementId: string;
+}
+
+export const getTransferArrangementEvidenceSummary = onCall<GetTransferArrangementEvidenceSummaryInput>(async (request) => {
+  const { tenantId, transferArrangementId } = request.data;
+  if (!tenantId || !transferArrangementId) {
+    throw new HttpsError('invalid-argument', 'tenantId and transferArrangementId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // 1. Fetch transfer arrangement
+  const arrangementRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(transferArrangementId);
+  const arrangementSnap = await arrangementRef.get();
+  if (!arrangementSnap.exists) {
+    throw new HttpsError('not-found', `Transfer arrangement ${transferArrangementId} not found.`);
+  }
+  const arrangement = arrangementSnap.data() as TransferArrangement;
+
+  // 2. Fetch all evidences relevant to this transfer
+  const evidenceSnap = await db.collection('tenants').doc(tenantId).collection('evidence').get();
+  const allEvidences: Evidence[] = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+  const linkedEvidences = allEvidences.filter(
+    (e) =>
+      e.transferArrangementIds?.includes(transferArrangementId) ||
+      arrangement.linkedEvidenceIds?.includes(e.id)
+  );
+
+  const completeness = evaluateTransferEvidenceCompleteness(arrangement, linkedEvidences);
+
+  return {
+    success: true,
+    transferArrangementId,
+    completeness,
+    linkedEvidenceCount: linkedEvidences.length,
+    evidences: linkedEvidences,
+  };
 });

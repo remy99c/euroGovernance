@@ -166,6 +166,10 @@ export {
   approveEvidence,
   rejectEvidence,
   listTenantEvidence,
+  linkEvidenceToProcessorProfile,
+  linkEvidenceToTransferArrangement,
+  getProcessorEvidenceSummary,
+  getTransferArrangementEvidenceSummary,
 } from './handlers/evidence.js';
 
 // Audit Log Callable Handler

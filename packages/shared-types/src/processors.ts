@@ -1,4 +1,5 @@
 import { BaseEntity } from './core.js';
+import { Evidence, EvidenceCategory } from './grc.js';
 
 export type ProcessorRole =
   | 'data_processor'
@@ -532,4 +533,229 @@ export function deriveProcessorTIAStatus(
   }
 
   return 'tia_missing';
+}
+
+// -----------------------------------------------------------------------------
+// EVIDENCE INTEGRATION & GAP ANALYSIS
+// -----------------------------------------------------------------------------
+
+export interface ProcessorEvidenceRequirement {
+  key: string;
+  label: string;
+  category: EvidenceCategory;
+  status: 'satisfied' | 'missing' | 'expired';
+  linkedEvidenceId?: string | null;
+  reason: string;
+}
+
+export interface ProcessorEvidenceCompleteness {
+  isComplete: boolean;
+  missingCount: number;
+  satisfiedCount: number;
+  requirements: ProcessorEvidenceRequirement[];
+}
+
+export interface TransferEvidenceRequirement {
+  key: string;
+  label: string;
+  category: EvidenceCategory;
+  status: 'satisfied' | 'missing' | 'expired';
+  linkedEvidenceId?: string | null;
+  reason: string;
+}
+
+export interface TransferEvidenceCompleteness {
+  isComplete: boolean;
+  missingCount: number;
+  satisfiedCount: number;
+  requirements: TransferEvidenceRequirement[];
+}
+
+/**
+ * Evaluates whether all required compliance evidence artifacts exist for a processor profile.
+ */
+export function evaluateProcessorEvidenceCompleteness(
+  profile: ProcessorProfile,
+  evidences: Evidence[],
+  nowISO: string = new Date().toISOString()
+): ProcessorEvidenceCompleteness {
+  const requirements: ProcessorEvidenceRequirement[] = [];
+  const nowTime = new Date(nowISO).getTime();
+
+  // Helper to find valid evidence by category or explicit ID
+  const findEvidence = (predicate: (e: Evidence) => boolean) => {
+    return evidences.find(predicate) || null;
+  };
+
+  const getEvidenceStatus = (evidence: Evidence | null): 'satisfied' | 'missing' | 'expired' => {
+    if (!evidence || evidence.status === 'rejected' || evidence.status === 'archived') {
+      return 'missing';
+    }
+    if (evidence.reviewDueDate) {
+      const dueTime = new Date(evidence.reviewDueDate).getTime();
+      if (!isNaN(dueTime) && nowTime > dueTime) {
+        return 'expired';
+      }
+    }
+    if (evidence.status === 'expired') {
+      return 'expired';
+    }
+    return 'satisfied';
+  };
+
+  // 1. DPA Evidence Requirement (Mandatory if DPA signed)
+  if (profile.dpaSigned) {
+    const dpaEvidence = findEvidence(
+      (e) =>
+        (e.id === profile.linkedDpaEvidenceId || e.category === 'dpa') &&
+        Boolean(e.processorProfileIds?.includes(profile.id) || (profile.vendorId && e.vendorIds?.includes(profile.vendorId)) || e.id === profile.linkedDpaEvidenceId)
+    );
+    const dpaStatus = getEvidenceStatus(dpaEvidence);
+    requirements.push({
+      key: 'dpa',
+      label: 'Signed Data Processing Agreement (DPA)',
+      category: 'dpa',
+      status: dpaStatus,
+      linkedEvidenceId: dpaEvidence?.id || null,
+      reason: 'Article 28(3) GDPR requires a binding written contract governing processor commitments.',
+    });
+  }
+
+  // 2. Security Assurance / TOMs Requirement (Mandatory for High & Critical tier processors)
+  if (profile.criticality === 'critical' || profile.criticality === 'high') {
+    const securityEvidence = findEvidence(
+      (e) =>
+        ['soc_report', 'iso_certificate', 'security_report', 'toms'].includes(e.category) &&
+        Boolean(e.processorProfileIds?.includes(profile.id) || (profile.vendorId && e.vendorIds?.includes(profile.vendorId)))
+    );
+    const secStatus = getEvidenceStatus(securityEvidence);
+    requirements.push({
+      key: 'security_assurance',
+      label: 'Technical & Organizational Security Assurance (SOC2 / ISO 27001 / TOMs)',
+      category: securityEvidence ? securityEvidence.category : 'security_report',
+      status: secStatus,
+      linkedEvidenceId: securityEvidence?.id || null,
+      reason: 'Critical and High risk processors require verifiable third-party security assurance or TOM audit documentation.',
+    });
+  }
+
+  // 3. Subprocessor Authorization / Addendum (Mandatory if role is subprocessor)
+  if (profile.processorRole === 'subprocessor') {
+    const subEvidence = findEvidence(
+      (e) =>
+        ['addendum', 'subprocessor_list'].includes(e.category) &&
+        Boolean(e.processorProfileIds?.includes(profile.id) || (profile.vendorId && e.vendorIds?.includes(profile.vendorId)))
+    );
+    const subStatus = getEvidenceStatus(subEvidence);
+    requirements.push({
+      key: 'subprocessor_authorization',
+      label: 'Subprocessor Authorization & Engagement Addendum',
+      category: subEvidence ? subEvidence.category : 'addendum',
+      status: subStatus,
+      linkedEvidenceId: subEvidence?.id || null,
+      reason: 'Subprocessors require explicit controller authorization under Article 28(2) GDPR.',
+    });
+  }
+
+  const missingCount = requirements.filter((r) => r.status === 'missing' || r.status === 'expired').length;
+  const satisfiedCount = requirements.filter((r) => r.status === 'satisfied').length;
+
+  return {
+    isComplete: missingCount === 0,
+    missingCount,
+    satisfiedCount,
+    requirements,
+  };
+}
+
+/**
+ * Evaluates whether all required legal and supplementary evidence artifacts exist for a transfer arrangement.
+ */
+export function evaluateTransferEvidenceCompleteness(
+  arrangement: TransferArrangement,
+  evidences: Evidence[],
+  nowISO: string = new Date().toISOString()
+): TransferEvidenceCompleteness {
+  const requirements: TransferEvidenceRequirement[] = [];
+  const nowTime = new Date(nowISO).getTime();
+
+  const getEvidenceStatus = (evidence: Evidence | null): 'satisfied' | 'missing' | 'expired' => {
+    if (!evidence || evidence.status === 'rejected' || evidence.status === 'archived') {
+      return 'missing';
+    }
+    if (evidence.reviewDueDate) {
+      const dueTime = new Date(evidence.reviewDueDate).getTime();
+      if (!isNaN(dueTime) && nowTime > dueTime) {
+        return 'expired';
+      }
+    }
+    if (evidence.status === 'expired') {
+      return 'expired';
+    }
+    return 'satisfied';
+  };
+
+  // 1. SCC Instrument (Mandatory for SCC-based transfers)
+  if (arrangement.restrictedTransfer && arrangement.transferMechanismType === 'standard_contractual_clauses') {
+    const sccEvidence = evidences.find(
+      (e) =>
+        (arrangement.linkedEvidenceIds?.includes(e.id) || e.category === 'scc') &&
+        Boolean(e.transferArrangementIds?.includes(arrangement.id) || arrangement.linkedEvidenceIds?.includes(e.id))
+    ) || null;
+    const sccStatus = getEvidenceStatus(sccEvidence);
+    requirements.push({
+      key: 'scc_instrument',
+      label: 'Executed Standard Contractual Clauses (SCCs)',
+      category: 'scc',
+      status: sccStatus,
+      linkedEvidenceId: sccEvidence?.id || null,
+      reason: 'Chapter V GDPR Article 46 requires executed SCC modules and completed annexes.',
+    });
+  }
+
+  // 2. Adequacy Documentation (Mandatory for Adequacy-based transfers e.g. EU-US DPF)
+  if (arrangement.restrictedTransfer && arrangement.transferMechanismType === 'adequacy_decision') {
+    const adequacyEvidence = evidences.find(
+      (e) =>
+        (arrangement.linkedEvidenceIds?.includes(e.id) || e.category === 'adequacy_support') &&
+        Boolean(e.transferArrangementIds?.includes(arrangement.id) || arrangement.linkedEvidenceIds?.includes(e.id))
+    ) || null;
+    const adqStatus = getEvidenceStatus(adequacyEvidence);
+    requirements.push({
+      key: 'adequacy_support',
+      label: 'Adequacy Decision Verification & Certification Proof',
+      category: 'adequacy_support',
+      status: adqStatus,
+      linkedEvidenceId: adequacyEvidence?.id || null,
+      reason: 'Adequacy transfers (e.g. EU-US DPF) require proof of current self-certification status.',
+    });
+  }
+
+  // 3. Subprocessor List (Mandatory if subprocessor involvement is true)
+  if (arrangement.subprocessorInvolvement) {
+    const subListEvidence = evidences.find(
+      (e) =>
+        (arrangement.linkedEvidenceIds?.includes(e.id) || e.category === 'subprocessor_list') &&
+        Boolean(e.transferArrangementIds?.includes(arrangement.id) || arrangement.linkedEvidenceIds?.includes(e.id))
+    ) || null;
+    const subListStatus = getEvidenceStatus(subListEvidence);
+    requirements.push({
+      key: 'subprocessor_list',
+      label: 'Approved Subprocessor Roster & Territory Map',
+      category: 'subprocessor_list',
+      status: subListStatus,
+      linkedEvidenceId: subListEvidence?.id || null,
+      reason: 'Transfers involving onward subprocessing require transparent documentation of subprocessor locations.',
+    });
+  }
+
+  const missingCount = requirements.filter((r) => r.status === 'missing' || r.status === 'expired').length;
+  const satisfiedCount = requirements.filter((r) => r.status === 'satisfied').length;
+
+  return {
+    isComplete: missingCount === 0,
+    missingCount,
+    satisfiedCount,
+    requirements,
+  };
 }

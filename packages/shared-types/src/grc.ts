@@ -163,13 +163,52 @@ export interface ControlReview {
   reviewedAt: string;
 }
 
+export type EvidenceCategory =
+  | 'audit_log'
+  | 'screenshot'
+  | 'policy_doc'
+  | 'export_report'
+  | 'assessment_doc'
+  | 'configuration'
+  | 'dpa'
+  | 'scc'
+  | 'addendum'
+  | 'adequacy_support'
+  | 'toms'
+  | 'security_report'
+  | 'iso_certificate'
+  | 'soc_report'
+  | 'subprocessor_list'
+  | 'transfer_assessment_support'
+  | 'incident_notice';
+
+export const VALID_EVIDENCE_CATEGORIES: readonly EvidenceCategory[] = [
+  'audit_log',
+  'screenshot',
+  'policy_doc',
+  'export_report',
+  'assessment_doc',
+  'configuration',
+  'dpa',
+  'scc',
+  'addendum',
+  'adequacy_support',
+  'toms',
+  'security_report',
+  'iso_certificate',
+  'soc_report',
+  'subprocessor_list',
+  'transfer_assessment_support',
+  'incident_notice',
+] as const;
+
 /**
  * Evidence Record (/tenants/{tenantId}/evidence/{evidenceId})
  */
 export interface Evidence extends BaseEntity {
   title: string;
   description: string;
-  category: 'audit_log' | 'screenshot' | 'policy_doc' | 'export_report' | 'assessment_doc' | 'configuration';
+  category: EvidenceCategory;
   status: EvidenceStatus;
   storagePath: string;
   fileSizeBytes: number;
@@ -180,6 +219,9 @@ export interface Evidence extends BaseEntity {
   policyIds: string[];
   riskIds: string[];
   assessmentIds: string[];
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
+  vendorIds?: string[];
   collectedAt: string;
   reviewDueDate: string | null;
   reviewedBy: string | null;
