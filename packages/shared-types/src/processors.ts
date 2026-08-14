@@ -73,6 +73,7 @@ export interface GDPRArticle28Checklist {
 export interface ProcessorProfile extends BaseEntity {
   vendorId: string; // Foreign Key to /tenants/{tenantId}/vendors/{vendorId}
   tenantId: string;
+  engagementName?: string | null; // e.g. 'Primary SaaS Infrastructure', 'AI LLM Inference Addendum'
   processorRole: ProcessorRole;
   serviceDescription: string;
   dataCategories: string[]; // e.g. ['contact_data', 'billing_records', 'ip_addresses']

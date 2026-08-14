@@ -481,6 +481,7 @@ export const listTenantSystemAssets = onCall<ListSystemAssetsInput>(async (reque
 export interface CreateProcessorProfileInput {
   tenantId: string;
   vendorId: string;
+  engagementName?: string | null;
   processorRole: ProcessorRole;
   serviceDescription: string;
   dataCategories: string[];
@@ -512,9 +513,45 @@ export interface CreateProcessorProfileInput {
   } | null;
 }
 
+export interface CreateProcessorProfileFromVendorInput {
+  tenantId: string;
+  vendorId: string;
+  engagementName?: string | null;
+  processorRole?: ProcessorRole;
+  serviceDescription: string;
+  dataCategories: string[];
+  dataSubjects: string[];
+  isSpecialCategoryData?: boolean;
+  specialCategoryTypes?: string[] | null;
+  jurisdictions?: string[];
+  linkedSystemAssetIds?: string[];
+  criticality?: ProcessorCriticality;
+  ownerUserId?: string;
+  reviewCadence?: ProcessorReviewCadence;
+  lastReviewDate?: string | null;
+  status?: ProcessorStatus;
+  notes?: string | null;
+  dpaSigned?: boolean;
+  dpaDate?: string | null;
+  linkedDpaEvidenceId?: string | null;
+  linkedTiaId?: string | null;
+  linkedRopaIds?: string[];
+  article28Checklist?: {
+    writtenInstructionsMandate: boolean;
+    confidentialityDuty: boolean;
+    securityMeasuresTOMs: boolean;
+    subprocessorAuthorization: boolean;
+    dataSubjectRightsAssistance: boolean;
+    breachAssistance: boolean;
+    dataReturnOrDeletion: boolean;
+    auditInspectionRights: boolean;
+  } | null;
+}
+
 export interface UpdateProcessorProfileInput {
   tenantId: string;
   profileId: string;
+  engagementName?: string | null;
   processorRole?: ProcessorRole;
   serviceDescription?: string;
   dataCategories?: string[];
@@ -565,6 +602,7 @@ export const createTenantProcessorProfile = onCall<CreateProcessorProfileInput>(
   const {
     tenantId,
     vendorId,
+    engagementName = null,
     processorRole,
     serviceDescription,
     dataCategories,
@@ -601,7 +639,48 @@ export const createTenantProcessorProfile = onCall<CreateProcessorProfileInput>(
     throw new HttpsError('not-found', `Vendor with ID ${vendorId} does not exist in tenant.`);
   }
 
-  // 2. Compute Next Review Date
+  const vendorData = vendorSnap.data() as Vendor;
+
+  // 2. Prevent duplicate active processor profiles for the same vendor/engagement
+  const existingProfilesSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('processor_profiles')
+    .where('vendorId', '==', vendorId)
+    .get();
+
+  const isDuplicate = existingProfilesSnap.docs.some((doc) => {
+    const existing = doc.data() as ProcessorProfile;
+    if (existing.status === 'offboarded') return false;
+
+    if (
+      engagementName &&
+      existing.engagementName &&
+      existing.engagementName.trim().toLowerCase() === engagementName.trim().toLowerCase()
+    ) {
+      return true;
+    }
+
+    if (
+      !engagementName &&
+      !existing.engagementName &&
+      existing.processorRole === processorRole &&
+      existing.serviceDescription.trim().toLowerCase() === serviceDescription.trim().toLowerCase()
+    ) {
+      return true;
+    }
+
+    return false;
+  });
+
+  if (isDuplicate) {
+    throw new HttpsError(
+      'already-exists',
+      `An active processor profile with engagement '${engagementName || serviceDescription}' already exists for vendor ${vendorId}. Specify a unique engagementName to register an additional processing engagement.`
+    );
+  }
+
+  // 3. Compute Next Review Date
   const now = new Date().toISOString();
   let computedNextReview: string | null = null;
   if (lastReviewDate) {
@@ -617,6 +696,7 @@ export const createTenantProcessorProfile = onCall<CreateProcessorProfileInput>(
     id: profileId,
     tenantId,
     vendorId,
+    engagementName,
     processorRole,
     serviceDescription,
     dataCategories,
@@ -652,7 +732,7 @@ export const createTenantProcessorProfile = onCall<CreateProcessorProfileInput>(
 
   await profileRef.set(payload);
 
-  // 3. Update master Vendor to reflect active processor profile
+  // 4. Update master Vendor to mark processor capability
   await vendorRef.update({
     hasProcessorProfile: true,
     activeProcessorProfileId: profileId,
@@ -668,10 +748,196 @@ export const createTenantProcessorProfile = onCall<CreateProcessorProfileInput>(
     entityType: 'processor_profile',
     entityId: profileId,
     action: 'create',
-    beforeSummary: null,
-    afterSummary: { vendorId, processorRole, criticality, status },
+    beforeSummary: { vendorId, vendorName: vendorData.name, hasProcessorProfile: vendorData.hasProcessorProfile || false },
+    afterSummary: { vendorId, engagementName, processorRole, criticality, status },
     source: 'cloud_function',
     workflowContext: 'processor_profile_creation',
+  });
+
+  return { success: true, profileId, processorProfile: payload };
+});
+
+export const createProcessorProfileFromVendor = onCall<CreateProcessorProfileFromVendorInput>(async (request) => {
+  const {
+    tenantId,
+    vendorId,
+    engagementName = null,
+    processorRole = 'data_processor',
+    serviceDescription,
+    dataCategories,
+    dataSubjects,
+    isSpecialCategoryData = false,
+    specialCategoryTypes = null,
+    jurisdictions,
+    linkedSystemAssetIds = [],
+    criticality,
+    ownerUserId,
+    reviewCadence = 'annually',
+    lastReviewDate = null,
+    status = 'active',
+    notes = null,
+    dpaSigned,
+    dpaDate,
+    linkedDpaEvidenceId = null,
+    linkedTiaId = null,
+    linkedRopaIds = [],
+    article28Checklist = null,
+  } = request.data;
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'privacy_manager',
+    'security_manager',
+  ]);
+
+  // 1. Fetch Vendor
+  const vendorRef = db.collection('tenants').doc(tenantId).collection('vendors').doc(vendorId);
+  const vendorSnap = await vendorRef.get();
+  if (!vendorSnap.exists) {
+    throw new HttpsError('not-found', `Vendor with ID ${vendorId} not found in tenant.`);
+  }
+
+  const vendor = vendorSnap.data() as Vendor;
+
+  // 2. Derive defaults from Vendor if not explicitly supplied
+  const effectiveDpaSigned = dpaSigned !== undefined ? dpaSigned : (vendor.dpaSigned ?? false);
+  const effectiveDpaDate = dpaDate !== undefined ? dpaDate : (vendor.dpaDate ?? null);
+  const effectiveJurisdictions =
+    jurisdictions && jurisdictions.length > 0
+      ? jurisdictions
+      : (vendor.dataHostingRegions && vendor.dataHostingRegions.length > 0
+          ? vendor.dataHostingRegions
+          : [vendor.countryOfIncorporation || 'EU']);
+
+  let effectiveCriticality: ProcessorCriticality = 'medium';
+  if (criticality) {
+    effectiveCriticality = criticality;
+  } else if (vendor.riskTier === 'critical') {
+    effectiveCriticality = 'critical';
+  } else if (vendor.riskTier === 'high') {
+    effectiveCriticality = 'high';
+  } else if (vendor.riskTier === 'low') {
+    effectiveCriticality = 'low';
+  }
+
+  // 3. Prevent duplicate active processor profiles for the same vendor/engagement
+  const existingProfilesSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('processor_profiles')
+    .where('vendorId', '==', vendorId)
+    .get();
+
+  const isDuplicate = existingProfilesSnap.docs.some((doc) => {
+    const existing = doc.data() as ProcessorProfile;
+    if (existing.status === 'offboarded') return false;
+
+    if (
+      engagementName &&
+      existing.engagementName &&
+      existing.engagementName.trim().toLowerCase() === engagementName.trim().toLowerCase()
+    ) {
+      return true;
+    }
+
+    if (
+      !engagementName &&
+      !existing.engagementName &&
+      existing.processorRole === processorRole &&
+      existing.serviceDescription.trim().toLowerCase() === serviceDescription.trim().toLowerCase()
+    ) {
+      return true;
+    }
+
+    return false;
+  });
+
+  if (isDuplicate) {
+    throw new HttpsError(
+      'already-exists',
+      `An active processor profile with engagement '${engagementName || serviceDescription}' already exists for vendor ${vendorId}. Specify a unique engagementName to add an additional processing engagement.`
+    );
+  }
+
+  const now = new Date().toISOString();
+  const effectiveReviewDate = lastReviewDate || now;
+  const computedNextReview = computeNextReviewDate(effectiveReviewDate, reviewCadence);
+
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc();
+  const profileId = profileRef.id;
+
+  const payload: ProcessorProfile = {
+    id: profileId,
+    tenantId,
+    vendorId,
+    engagementName,
+    processorRole,
+    serviceDescription,
+    dataCategories,
+    dataSubjects,
+    isSpecialCategoryData,
+    specialCategoryTypes,
+    jurisdictions: effectiveJurisdictions,
+    linkedSystemAssetIds,
+    criticality: effectiveCriticality,
+    ownerUserId: ownerUserId || authContext.userId,
+    reviewCadence,
+    lastReviewDate: effectiveReviewDate,
+    nextReviewDate: computedNextReview,
+    status,
+    notes,
+    article28Checklist,
+    dpaSigned: effectiveDpaSigned,
+    dpaDate: effectiveDpaDate,
+    linkedDpaEvidenceId,
+    linkedTiaId,
+    linkedRopaIds,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: authContext.userId,
+    updatedBy: authContext.userId,
+    ownerId: ownerUserId || authContext.userId,
+  };
+
+  const validation = validateProcessorProfile(payload);
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', `Validation failed: ${validation.errors.join('; ')}`);
+  }
+
+  await profileRef.set(payload);
+
+  // 4. Update vendor
+  await vendorRef.update({
+    hasProcessorProfile: true,
+    activeProcessorProfileId: profileId,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'processor_profile',
+    entityId: profileId,
+    action: 'create',
+    beforeSummary: {
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+      previousHasProcessorProfile: vendor.hasProcessorProfile || false,
+    },
+    afterSummary: {
+      vendorId: vendor.id,
+      engagementName,
+      processorRole,
+      criticality: effectiveCriticality,
+      status,
+      dpaSigned: effectiveDpaSigned,
+    },
+    source: 'cloud_function',
+    workflowContext: 'vendor_to_processor_conversion',
   });
 
   return { success: true, profileId, processorProfile: payload };

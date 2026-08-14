@@ -54,6 +54,7 @@ export {
   deleteTenantVendor,
   listTenantVendors,
   createTenantProcessorProfile,
+  createProcessorProfileFromVendor,
   updateTenantProcessorProfile,
   deleteTenantProcessorProfile,
   listTenantProcessorProfiles,
