@@ -33,6 +33,10 @@ export interface InviteUserInput {
   department: string;
 }
 
+export interface CancelInviteInput {
+  invitationId: string;
+}
+
 export interface AcceptInviteInput {
   invitationId: string;
 }
@@ -44,6 +48,10 @@ export interface AssignRoleInput {
 }
 
 export interface ListMembersInput {
+  tenantId: string;
+}
+
+export interface ListInvitationsInput {
   tenantId: string;
 }
 
@@ -185,13 +193,15 @@ export const createTenant = onCall<CreateTenantInput>(async (request) => {
 
 /**
  * Callable Function: inviteUserToTenant
- * Restricted to tenant_admin. Creates a secured invitation token record.
+ * Restricted to tenant_admin. Enforces duplicate prevention and writes invitation.
  */
 export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
   const { tenantId, email, role, department } = request.data;
   if (!tenantId || !email || !role) {
     throw new HttpsError('invalid-argument', 'tenantId, email, and role are required.');
   }
+
+  const cleanEmail = email.toLowerCase().trim();
 
   if (!isValidUserRole(role)) {
     throw new HttpsError('invalid-argument', `Invalid role '${role}'. Must be one of the recognized standard roles.`);
@@ -205,6 +215,22 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
   }
   const tenantData = tenantSnap.data() as Tenant;
 
+  // Duplicate Invitation Prevention: Check if active pending invite exists for this email
+  const existingInvitesSnap = await db
+    .collection('invitations')
+    .where('tenantId', '==', tenantId)
+    .where('email', '==', cleanEmail)
+    .where('status', '==', 'pending')
+    .get();
+
+  if (!existingInvitesSnap.empty && existingInvitesSnap.docs[0]) {
+    const existingInvite = existingInvitesSnap.docs[0].data() as TenantInvitation;
+    // If not expired, reject duplicate
+    if (new Date(existingInvite.expiresAt).getTime() > Date.now()) {
+      throw new HttpsError('already-exists', `A pending invitation already exists for ${cleanEmail}.`);
+    }
+  }
+
   const inviteRef = db.collection('invitations').doc();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -213,7 +239,7 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
     id: inviteRef.id,
     tenantId,
     tenantName: tenantData.name,
-    email: email.toLowerCase().trim(),
+    email: cleanEmail,
     role,
     department: department || 'General',
     status: 'pending',
@@ -242,8 +268,52 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
 });
 
 /**
+ * Callable Function: cancelTenantInvite
+ * Restricted to tenant_admin. Cancels/revokes an outstanding pending invitation.
+ */
+export const cancelTenantInvite = onCall<CancelInviteInput>(async (request) => {
+  const { invitationId } = request.data;
+  if (!invitationId) {
+    throw new HttpsError('invalid-argument', 'invitationId is required.');
+  }
+
+  const inviteRef = db.collection('invitations').doc(invitationId);
+  const inviteSnap = await inviteRef.get();
+  if (!inviteSnap.exists) {
+    throw new HttpsError('not-found', 'Invitation not found.');
+  }
+
+  const invite = inviteSnap.data() as TenantInvitation;
+  const authContext = await requireTenantMember(request, invite.tenantId, ['tenant_admin']);
+
+  if (invite.status !== 'pending') {
+    throw new HttpsError('failed-precondition', `Cannot cancel invitation with status '${invite.status}'.`);
+  }
+
+  await inviteRef.update({
+    status: 'revoked',
+  });
+
+  await recordAuditLog({
+    tenantId: invite.tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'invitation',
+    entityId: invitationId,
+    action: 'update',
+    beforeSummary: { status: 'pending' },
+    afterSummary: { status: 'revoked' },
+    source: 'cloud_function',
+    workflowContext: 'invitation_revocation',
+  });
+
+  return { success: true, invitationId, status: 'revoked' };
+});
+
+/**
  * Callable Function: acceptTenantInvite
- * Enrolls the authenticated user into the tenant organization.
+ * Enrolls the authenticated recipient user into the tenant organization.
  */
 export const acceptTenantInvite = onCall<AcceptInviteInput>(async (request) => {
   const authContext = requireAuth(request);
@@ -260,13 +330,23 @@ export const acceptTenantInvite = onCall<AcceptInviteInput>(async (request) => {
   }
 
   const invite = inviteSnap.data() as TenantInvitation;
+
+  // Intended Recipient Check: Auth token email must match the invited email address
+  if (authContext.email.toLowerCase().trim() !== invite.email.toLowerCase().trim()) {
+    throw new HttpsError(
+      'permission-denied',
+      `This invitation was issued to '${invite.email}'. You are signed in as '${authContext.email}'.`
+    );
+  }
+
   if (invite.status !== 'pending') {
     throw new HttpsError('failed-precondition', `Invitation is already ${invite.status}.`);
   }
 
+  // Expiry check
   if (new Date(invite.expiresAt).getTime() < Date.now()) {
     await inviteRef.update({ status: 'expired' });
-    throw new HttpsError('deadline-exceeded', 'Invitation has expired.');
+    throw new HttpsError('deadline-exceeded', 'This invitation has expired.');
   }
 
   const now = new Date().toISOString();
@@ -386,4 +466,26 @@ export const listTenantMembers = onCall<ListMembersInput>(async (request) => {
   const members: TenantMembership[] = membersSnap.docs.map((doc) => doc.data() as TenantMembership);
 
   return { success: true, count: members.length, members };
+});
+
+/**
+ * Callable Function: listTenantInvitations
+ * Admin listing of tenant invitations.
+ */
+export const listTenantInvitations = onCall<ListInvitationsInput>(async (request) => {
+  const { tenantId } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId, ['tenant_admin']);
+
+  const invitesSnap = await db
+    .collection('invitations')
+    .where('tenantId', '==', tenantId)
+    .get();
+
+  const invitations: TenantInvitation[] = invitesSnap.docs.map((doc) => doc.data() as TenantInvitation);
+
+  return { success: true, count: invitations.length, invitations };
 });

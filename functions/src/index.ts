@@ -3,9 +3,11 @@ export {
   syncUserProfile,
   createTenant,
   inviteUserToTenant,
+  cancelTenantInvite,
   acceptTenantInvite,
   assignTenantRole,
   listTenantMembers,
+  listTenantInvitations,
 } from './handlers/tenants.js';
 
 // Evidence Approval Handlers
