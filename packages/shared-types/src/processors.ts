@@ -1,5 +1,5 @@
 import { BaseEntity } from './core.js';
-import { Evidence, EvidenceCategory } from './grc.js';
+import { Evidence, EvidenceCategory, ProcessorSystemRelationshipType, SystemAsset } from './grc.js';
 import { PersonalDataBreach, BreachReportingSource, BreachSeverity, BreachStatus } from './gdpr.js';
 
 export type ProcessorRole =
@@ -98,6 +98,11 @@ export interface ProcessorProfile extends BaseEntity {
   linkedTiaId?: string | null; // Link to TIA if cross-border transfer is involved
   linkedRopaIds?: string[]; // Link to ROPA processing activities
   linkedBreachIds?: string[]; // Link to Breach incident records
+  systemAssetRelationships?: Array<{
+    systemAssetId: string;
+    relationshipType: ProcessorSystemRelationshipType;
+    relationshipDescription?: string | null;
+  }>;
 }
 
 export interface ValidateProcessorProfileResult {
@@ -1076,5 +1081,169 @@ export function summarizeProcessorBreachHistory(
     identifiedInternallyCount: identifiedInternally.length,
     hasCriticalOrHighBreaches: hasCriticalOrHigh,
     breaches: items,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// PROCESSOR & SYSTEM ASSET RELATIONSHIPS & REVERSE VISIBILITY
+// -----------------------------------------------------------------------------
+
+export interface SystemProcessorLinkItem {
+  processorProfileId: string;
+  vendorId: string;
+  engagementName?: string | null;
+  processorRole: ProcessorRole;
+  criticality: ProcessorCriticality;
+  relationshipType: ProcessorSystemRelationshipType;
+  relationshipDescription?: string | null;
+  dpaSigned: boolean;
+  isSpecialCategoryData: boolean;
+}
+
+export interface SystemProcessorView {
+  systemAssetId: string;
+  systemAssetName: string;
+  assetType: string;
+  criticality: string;
+  dataClassification: string;
+  processorCount: number;
+  processors: SystemProcessorLinkItem[];
+}
+
+export interface ProcessorSystemLinkItem {
+  systemAssetId: string;
+  systemAssetName: string;
+  assetType: string;
+  criticality: string;
+  dataClassification: string;
+  relationshipType: ProcessorSystemRelationshipType;
+  relationshipDescription?: string | null;
+  containsPersonalData: boolean;
+  containsSpecialCategoryData: boolean;
+}
+
+export interface ProcessorSystemView {
+  processorProfileId: string;
+  vendorId: string;
+  processorRole: ProcessorRole;
+  criticality: ProcessorCriticality;
+  systemCount: number;
+  systems: ProcessorSystemLinkItem[];
+}
+
+/**
+ * Builds reverse visibility view: Processors used by a system asset.
+ */
+export function buildSystemProcessorView(
+  system: SystemAsset,
+  profiles: ProcessorProfile[]
+): SystemProcessorView {
+  const relMap = new Map<string, { type: ProcessorSystemRelationshipType; desc?: string | null }>();
+  (system.processorRelationships || []).forEach((r) => {
+    relMap.set(r.processorProfileId, { type: r.relationshipType, desc: r.relationshipDescription });
+  });
+
+  const relevantProfiles = profiles.filter(
+    (p) =>
+      system.processorProfileIds?.includes(p.id) ||
+      p.linkedSystemAssetIds?.includes(system.id) ||
+      relMap.has(p.id)
+  );
+
+  const processors: SystemProcessorLinkItem[] = relevantProfiles.map((p) => {
+    let relType: ProcessorSystemRelationshipType = 'other';
+    let relDesc: string | null = null;
+
+    const fromMap = relMap.get(p.id);
+    if (fromMap) {
+      relType = fromMap.type;
+      relDesc = fromMap.desc || null;
+    } else {
+      const fromProfile = p.systemAssetRelationships?.find((r) => r.systemAssetId === system.id);
+      if (fromProfile) {
+        relType = fromProfile.relationshipType;
+        relDesc = fromProfile.relationshipDescription || null;
+      }
+    }
+
+    return {
+      processorProfileId: p.id,
+      vendorId: p.vendorId,
+      engagementName: p.engagementName || null,
+      processorRole: p.processorRole,
+      criticality: p.criticality,
+      relationshipType: relType,
+      relationshipDescription: relDesc,
+      dpaSigned: p.dpaSigned,
+      isSpecialCategoryData: p.isSpecialCategoryData,
+    };
+  });
+
+  return {
+    systemAssetId: system.id,
+    systemAssetName: system.name,
+    assetType: system.assetType,
+    criticality: system.criticality,
+    dataClassification: system.dataClassification,
+    processorCount: processors.length,
+    processors,
+  };
+}
+
+/**
+ * Builds reverse visibility view: Systems supported by a processor profile.
+ */
+export function buildProcessorSystemView(
+  profile: ProcessorProfile,
+  systems: SystemAsset[]
+): ProcessorSystemView {
+  const relMap = new Map<string, { type: ProcessorSystemRelationshipType; desc?: string | null }>();
+  (profile.systemAssetRelationships || []).forEach((r) => {
+    relMap.set(r.systemAssetId, { type: r.relationshipType, desc: r.relationshipDescription });
+  });
+
+  const relevantSystems = systems.filter(
+    (s) =>
+      profile.linkedSystemAssetIds?.includes(s.id) ||
+      s.processorProfileIds?.includes(profile.id) ||
+      relMap.has(s.id)
+  );
+
+  const systemItems: ProcessorSystemLinkItem[] = relevantSystems.map((s) => {
+    let relType: ProcessorSystemRelationshipType = 'other';
+    let relDesc: string | null = null;
+
+    const fromMap = relMap.get(s.id);
+    if (fromMap) {
+      relType = fromMap.type;
+      relDesc = fromMap.desc || null;
+    } else {
+      const fromSystem = s.processorRelationships?.find((r) => r.processorProfileId === profile.id);
+      if (fromSystem) {
+        relType = fromSystem.relationshipType;
+        relDesc = fromSystem.relationshipDescription || null;
+      }
+    }
+
+    return {
+      systemAssetId: s.id,
+      systemAssetName: s.name,
+      assetType: s.assetType,
+      criticality: s.criticality,
+      dataClassification: s.dataClassification,
+      relationshipType: relType,
+      relationshipDescription: relDesc,
+      containsPersonalData: s.containsPersonalData,
+      containsSpecialCategoryData: s.containsSpecialCategoryData,
+    };
+  });
+
+  return {
+    processorProfileId: profile.id,
+    vendorId: profile.vendorId,
+    processorRole: profile.processorRole,
+    criticality: profile.criticality,
+    systemCount: systemItems.length,
+    systems: systemItems,
   };
 }

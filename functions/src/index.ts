@@ -66,6 +66,9 @@ export {
   updateTenantSystemAsset,
   deleteTenantSystemAsset,
   listTenantSystemAssets,
+  linkProcessorToSystemAsset,
+  getProcessorsForSystemAsset,
+  getSystemsForProcessorProfile,
 } from './handlers/vendors-and-assets.js';
 
 // GDPR Phase 1 Module Handlers

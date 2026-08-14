@@ -345,6 +345,27 @@ export interface Vendor extends BaseEntity {
   annualSpendEur?: number | null;
 }
 
+export type ProcessorSystemRelationshipType =
+  | 'hosting'
+  | 'analytics'
+  | 'support'
+  | 'storage'
+  | 'ai_provider'
+  | 'messaging'
+  | 'payroll'
+  | 'crm'
+  | 'identity_auth'
+  | 'payment_gateway'
+  | 'security_monitoring'
+  | 'backup_dr'
+  | 'other';
+
+export interface ProcessorSystemRelationship {
+  processorProfileId: string;
+  relationshipType: ProcessorSystemRelationshipType;
+  relationshipDescription?: string | null;
+}
+
 /**
  * System and Asset Register (/tenants/{tenantId}/system_assets/{assetId})
  */
@@ -358,6 +379,8 @@ export interface SystemAsset extends BaseEntity {
   containsPersonalData: boolean;
   containsSpecialCategoryData: boolean;
   containsTrainingData: boolean;
+  processorProfileIds?: string[];
+  processorRelationships?: ProcessorSystemRelationship[];
 }
 
 export type AdoptedFrameworkStatus =

@@ -20,6 +20,10 @@ import {
   TransferMechanismStatus,
   EEATransferStatus,
   validateTransferArrangement,
+  ProcessorSystemRelationshipType,
+  ProcessorSystemRelationship,
+  buildSystemProcessorView,
+  buildProcessorSystemView,
 } from '@eurogovernance/shared-types';
 
 export interface CreateVendorInput {
@@ -82,6 +86,8 @@ export interface CreateSystemAssetInput {
   containsPersonalData?: boolean;
   containsSpecialCategoryData?: boolean;
   containsTrainingData?: boolean;
+  processorProfileIds?: string[];
+  processorRelationships?: ProcessorSystemRelationship[];
   ownerId?: string;
   status?: string;
 }
@@ -98,6 +104,8 @@ export interface UpdateSystemAssetInput {
   containsPersonalData?: boolean;
   containsSpecialCategoryData?: boolean;
   containsTrainingData?: boolean;
+  processorProfileIds?: string[];
+  processorRelationships?: ProcessorSystemRelationship[];
   status?: string;
   ownerId?: string;
 }
@@ -114,6 +122,8 @@ export interface ListSystemAssetsInput {
   dataClassification?: string;
   vendorId?: string;
   containsPersonalData?: boolean;
+  processorProfileId?: string;
+  relationshipType?: ProcessorSystemRelationshipType;
 }
 
 // -----------------------------------------------------------------------------
@@ -312,6 +322,8 @@ export const createTenantSystemAsset = onCall<CreateSystemAssetInput>(async (req
     containsPersonalData = false,
     containsSpecialCategoryData = false,
     containsTrainingData = false,
+    processorProfileIds = [],
+    processorRelationships = [],
     ownerId,
     status = 'active',
   } = request.data;
@@ -346,6 +358,8 @@ export const createTenantSystemAsset = onCall<CreateSystemAssetInput>(async (req
     containsPersonalData,
     containsSpecialCategoryData,
     containsTrainingData,
+    processorProfileIds,
+    processorRelationships,
     status,
     ownerId: ownerId || authContext.userId,
     createdAt: now,
@@ -356,6 +370,38 @@ export const createTenantSystemAsset = onCall<CreateSystemAssetInput>(async (req
 
   await assetRef.set(assetDoc);
 
+  // If processorProfileIds provided, update reverse link on processor profiles
+  if (processorProfileIds.length > 0) {
+    const batch = db.batch();
+    for (const profId of processorProfileIds) {
+      const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId);
+      const pSnap = await pRef.get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        const prevAssets = pData.linkedSystemAssetIds || [];
+        if (!prevAssets.includes(assetRef.id)) {
+          const relMatch = processorRelationships.find((r) => r.processorProfileId === profId);
+          const prevAssetRels = pData.systemAssetRelationships || [];
+          const updatedAssetRels = relMatch
+            ? [...prevAssetRels.filter((r) => r.systemAssetId !== assetRef.id), {
+                systemAssetId: assetRef.id,
+                relationshipType: relMatch.relationshipType,
+                relationshipDescription: relMatch.relationshipDescription || null,
+              }]
+            : prevAssetRels;
+
+          batch.update(pRef, {
+            linkedSystemAssetIds: [...prevAssets, assetRef.id],
+            systemAssetRelationships: updatedAssetRels,
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+    await batch.commit();
+  }
+
   await recordAuditLog({
     tenantId,
     actorId: authContext.userId,
@@ -364,7 +410,7 @@ export const createTenantSystemAsset = onCall<CreateSystemAssetInput>(async (req
     entityType: 'system_asset',
     entityId: assetRef.id,
     action: 'create',
-    afterSummary: { name: assetDoc.name, assetType, criticality, dataClassification, vendorId },
+    afterSummary: { name: assetDoc.name, assetType, criticality, dataClassification, vendorId, processorProfileIds },
     source: 'cloud_function',
     workflowContext: 'asset_registration',
   });
@@ -394,6 +440,38 @@ export const updateTenantSystemAsset = onCall<UpdateSystemAssetInput>(async (req
 
   const prev = snap.data() as SystemAsset;
   const now = new Date().toISOString();
+
+  // If processorProfileIds updated, update reverse links on processor profiles
+  if (updates.processorProfileIds && Array.isArray(updates.processorProfileIds)) {
+    const batch = db.batch();
+    for (const profId of updates.processorProfileIds) {
+      const pRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profId);
+      const pSnap = await pRef.get();
+      if (pSnap.exists) {
+        const pData = pSnap.data() as ProcessorProfile;
+        const prevAssets = pData.linkedSystemAssetIds || [];
+        if (!prevAssets.includes(assetId)) {
+          const relMatch = updates.processorRelationships?.find((r) => r.processorProfileId === profId);
+          const prevAssetRels = pData.systemAssetRelationships || [];
+          const updatedAssetRels = relMatch
+            ? [...prevAssetRels.filter((r) => r.systemAssetId !== assetId), {
+                systemAssetId: assetId,
+                relationshipType: relMatch.relationshipType,
+                relationshipDescription: relMatch.relationshipDescription || null,
+              }]
+            : prevAssetRels;
+
+          batch.update(pRef, {
+            linkedSystemAssetIds: [...prevAssets, assetId],
+            systemAssetRelationships: updatedAssetRels,
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      }
+    }
+    await batch.commit();
+  }
 
   const payload: Partial<SystemAsset> = {
     ...updates,
@@ -454,7 +532,16 @@ export const deleteTenantSystemAsset = onCall<DeleteSystemAssetInput>(async (req
 });
 
 export const listTenantSystemAssets = onCall<ListSystemAssetsInput>(async (request) => {
-  const { tenantId, assetType, criticality, dataClassification, vendorId, containsPersonalData } = request.data;
+  const {
+    tenantId,
+    assetType,
+    criticality,
+    dataClassification,
+    vendorId,
+    containsPersonalData,
+    processorProfileId,
+  } = request.data;
+
   if (!tenantId) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
@@ -467,11 +554,183 @@ export const listTenantSystemAssets = onCall<ListSystemAssetsInput>(async (reque
   if (dataClassification) query = query.where('dataClassification', '==', dataClassification);
   if (vendorId) query = query.where('vendorId', '==', vendorId);
   if (containsPersonalData !== undefined) query = query.where('containsPersonalData', '==', containsPersonalData);
+  if (processorProfileId) query = query.where('processorProfileIds', 'array-contains', processorProfileId);
 
   const snap = await query.get();
   const assets: SystemAsset[] = snap.docs.map((d) => d.data() as SystemAsset);
 
   return { success: true, count: assets.length, assets };
+});
+
+export interface LinkProcessorToSystemAssetInput {
+  tenantId: string;
+  systemAssetId: string;
+  processorProfileId: string;
+  relationshipType: ProcessorSystemRelationshipType;
+  relationshipDescription?: string | null;
+}
+
+export const linkProcessorToSystemAsset = onCall<LinkProcessorToSystemAssetInput>(async (request) => {
+  const {
+    tenantId,
+    systemAssetId,
+    processorProfileId,
+    relationshipType,
+    relationshipDescription,
+  } = request.data;
+
+  if (!tenantId || !systemAssetId || !processorProfileId || !relationshipType) {
+    throw new HttpsError('invalid-argument', 'tenantId, systemAssetId, processorProfileId, and relationshipType are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'privacy_manager',
+    'security_manager',
+    'compliance_manager',
+    'ai_governance_manager',
+  ]);
+
+  // 1. Fetch System Asset
+  const assetRef = db.collection('tenants').doc(tenantId).collection('system_assets').doc(systemAssetId);
+  const assetSnap = await assetRef.get();
+  if (!assetSnap.exists) {
+    throw new HttpsError('not-found', `System asset ${systemAssetId} not found.`);
+  }
+  const asset = assetSnap.data() as SystemAsset;
+
+  // 2. Fetch Processor Profile
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+  const profileSnap = await profileRef.get();
+  if (!profileSnap.exists) {
+    throw new HttpsError('not-found', `Processor profile ${processorProfileId} not found.`);
+  }
+  const profile = profileSnap.data() as ProcessorProfile;
+
+  const now = new Date().toISOString();
+
+  // 3. Update System Asset
+  const existingAssetProfiles = asset.processorProfileIds || [];
+  const updatedAssetProfiles = Array.from(new Set([...existingAssetProfiles, processorProfileId]));
+  const existingAssetRels = asset.processorRelationships || [];
+  const filteredAssetRels = existingAssetRels.filter((r) => r.processorProfileId !== processorProfileId);
+  const updatedAssetRels: ProcessorSystemRelationship[] = [
+    ...filteredAssetRels,
+    {
+      processorProfileId,
+      relationshipType,
+      relationshipDescription: relationshipDescription || null,
+    },
+  ];
+
+  // 4. Update Processor Profile
+  const existingProfileAssets = profile.linkedSystemAssetIds || [];
+  const updatedProfileAssets = Array.from(new Set([...existingProfileAssets, systemAssetId]));
+  const existingProfileRels = profile.systemAssetRelationships || [];
+  const filteredProfileRels = existingProfileRels.filter((r) => r.systemAssetId !== systemAssetId);
+  const updatedProfileRels = [
+    ...filteredProfileRels,
+    {
+      systemAssetId,
+      relationshipType,
+      relationshipDescription: relationshipDescription || null,
+    },
+  ];
+
+  const batch = db.batch();
+  batch.update(assetRef, {
+    processorProfileIds: updatedAssetProfiles,
+    processorRelationships: updatedAssetRels,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  batch.update(profileRef, {
+    linkedSystemAssetIds: updatedProfileAssets,
+    systemAssetRelationships: updatedProfileRels,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'system_asset',
+    entityId: systemAssetId,
+    action: 'link',
+    beforeSummary: { processorProfileIds: asset.processorProfileIds },
+    afterSummary: { systemAssetId, processorProfileId, relationshipType },
+    source: 'cloud_function',
+    workflowContext: 'system_asset_processor_linking',
+  });
+
+  return {
+    success: true,
+    systemAssetId,
+    processorProfileId,
+    relationshipType,
+    relationshipDescription: relationshipDescription || null,
+  };
+});
+
+export interface GetProcessorsForSystemAssetInput {
+  tenantId: string;
+  systemAssetId: string;
+}
+
+export const getProcessorsForSystemAsset = onCall<GetProcessorsForSystemAssetInput>(async (request) => {
+  const { tenantId, systemAssetId } = request.data;
+  if (!tenantId || !systemAssetId) {
+    throw new HttpsError('invalid-argument', 'tenantId and systemAssetId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const assetRef = db.collection('tenants').doc(tenantId).collection('system_assets').doc(systemAssetId);
+  const assetSnap = await assetRef.get();
+  if (!assetSnap.exists) {
+    throw new HttpsError('not-found', `System asset ${systemAssetId} not found.`);
+  }
+  const asset = assetSnap.data() as SystemAsset;
+
+  const profilesSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').get();
+  const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+
+  const view = buildSystemProcessorView(asset, profiles);
+
+  return { success: true, view };
+});
+
+export interface GetSystemsForProcessorProfileInput {
+  tenantId: string;
+  processorProfileId: string;
+}
+
+export const getSystemsForProcessorProfile = onCall<GetSystemsForProcessorProfileInput>(async (request) => {
+  const { tenantId, processorProfileId } = request.data;
+  if (!tenantId || !processorProfileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and processorProfileId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+  const profileSnap = await profileRef.get();
+  if (!profileSnap.exists) {
+    throw new HttpsError('not-found', `Processor profile ${processorProfileId} not found.`);
+  }
+  const profile = profileSnap.data() as ProcessorProfile;
+
+  const assetsSnap = await db.collection('tenants').doc(tenantId).collection('system_assets').get();
+  const assets = assetsSnap.docs.map((d) => d.data() as SystemAsset);
+
+  const view = buildProcessorSystemView(profile, assets);
+
+  return { success: true, view };
 });
 
 // -----------------------------------------------------------------------------
