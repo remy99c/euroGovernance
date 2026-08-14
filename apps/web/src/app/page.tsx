@@ -25,7 +25,7 @@ type TabType =
   | 'exports';
 
 export default function DashboardPage() {
-  const { tenantId, setTenantId, userRole, availableTenants, loginDevUser } = useAuth();
+  const { user, tenantId, setTenantId, userRole, availableTenants, loginDevUser } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -53,15 +53,19 @@ export default function DashboardPage() {
 
   // 1. Subscribe to Tenant Data
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId || !user) return;
 
     // Summary Metrics
     const metricsRef = doc(db, 'tenants', tenantId, 'summary_metrics', 'current');
-    const unsubMetrics = onSnapshot(metricsRef, (snap) => {
-      if (snap.exists()) {
-        setMetrics(snap.data());
-      }
-    });
+    const unsubMetrics = onSnapshot(
+      metricsRef,
+      (snap) => {
+        if (snap.exists()) {
+          setMetrics(snap.data());
+        }
+      },
+      (err) => console.warn('Metrics snapshot notice:', err.message)
+    );
 
     // Audit Logs Stream
     const auditQuery = query(
@@ -69,64 +73,112 @@ export default function DashboardPage() {
       orderBy('timestamp', 'desc'),
       limit(10)
     );
-    const unsubAudit = onSnapshot(auditQuery, (snap) => {
-      setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubAudit = onSnapshot(
+      auditQuery,
+      (snap) => {
+        setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Audit logs snapshot notice:', err.message)
+    );
 
     // Controls
-    const unsubControls = onSnapshot(collection(db, 'tenants', tenantId, 'controls'), (snap) => {
-      setControlsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubControls = onSnapshot(
+      collection(db, 'tenants', tenantId, 'controls'),
+      (snap) => {
+        setControlsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Controls snapshot notice:', err.message)
+    );
 
     // Evidence
-    const unsubEvidence = onSnapshot(collection(db, 'tenants', tenantId, 'evidence'), (snap) => {
-      setEvidenceList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubEvidence = onSnapshot(
+      collection(db, 'tenants', tenantId, 'evidence'),
+      (snap) => {
+        setEvidenceList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Evidence snapshot notice:', err.message)
+    );
 
     // Risks
-    const unsubRisks = onSnapshot(collection(db, 'tenants', tenantId, 'risks'), (snap) => {
-      setRisksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubRisks = onSnapshot(
+      collection(db, 'tenants', tenantId, 'risks'),
+      (snap) => {
+        setRisksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Risks snapshot notice:', err.message)
+    );
 
     // Issues
-    const unsubIssues = onSnapshot(collection(db, 'tenants', tenantId, 'issues'), (snap) => {
-      setIssuesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubIssues = onSnapshot(
+      collection(db, 'tenants', tenantId, 'issues'),
+      (snap) => {
+        setIssuesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Issues snapshot notice:', err.message)
+    );
 
     // Tasks
-    const unsubTasks = onSnapshot(collection(db, 'tenants', tenantId, 'tasks'), (snap) => {
-      setTasksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubTasks = onSnapshot(
+      collection(db, 'tenants', tenantId, 'tasks'),
+      (snap) => {
+        setTasksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Tasks snapshot notice:', err.message)
+    );
 
     // ROPA
-    const unsubRopa = onSnapshot(collection(db, 'tenants', tenantId, 'ropa_entries'), (snap) => {
-      setRopaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubRopa = onSnapshot(
+      collection(db, 'tenants', tenantId, 'ropa_entries'),
+      (snap) => {
+        setRopaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('ROPA snapshot notice:', err.message)
+    );
 
     // DPIA
-    const unsubDpia = onSnapshot(collection(db, 'tenants', tenantId, 'dpia_assessments'), (snap) => {
-      setDpiaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubDpia = onSnapshot(
+      collection(db, 'tenants', tenantId, 'dpia_assessments'),
+      (snap) => {
+        setDpiaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('DPIA snapshot notice:', err.message)
+    );
 
     // Breaches
-    const unsubBreaches = onSnapshot(collection(db, 'tenants', tenantId, 'breaches'), (snap) => {
-      setBreachesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubBreaches = onSnapshot(
+      collection(db, 'tenants', tenantId, 'breaches'),
+      (snap) => {
+        setBreachesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Breaches snapshot notice:', err.message)
+    );
 
     // AI Systems
-    const unsubAI = onSnapshot(collection(db, 'tenants', tenantId, 'ai_systems'), (snap) => {
-      setAiSystemsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubAI = onSnapshot(
+      collection(db, 'tenants', tenantId, 'ai_systems'),
+      (snap) => {
+        setAiSystemsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('AI snapshot notice:', err.message)
+    );
 
     // Members
-    const unsubMembers = onSnapshot(collection(db, 'tenants', tenantId, 'memberships'), (snap) => {
-      setMembersList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubMembers = onSnapshot(
+      collection(db, 'tenants', tenantId, 'memberships'),
+      (snap) => {
+        setMembersList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Members snapshot notice:', err.message)
+    );
 
     // Export Jobs
-    const unsubExports = onSnapshot(collection(db, 'tenants', tenantId, 'export_jobs'), (snap) => {
-      setExportJobsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubExports = onSnapshot(
+      collection(db, 'tenants', tenantId, 'export_jobs'),
+      (snap) => {
+        setExportJobsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Exports snapshot notice:', err.message)
+    );
 
     return () => {
       unsubMetrics();
@@ -143,7 +195,7 @@ export default function DashboardPage() {
       unsubMembers();
       unsubExports();
     };
-  }, [tenantId]);
+  }, [tenantId, user]);
 
   // Actions: Recompute Metrics
   const handleRecalculateMetrics = async () => {

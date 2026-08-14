@@ -1,15 +1,18 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 
-// Point to Firestore Emulator if FIRESTORE_EMULATOR_HOST is set or default to local
+const projectId = process.env.GCLOUD_PROJECT || 'eurogovernance-dev';
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
-process.env.GCLOUD_PROJECT = 'eurogovernance-test';
+process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
+process.env.GCLOUD_PROJECT = projectId;
 
 if (getApps().length === 0) {
-  initializeApp({ projectId: 'eurogovernance-test' });
+  initializeApp({ projectId });
 }
 
 const db = getFirestore();
+const auth = getAuth();
 
 export async function seedEmulatorData() {
   console.log('🚀 Seeding euroGovernance Firebase Emulator...');
@@ -99,17 +102,30 @@ export async function seedEmulatorData() {
     createdBy: 'usr_admin_01',
   });
 
-  // 4. Seed Memberships
+  // 4. Seed Memberships & Auth Users
   const members = [
-    { userId: 'usr_admin_01', email: 'admin@eurocorp.de', displayName: 'Marcus Vance', role: 'tenant_admin' },
-    { userId: 'usr_compliance_01', email: 'compliance@eurocorp.de', displayName: 'Elena Rostova', role: 'compliance_manager' },
-    { userId: 'usr_privacy_01', email: 'dpo@eurocorp.de', displayName: 'Dr. Klaus Becker', role: 'privacy_manager' },
-    { userId: 'usr_ai_01', email: 'ai-lead@eurocorp.de', displayName: 'Dr. Sarah Weber', role: 'ai_governance_manager' },
-    { userId: 'usr_auditor_01', email: 'auditor@kpmg.de', displayName: 'Thomas Schmidt', role: 'auditor' },
-    { userId: 'usr_contrib_01', email: 'dev-alex@eurocorp.de', displayName: 'Alex Chen', role: 'contributor' },
+    { userId: 'usr_admin_01', email: 'admin@eurocorp.de', displayName: 'Marcus Vance (Admin)', role: 'tenant_admin' },
+    { userId: 'usr_compliance_01', email: 'compliance@eurocorp.de', displayName: 'Elena Rostova (Compliance)', role: 'compliance_manager' },
+    { userId: 'usr_security_01', email: 'ciso@eurocorp.de', displayName: 'Viktor Kroll (Security)', role: 'security_manager' },
+    { userId: 'usr_privacy_01', email: 'dpo@eurocorp.de', displayName: 'Dr. Klaus Becker (DPO)', role: 'privacy_manager' },
+    { userId: 'usr_ai_01', email: 'ai-lead@eurocorp.de', displayName: 'Dr. Sarah Weber (AI Lead)', role: 'ai_governance_manager' },
+    { userId: 'usr_approver_01', email: 'officer@eurocorp.de', displayName: 'Rachel Sterling (Approver)', role: 'approver' },
+    { userId: 'usr_auditor_01', email: 'auditor@kpmg.de', displayName: 'Thomas Schmidt (Auditor)', role: 'auditor' },
+    { userId: 'usr_contrib_01', email: 'dev-alex@eurocorp.de', displayName: 'Alex Chen (Contributor)', role: 'contributor' },
   ];
 
   for (const m of members) {
+    try {
+      await auth.createUser({
+        uid: m.userId,
+        email: m.email,
+        password: 'password123',
+        displayName: m.displayName,
+      });
+    } catch {
+      // User might already exist in Auth emulator
+    }
+
     await db.doc(`tenants/${tenantId}/memberships/${m.userId}`).set({
       userId: m.userId,
       tenantId,
