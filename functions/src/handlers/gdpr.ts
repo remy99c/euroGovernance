@@ -21,6 +21,7 @@ import {
   TransferArrangement,
   ProcessorProfile,
   prefillROPAFromProcessors,
+  synthesizeDPIAProcessorContext,
 } from '@eurogovernance/shared-types';
 
 // -----------------------------------------------------------------------------
@@ -518,6 +519,9 @@ export interface CreateDPIAInput {
   residualRiskLevel?: 'low' | 'medium' | 'high';
   mitigatingControlIds?: string[];
   nextReviewDate?: string;
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
+  thirdPartySafeguardsSummary?: string | null;
   ownerId?: string;
 }
 
@@ -547,6 +551,9 @@ export const createTenantDPIA = onCall<CreateDPIAInput>(async (request) => {
     residualRiskLevel = 'medium',
     mitigatingControlIds = [],
     nextReviewDate,
+    processorProfileIds: directProfileIds,
+    transferArrangementIds: directTransferIds,
+    thirdPartySafeguardsSummary: directSafeguards,
     ownerId,
   } = request.data;
 
@@ -559,6 +566,39 @@ export const createTenantDPIA = onCall<CreateDPIAInput>(async (request) => {
     'privacy_manager',
     'compliance_manager',
   ]);
+
+  // Inherit processor profiles and transfer arrangements from ROPA if not explicitly provided
+  let effectiveProfileIds = directProfileIds || [];
+  let effectiveTransferIds = directTransferIds || [];
+  if (effectiveProfileIds.length === 0 && effectiveTransferIds.length === 0) {
+    const ropaSnap = await db.collection('tenants').doc(tenantId).collection('ropa_entries').doc(ropaEntryId).get();
+    if (ropaSnap.exists) {
+      const ropa = ropaSnap.data() as ROPAEntry;
+      if (ropa.processorProfileIds && ropa.processorProfileIds.length > 0) {
+        effectiveProfileIds = ropa.processorProfileIds;
+      }
+      if (ropa.transferArrangementIds && ropa.transferArrangementIds.length > 0) {
+        effectiveTransferIds = ropa.transferArrangementIds;
+      }
+    }
+  }
+
+  // Calculate safeguards summary if not provided
+  let effectiveSafeguards = directSafeguards || null;
+  if (!effectiveSafeguards && (effectiveProfileIds.length > 0 || effectiveTransferIds.length > 0)) {
+    const profiles: ProcessorProfile[] = [];
+    for (const pId of effectiveProfileIds) {
+      const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(pId).get();
+      if (pSnap.exists) profiles.push(pSnap.data() as ProcessorProfile);
+    }
+    const transfers: TransferArrangement[] = [];
+    for (const tId of effectiveTransferIds) {
+      const tSnap = await db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(tId).get();
+      if (tSnap.exists) transfers.push(tSnap.data() as TransferArrangement);
+    }
+    const context = synthesizeDPIAProcessorContext(profiles, transfers);
+    effectiveSafeguards = context.safeguardsSummary;
+  }
 
   // Screening logic: 2 or more true criteria requires full DPIA
   const positiveCriteriaCount = Object.values(screeningQuestionsAnswers).filter(Boolean).length;
@@ -583,6 +623,9 @@ export const createTenantDPIA = onCall<CreateDPIAInput>(async (request) => {
     residualRiskLevel,
     mitigatingControlIds,
     nextReviewDate: reviewDue,
+    processorProfileIds: effectiveProfileIds,
+    transferArrangementIds: effectiveTransferIds,
+    thirdPartySafeguardsSummary: effectiveSafeguards,
     ownerId: ownerId || authContext.userId,
     createdAt: now,
     updatedAt: now,
@@ -600,7 +643,7 @@ export const createTenantDPIA = onCall<CreateDPIAInput>(async (request) => {
     entityType: 'dpia_assessment',
     entityId: dpiaRef.id,
     action: 'create',
-    afterSummary: { code: dpiaDoc.code, title: dpiaDoc.title, initialStatus, positiveCriteriaCount },
+    afterSummary: { code: dpiaDoc.code, title: dpiaDoc.title, initialStatus, positiveCriteriaCount, processorProfileIds: effectiveProfileIds },
     source: 'cloud_function',
     workflowContext: 'dpia_creation',
   });
@@ -679,6 +722,144 @@ export const listTenantDPIAs = onCall<ListDPIAInput>(async (request) => {
   const dpias: DPIA[] = snap.docs.map((d) => d.data() as DPIA);
 
   return { success: true, count: dpias.length, dpias };
+});
+
+export interface LinkProcessorsToDPIAInput {
+  tenantId: string;
+  dpiaId: string;
+  processorProfileIds: string[];
+  transferArrangementIds?: string[];
+}
+
+export const linkProcessorsToDPIA = onCall<LinkProcessorsToDPIAInput>(async (request) => {
+  const { tenantId, dpiaId, processorProfileIds, transferArrangementIds = [] } = request.data;
+  if (!tenantId || !dpiaId || !processorProfileIds || !Array.isArray(processorProfileIds)) {
+    throw new HttpsError('invalid-argument', 'tenantId, dpiaId, and processorProfileIds (array) are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'privacy_manager',
+    'compliance_manager',
+  ]);
+
+  const dpiaRef = db.collection('tenants').doc(tenantId).collection('dpia_assessments').doc(dpiaId);
+  const snap = await dpiaRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `DPIA ${dpiaId} not found.`);
+  }
+
+  const prev = snap.data() as DPIA;
+  const now = new Date().toISOString();
+
+  const mergedProfiles = Array.from(new Set([...(prev.processorProfileIds || []), ...processorProfileIds]));
+  const mergedTransfers = Array.from(new Set([...(prev.transferArrangementIds || []), ...transferArrangementIds]));
+
+  // Load profiles & transfers to synthesize updated safeguards summary
+  const profiles: ProcessorProfile[] = [];
+  for (const pId of mergedProfiles) {
+    const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(pId).get();
+    if (pSnap.exists) profiles.push(pSnap.data() as ProcessorProfile);
+  }
+  const transfers: TransferArrangement[] = [];
+  for (const tId of mergedTransfers) {
+    const tSnap = await db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(tId).get();
+    if (tSnap.exists) transfers.push(tSnap.data() as TransferArrangement);
+  }
+
+  const context = synthesizeDPIAProcessorContext(profiles, transfers);
+
+  const updates: Partial<DPIA> = {
+    processorProfileIds: mergedProfiles,
+    transferArrangementIds: mergedTransfers,
+    thirdPartySafeguardsSummary: context.safeguardsSummary,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  };
+
+  await dpiaRef.update(updates);
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'dpia_assessment',
+    entityId: dpiaId,
+    action: 'link',
+    beforeSummary: { processorProfileIds: prev.processorProfileIds, transferArrangementIds: prev.transferArrangementIds },
+    afterSummary: { processorProfileIds: mergedProfiles, transferArrangementIds: mergedTransfers },
+    source: 'cloud_function',
+    workflowContext: 'dpia_processor_linking',
+  });
+
+  return {
+    success: true,
+    dpiaId,
+    processorProfileIds: mergedProfiles,
+    transferArrangementIds: mergedTransfers,
+    safeguardsSummary: context.safeguardsSummary,
+  };
+});
+
+export interface GetDPIAProcessorContextInput {
+  tenantId: string;
+  dpiaId: string;
+}
+
+export const getDPIAProcessorContext = onCall<GetDPIAProcessorContextInput>(async (request) => {
+  const { tenantId, dpiaId } = request.data;
+  if (!tenantId || !dpiaId) {
+    throw new HttpsError('invalid-argument', 'tenantId and dpiaId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const dpiaRef = db.collection('tenants').doc(tenantId).collection('dpia_assessments').doc(dpiaId);
+  const snap = await dpiaRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `DPIA ${dpiaId} not found.`);
+  }
+
+  const dpia = snap.data() as DPIA;
+
+  let profileIds = dpia.processorProfileIds || [];
+  let transferIds = dpia.transferArrangementIds || [];
+
+  // If empty on DPIA, inherit from linked ROPA entry
+  if (profileIds.length === 0 && dpia.ropaEntryId) {
+    const ropaSnap = await db.collection('tenants').doc(tenantId).collection('ropa_entries').doc(dpia.ropaEntryId).get();
+    if (ropaSnap.exists) {
+      const ropa = ropaSnap.data() as ROPAEntry;
+      if (ropa.processorProfileIds && ropa.processorProfileIds.length > 0) {
+        profileIds = ropa.processorProfileIds;
+      }
+      if (ropa.transferArrangementIds && ropa.transferArrangementIds.length > 0) {
+        transferIds = ropa.transferArrangementIds;
+      }
+    }
+  }
+
+  const profiles: ProcessorProfile[] = [];
+  for (const pId of profileIds) {
+    const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(pId).get();
+    if (pSnap.exists) profiles.push(pSnap.data() as ProcessorProfile);
+  }
+
+  const transfers: TransferArrangement[] = [];
+  for (const tId of transferIds) {
+    const tSnap = await db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(tId).get();
+    if (tSnap.exists) transfers.push(tSnap.data() as TransferArrangement);
+  }
+
+  const context = synthesizeDPIAProcessorContext(profiles, transfers);
+
+  return {
+    success: true,
+    dpiaId,
+    ropaEntryId: dpia.ropaEntryId,
+    context,
+  };
 });
 
 // -----------------------------------------------------------------------------

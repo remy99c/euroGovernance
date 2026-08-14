@@ -80,6 +80,8 @@ export {
   createTenantDPIA,
   transitionTenantDPIAStatus,
   listTenantDPIAs,
+  linkProcessorsToDPIA,
+  getDPIAProcessorContext,
   createTenantTIA,
   createTIAFromTransferArrangement,
   linkTIAToTransferArrangement,

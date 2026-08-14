@@ -850,3 +850,162 @@ export function prefillROPAFromProcessors(
     dataSecurityMeasuresSummary: securitySummary,
   };
 }
+
+// -----------------------------------------------------------------------------
+// DPIA INTEGRATION & PROCESSOR RISK CONTEXT
+// -----------------------------------------------------------------------------
+
+export interface DPIAProcessorSummaryItem {
+  id: string;
+  vendorId: string;
+  engagementName?: string | null;
+  processorRole: ProcessorRole;
+  criticality: ProcessorCriticality;
+  dpaSigned: boolean;
+  isSpecialCategoryData: boolean;
+  dataCategories: string[];
+  dataSubjects: string[];
+}
+
+export interface DPIATransferSummaryItem {
+  id: string;
+  processorProfileId: string;
+  name: string;
+  restrictedTransfer: boolean;
+  destinationCountries: string[];
+  eeaStatus: string;
+  transferMechanismType: string;
+  transferMechanismStatus: string;
+  subprocessorInvolvement: boolean;
+  linkedTiaId?: string | null;
+}
+
+export interface DPIAProcessorRiskSummary {
+  highestCriticality: ProcessorCriticality;
+  hasSpecialCategoryData: boolean;
+  hasRestrictedTransfers: boolean;
+  hasSubprocessors: boolean;
+  missingDpaCount: number;
+  missingTiaCount: number;
+  riskHighlights: string[];
+}
+
+export interface DPIAProcessorContext {
+  processorCount: number;
+  transferCount: number;
+  processors: DPIAProcessorSummaryItem[];
+  transfers: DPIATransferSummaryItem[];
+  safeguardsSummary: string;
+  riskSummary: DPIAProcessorRiskSummary;
+}
+
+/**
+ * Synthesizes DPIA third-party processor context, safeguards, and risk indicators.
+ */
+export function synthesizeDPIAProcessorContext(
+  profiles: ProcessorProfile[],
+  transfers: TransferArrangement[] = []
+): DPIAProcessorContext {
+  const processors: DPIAProcessorSummaryItem[] = profiles.map((p) => ({
+    id: p.id,
+    vendorId: p.vendorId,
+    engagementName: p.engagementName || null,
+    processorRole: p.processorRole,
+    criticality: p.criticality,
+    dpaSigned: p.dpaSigned,
+    isSpecialCategoryData: p.isSpecialCategoryData,
+    dataCategories: p.dataCategories || [],
+    dataSubjects: p.dataSubjects || [],
+  }));
+
+  const transferItems: DPIATransferSummaryItem[] = transfers.map((t) => ({
+    id: t.id,
+    processorProfileId: t.processorProfileId,
+    name: t.name,
+    restrictedTransfer: t.restrictedTransfer,
+    destinationCountries: t.destinationCountries || [],
+    eeaStatus: t.eeaStatus,
+    transferMechanismType: t.transferMechanismType,
+    transferMechanismStatus: t.transferMechanismStatus,
+    subprocessorInvolvement: t.subprocessorInvolvement,
+    linkedTiaId: t.linkedTiaId || null,
+  }));
+
+  let highestCriticality: ProcessorCriticality = 'low';
+  const criticalityRank: Record<ProcessorCriticality, number> = {
+    low: 1,
+    medium: 2,
+    high: 3,
+    critical: 4,
+  };
+
+  let hasSpecialCategory = false;
+  let missingDpaCount = 0;
+  for (const p of profiles) {
+    if (criticalityRank[p.criticality] > criticalityRank[highestCriticality]) {
+      highestCriticality = p.criticality;
+    }
+    if (p.isSpecialCategoryData) hasSpecialCategory = true;
+    if (!p.dpaSigned) missingDpaCount++;
+  }
+
+  const hasRestricted = transfers.some((t) => t.restrictedTransfer);
+  const hasSubprocessors =
+    transfers.some((t) => t.subprocessorInvolvement) || profiles.some((p) => p.processorRole === 'subprocessor');
+  const missingTiaCount = transfers.filter((t) => t.restrictedTransfer && !t.linkedTiaId).length;
+
+  const riskHighlights: string[] = [];
+  if (highestCriticality === 'critical' || highestCriticality === 'high') {
+    riskHighlights.push(
+      `High/Critical supply chain dependence: Processing involves ${highestCriticality} criticality external processors.`
+    );
+  }
+  if (hasSpecialCategory) {
+    riskHighlights.push('Article 9 Special Category Data processed by external processors.');
+  }
+  if (missingDpaCount > 0) {
+    riskHighlights.push(`Article 28 DPA Warning: ${missingDpaCount} processor(s) do not have countersigned DPAs recorded.`);
+  }
+  if (hasRestricted) {
+    const dests = transfers
+      .filter((t) => t.restrictedTransfer)
+      .map((t) => t.destinationCountries.join(', '))
+      .join('; ');
+    riskHighlights.push(`Chapter V Cross-Border Transfers: Personal data transferred outside EEA (${dests}).`);
+  }
+  if (missingTiaCount > 0) {
+    riskHighlights.push(
+      `TIA Gap: ${missingTiaCount} restricted transfer arrangement(s) lack linked Transfer Impact Assessments.`
+    );
+  }
+
+  const safeguardsList: string[] = [];
+  if (profiles.length > 0) {
+    safeguardsList.push(
+      `Article 28 Controller-Processor binding commitments verified for ${
+        profiles.filter((p) => p.dpaSigned).length
+      }/${profiles.length} processors.`
+    );
+  }
+  if (transfers.length > 0) {
+    const mechanisms = Array.from(new Set(transfers.map((t) => t.transferMechanismType)));
+    safeguardsList.push(`Transfer safeguards established: ${mechanisms.join(', ')}.`);
+  }
+
+  return {
+    processorCount: profiles.length,
+    transferCount: transfers.length,
+    processors,
+    transfers: transferItems,
+    safeguardsSummary: safeguardsList.join(' ') || 'Standard internal organizational measures.',
+    riskSummary: {
+      highestCriticality,
+      hasSpecialCategoryData: hasSpecialCategory,
+      hasRestrictedTransfers: hasRestricted,
+      hasSubprocessors,
+      missingDpaCount,
+      missingTiaCount,
+      riskHighlights,
+    },
+  };
+}

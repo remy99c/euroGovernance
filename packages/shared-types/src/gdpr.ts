@@ -101,6 +101,9 @@ export interface DPIA extends BaseEntity {
   residualRiskLevel: 'low' | 'medium' | 'high';
   mitigatingControlIds: string[];
   nextReviewDate: string;
+  processorProfileIds?: string[];
+  transferArrangementIds?: string[];
+  thirdPartySafeguardsSummary?: string | null;
 }
 
 /**
