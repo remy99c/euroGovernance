@@ -6,6 +6,9 @@ export {
   cancelTenantInvite,
   acceptTenantInvite,
   assignTenantRole,
+  suspendTenantMember,
+  reactivateTenantMember,
+  removeTenantMember,
   listTenantMembers,
   listTenantInvitations,
 } from './handlers/tenants.js';

@@ -47,6 +47,23 @@ export interface AssignRoleInput {
   newRole: UserRole;
 }
 
+export interface SuspendMemberInput {
+  tenantId: string;
+  targetUserId: string;
+  reason?: string;
+}
+
+export interface ReactivateMemberInput {
+  tenantId: string;
+  targetUserId: string;
+}
+
+export interface RemoveMemberInput {
+  tenantId: string;
+  targetUserId: string;
+  reason?: string;
+}
+
 export interface ListMembersInput {
   tenantId: string;
 }
@@ -207,6 +224,11 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
     throw new HttpsError('invalid-argument', `Invalid role '${role}'. Must be one of the recognized standard roles.`);
   }
 
+  // Privilege Guardrail: Only platform_admin can invite another platform_admin
+  if (role === 'platform_admin' && !request.auth?.token.platform_admin) {
+    throw new HttpsError('permission-denied', 'Only platform administrators can assign the platform_admin role.');
+  }
+
   const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
 
   const tenantSnap = await db.collection('tenants').doc(tenantId).get();
@@ -215,7 +237,7 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
   }
   const tenantData = tenantSnap.data() as Tenant;
 
-  // Duplicate Invitation Prevention: Check if active pending invite exists for this email
+  // Duplicate Invitation Prevention
   const existingInvitesSnap = await db
     .collection('invitations')
     .where('tenantId', '==', tenantId)
@@ -225,7 +247,6 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
 
   if (!existingInvitesSnap.empty && existingInvitesSnap.docs[0]) {
     const existingInvite = existingInvitesSnap.docs[0].data() as TenantInvitation;
-    // If not expired, reject duplicate
     if (new Date(existingInvite.expiresAt).getTime() > Date.now()) {
       throw new HttpsError('already-exists', `A pending invitation already exists for ${cleanEmail}.`);
     }
@@ -331,7 +352,7 @@ export const acceptTenantInvite = onCall<AcceptInviteInput>(async (request) => {
 
   const invite = inviteSnap.data() as TenantInvitation;
 
-  // Intended Recipient Check: Auth token email must match the invited email address
+  // Intended Recipient Check
   if (authContext.email.toLowerCase().trim() !== invite.email.toLowerCase().trim()) {
     throw new HttpsError(
       'permission-denied',
@@ -393,8 +414,22 @@ export const acceptTenantInvite = onCall<AcceptInviteInput>(async (request) => {
 });
 
 /**
+ * Helper to count active administrators in a tenant.
+ */
+async function countActiveTenantAdmins(tenantId: string): Promise<number> {
+  const adminsSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('memberships')
+    .where('role', '==', 'tenant_admin')
+    .where('status', '==', 'active')
+    .get();
+  return adminsSnap.size;
+}
+
+/**
  * Callable Function: assignTenantRole
- * Privileged role assignment restricted to tenant_admin.
+ * Privileged role assignment with self-lockout and platform admin guardrails.
  */
 export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
   const { tenantId, targetUserId, newRole } = request.data;
@@ -404,6 +439,11 @@ export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
 
   if (!isValidUserRole(newRole)) {
     throw new HttpsError('invalid-argument', `Invalid role '${newRole}'. Must be one of the recognized standard roles.`);
+  }
+
+  // Privilege Guardrail: Only platform_admin can assign the platform_admin role
+  if (newRole === 'platform_admin' && !request.auth?.token.platform_admin) {
+    throw new HttpsError('permission-denied', 'Only platform administrators can assign the platform_admin role.');
   }
 
   const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
@@ -420,6 +460,22 @@ export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
   }
 
   const previousMembership = memberSnap.data() as TenantMembership;
+
+  // Self-Lockout Guardrail: Prevent demoting the sole active tenant_admin
+  if (
+    previousMembership.role === 'tenant_admin' &&
+    newRole !== 'tenant_admin' &&
+    previousMembership.status === 'active'
+  ) {
+    const adminCount = await countActiveTenantAdmins(tenantId);
+    if (adminCount <= 1) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Cannot demote the sole active administrator of this organization. Appoint another tenant_admin first.'
+      );
+    }
+  }
+
   const now = new Date().toISOString();
 
   await membershipRef.update({
@@ -443,6 +499,175 @@ export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
   });
 
   return { success: true, targetUserId, updatedRole: newRole };
+});
+
+/**
+ * Callable Function: suspendTenantMember
+ * Suspends an active user membership with self-suspension guardrails.
+ */
+export const suspendTenantMember = onCall<SuspendMemberInput>(async (request) => {
+  const { tenantId, targetUserId, reason } = request.data;
+  if (!tenantId || !targetUserId) {
+    throw new HttpsError('invalid-argument', 'tenantId and targetUserId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
+
+  // Self-Suspension Guardrail
+  if (authContext.userId === targetUserId) {
+    throw new HttpsError('failed-precondition', 'Administrators cannot suspend their own membership.');
+  }
+
+  const membershipRef = db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('memberships')
+    .doc(targetUserId);
+
+  const memberSnap = await membershipRef.get();
+  if (!memberSnap.exists) {
+    throw new HttpsError('not-found', 'Target membership record not found.');
+  }
+
+  const prev = memberSnap.data() as TenantMembership;
+  if (prev.status === 'suspended') {
+    throw new HttpsError('failed-precondition', 'Membership is already suspended.');
+  }
+
+  // Sole Admin Guardrail
+  if (prev.role === 'tenant_admin') {
+    const adminCount = await countActiveTenantAdmins(tenantId);
+    if (adminCount <= 1) {
+      throw new HttpsError('failed-precondition', 'Cannot suspend the sole active administrator of this organization.');
+    }
+  }
+
+  const now = new Date().toISOString();
+  await membershipRef.update({
+    status: 'suspended',
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'tenant_membership',
+    entityId: targetUserId,
+    action: 'update',
+    beforeSummary: { status: prev.status },
+    afterSummary: { status: 'suspended', reason: reason || 'Administrative suspension' },
+    source: 'cloud_function',
+    workflowContext: 'membership_suspension',
+  });
+
+  return { success: true, targetUserId, status: 'suspended' };
+});
+
+/**
+ * Callable Function: reactivateTenantMember
+ * Reactivates a suspended user membership.
+ */
+export const reactivateTenantMember = onCall<ReactivateMemberInput>(async (request) => {
+  const { tenantId, targetUserId } = request.data;
+  if (!tenantId || !targetUserId) {
+    throw new HttpsError('invalid-argument', 'tenantId and targetUserId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
+
+  const membershipRef = db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('memberships')
+    .doc(targetUserId);
+
+  const memberSnap = await membershipRef.get();
+  if (!memberSnap.exists) {
+    throw new HttpsError('not-found', 'Target membership record not found.');
+  }
+
+  const prev = memberSnap.data() as TenantMembership;
+  if (prev.status === 'active') {
+    throw new HttpsError('failed-precondition', 'Membership is already active.');
+  }
+
+  const now = new Date().toISOString();
+  await membershipRef.update({
+    status: 'active',
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'tenant_membership',
+    entityId: targetUserId,
+    action: 'update',
+    beforeSummary: { status: prev.status },
+    afterSummary: { status: 'active' },
+    source: 'cloud_function',
+    workflowContext: 'membership_reactivation',
+  });
+
+  return { success: true, targetUserId, status: 'active' };
+});
+
+/**
+ * Callable Function: removeTenantMember
+ * Removes a membership from the organization.
+ */
+export const removeTenantMember = onCall<RemoveMemberInput>(async (request) => {
+  const { tenantId, targetUserId, reason } = request.data;
+  if (!tenantId || !targetUserId) {
+    throw new HttpsError('invalid-argument', 'tenantId and targetUserId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
+
+  const membershipRef = db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('memberships')
+    .doc(targetUserId);
+
+  const memberSnap = await membershipRef.get();
+  if (!memberSnap.exists) {
+    throw new HttpsError('not-found', 'Target membership record not found.');
+  }
+
+  const prev = memberSnap.data() as TenantMembership;
+
+  // Sole Admin Guardrail
+  if (prev.role === 'tenant_admin' && prev.status === 'active') {
+    const adminCount = await countActiveTenantAdmins(tenantId);
+    if (adminCount <= 1) {
+      throw new HttpsError('failed-precondition', 'Cannot remove the sole active administrator of this organization.');
+    }
+  }
+
+  await membershipRef.delete();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'tenant_membership',
+    entityId: targetUserId,
+    action: 'delete',
+    beforeSummary: { role: prev.role, status: prev.status, department: prev.department },
+    afterSummary: { reason: reason || 'Administrative removal' },
+    source: 'cloud_function',
+    workflowContext: 'membership_removal',
+  });
+
+  return { success: true, targetUserId, removed: true };
 });
 
 /**
