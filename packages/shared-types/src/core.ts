@@ -13,6 +13,29 @@ export type UserRole =
   | 'viewer'
   | 'approver';
 
+export const VALID_USER_ROLES: readonly UserRole[] = [
+  'platform_admin',
+  'tenant_admin',
+  'compliance_manager',
+  'privacy_manager',
+  'ai_governance_manager',
+  'security_manager',
+  'auditor',
+  'contributor',
+  'viewer',
+  'approver',
+] as const;
+
+export const READ_ONLY_ROLES: readonly UserRole[] = ['auditor', 'viewer'] as const;
+
+export function isValidUserRole(role: unknown): role is UserRole {
+  return typeof role === 'string' && VALID_USER_ROLES.includes(role as UserRole);
+}
+
+export function isReadOnlyRole(role: UserRole): boolean {
+  return READ_ONLY_ROLES.includes(role as 'auditor' | 'viewer');
+}
+
 /**
  * Standard Action Execution Source
  */

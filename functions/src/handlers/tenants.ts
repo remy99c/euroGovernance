@@ -6,9 +6,17 @@ import {
   Tenant,
   TenantMembership,
   TenantInvitation,
+  UserProfile,
   UserRole,
   TenantSubscriptionTier,
+  isValidUserRole,
 } from '@eurogovernance/shared-types';
+
+export interface SyncUserProfileInput {
+  displayName?: string;
+  avatarUrl?: string;
+  defaultTenantId?: string;
+}
 
 export interface CreateTenantInput {
   name: string;
@@ -35,6 +43,55 @@ export interface AssignRoleInput {
   newRole: UserRole;
 }
 
+export interface ListMembersInput {
+  tenantId: string;
+}
+
+/**
+ * Callable Function: syncUserProfile
+ * Synchronizes Firebase Auth user state to /users/{uid} document.
+ */
+export const syncUserProfile = onCall<SyncUserProfileInput>(async (request) => {
+  const authContext = requireAuth(request);
+  const data = request.data || {};
+  const userRef = db.collection('users').doc(authContext.userId);
+  const userSnap = await userRef.get();
+  const now = new Date().toISOString();
+
+  const isPlatformAdmin = request.auth?.token.platform_admin === true;
+  const fallbackName = authContext.email ? authContext.email.split('@')[0] || 'User' : 'User';
+  const displayName = data.displayName || fallbackName;
+
+  if (!userSnap.exists) {
+    const newProfile: UserProfile = {
+      id: authContext.userId,
+      email: authContext.email,
+      displayName,
+      avatarUrl: data.avatarUrl || null,
+      defaultTenantId: data.defaultTenantId || null,
+      isPlatformAdmin,
+      mfaEnabled: Boolean(request.auth?.token.firebase?.sign_in_second_factor),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await userRef.set(newProfile);
+    return { success: true, profile: newProfile };
+  } else {
+    const existing = userSnap.data() as UserProfile;
+    const updatedProfile: Partial<UserProfile> = {
+      email: authContext.email,
+      displayName: data.displayName || existing.displayName,
+      avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : existing.avatarUrl,
+      defaultTenantId: data.defaultTenantId !== undefined ? data.defaultTenantId : existing.defaultTenantId,
+      isPlatformAdmin,
+      mfaEnabled: Boolean(request.auth?.token.firebase?.sign_in_second_factor),
+      updatedAt: now,
+    };
+    await userRef.update(updatedProfile);
+    return { success: true, profile: { ...existing, ...updatedProfile } };
+  }
+});
+
 /**
  * Callable Function: createTenant
  * Privileged workflow to instantiate a new tenant organization and set the caller as initial tenant_admin.
@@ -47,17 +104,18 @@ export const createTenant = onCall<CreateTenantInput>(async (request) => {
     throw new HttpsError('invalid-argument', 'Tenant name and unique slug are required.');
   }
 
-  const tenantRef = db.collection('tenants').doc(slug.toLowerCase());
+  const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
+  const tenantRef = db.collection('tenants').doc(cleanSlug);
   const existing = await tenantRef.get();
   if (existing.exists) {
-    throw new HttpsError('already-exists', `Tenant with slug '${slug}' already exists.`);
+    throw new HttpsError('already-exists', `Tenant with slug '${cleanSlug}' already exists.`);
   }
 
   const now = new Date().toISOString();
   const tenantDoc: Tenant = {
     id: tenantRef.id,
-    name,
-    slug: slug.toLowerCase(),
+    name: name.trim(),
+    slug: cleanSlug,
     tier,
     status: 'active',
     primaryContactEmail: authContext.email,
@@ -76,16 +134,36 @@ export const createTenant = onCall<CreateTenantInput>(async (request) => {
     role: 'tenant_admin',
     status: 'active',
     department: 'Executive Governance',
-    title: 'Organization Administrator',
+    title: 'Founding Administrator',
     joinedAt: now,
     updatedAt: now,
     createdBy: authContext.userId,
     updatedBy: authContext.userId,
   };
 
+  const summaryMetricsRef = tenantRef.collection('summary_metrics').doc('latest');
+  const initialMetrics = {
+    tenantId: tenantRef.id,
+    overallHealthScore: 0,
+    frameworkProgress: enabledFrameworks.map((fw) => ({
+      frameworkId: fw,
+      name: fw.toUpperCase(),
+      total: 0,
+      implemented: 0,
+      percentage: 0,
+    })),
+    controlsSummary: { total: 0, implemented: 0, in_progress: 0, not_started: 0 },
+    evidenceSummary: { valid: 0, under_review: 0, expired: 0 },
+    openRisksCount: 0,
+    openBreachesCount: 0,
+    openIncidentsCount: 0,
+    lastAggregatedAt: now,
+  };
+
   const batch = db.batch();
   batch.set(tenantRef, tenantDoc);
   batch.set(tenantRef.collection('memberships').doc(authContext.userId), membershipDoc);
+  batch.set(summaryMetricsRef, initialMetrics);
 
   await batch.commit();
 
@@ -97,12 +175,12 @@ export const createTenant = onCall<CreateTenantInput>(async (request) => {
     entityType: 'tenant',
     entityId: tenantDoc.id,
     action: 'create',
-    afterSummary: { name, slug, tier, dataRegion, enabledFrameworks },
+    afterSummary: { name: tenantDoc.name, slug: cleanSlug, tier, dataRegion, enabledFrameworks },
     source: 'cloud_function',
     workflowContext: 'tenant_creation',
   });
 
-  return { success: true, tenantId: tenantDoc.id };
+  return { success: true, tenantId: tenantDoc.id, role: 'tenant_admin' };
 });
 
 /**
@@ -113,6 +191,10 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
   const { tenantId, email, role, department } = request.data;
   if (!tenantId || !email || !role) {
     throw new HttpsError('invalid-argument', 'tenantId, email, and role are required.');
+  }
+
+  if (!isValidUserRole(role)) {
+    throw new HttpsError('invalid-argument', `Invalid role '${role}'. Must be one of the recognized standard roles.`);
   }
 
   const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
@@ -240,6 +322,10 @@ export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
     throw new HttpsError('invalid-argument', 'tenantId, targetUserId, and newRole are required.');
   }
 
+  if (!isValidUserRole(newRole)) {
+    throw new HttpsError('invalid-argument', `Invalid role '${newRole}'. Must be one of the recognized standard roles.`);
+  }
+
   const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
 
   const membershipRef = db
@@ -277,4 +363,27 @@ export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
   });
 
   return { success: true, targetUserId, updatedRole: newRole };
+});
+
+/**
+ * Callable Function: listTenantMembers
+ * Admin & compliance listing of tenant memberships.
+ */
+export const listTenantMembers = onCall<ListMembersInput>(async (request) => {
+  const { tenantId } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId, ['tenant_admin', 'compliance_manager', 'auditor']);
+
+  const membersSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('memberships')
+    .get();
+
+  const members: TenantMembership[] = membersSnap.docs.map((doc) => doc.data() as TenantMembership);
+
+  return { success: true, count: members.length, members };
 });

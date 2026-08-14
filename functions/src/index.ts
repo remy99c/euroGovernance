@@ -1,9 +1,11 @@
 // Privileged Tenant & Membership Handlers
 export {
+  syncUserProfile,
   createTenant,
   inviteUserToTenant,
   acceptTenantInvite,
   assignTenantRole,
+  listTenantMembers,
 } from './handlers/tenants.js';
 
 // Evidence Approval Handlers
