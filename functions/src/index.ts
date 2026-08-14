@@ -22,10 +22,13 @@ export {
   listTenantControls,
 } from './handlers/controls.js';
 
-// Evidence Approval Handlers
+// Evidence Repository Handlers
 export {
+  createEvidence,
+  createEvidenceVersion,
   approveEvidence,
   rejectEvidence,
+  listTenantEvidence,
 } from './handlers/evidence.js';
 
 // Audit Log Callable Handler
