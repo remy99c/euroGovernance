@@ -43,6 +43,14 @@ export async function seedEmulatorData() {
     await db.doc(`control_mappings/${crossMap.id}`).set(crossMap);
   }
 
+  for (const qnr of CANONICAL_MASTER_DATA.scopeQuestionnaires) {
+    await db.doc(`scope_questionnaires/${qnr.id}`).set(qnr);
+  }
+
+  for (const q of CANONICAL_MASTER_DATA.scopeQuestions) {
+    await db.doc(`scope_questionnaires/${q.questionnaireId}/questions/${q.id}`).set(q);
+  }
+
   // 3. Seed Tenant Organization
   console.log('🏢 Seeding Tenant Organization & Memberships...');
   await db.doc(`tenants/${tenantId}`).set({

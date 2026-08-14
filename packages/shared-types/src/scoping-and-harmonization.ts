@@ -83,7 +83,8 @@ export type QuestionResponseType =
   | 'multi_choice'
   | 'boolean'
   | 'text'
-  | 'numeric';
+  | 'numeric'
+  | 'string_array';
 
 export type ApplicabilityConditionOperator =
   | 'equals'
@@ -179,6 +180,8 @@ export interface ScopeQuestionnaire {
 export interface ScopeQuestion {
   id: string;
   questionnaireId: string;
+  sectionId?: string;
+  sectionTitle?: string;
   factKey: string; // Target ScopeFact key set by this question (e.g. 'processes_eu_resident_data')
   prompt: string;
   guidanceText: string;
@@ -189,6 +192,35 @@ export interface ScopeQuestion {
   sortOrder: number;
   isRequired: boolean;
   isTriggerForFrameworks: string[]; // e.g. ['gdpr', 'eu_ai_act']
+}
+
+export interface ComposedQuestionnaireSection {
+  id: string;
+  title: string;
+  description: string;
+  category: QuestionnaireCategory;
+  frameworkIds: string[];
+  questions: ScopeQuestion[];
+}
+
+export interface ComposedQuestionnaire {
+  id: string;
+  title: string;
+  description: string;
+  applicableFrameworkIds: string[];
+  sections: ComposedQuestionnaireSection[];
+  totalQuestionsCount: number;
+  requiredQuestionsCount: number;
+}
+
+export interface QuestionnaireProgress {
+  totalQuestions: number;
+  requiredQuestions: number;
+  answeredQuestions: number;
+  answeredRequiredQuestions: number;
+  progressPercentage: number;
+  isComplete: boolean;
+  missingRequiredQuestionIds: string[];
 }
 
 /**
@@ -619,4 +651,208 @@ export function validateApplicabilityDecision(
   }
 
   return { valid: true };
+}
+
+/**
+ * Validates a TenantScopeAnswer against its target ScopeQuestion definition.
+ */
+export function validateScopeAnswer(
+  question: ScopeQuestion,
+  answer: Partial<TenantScopeAnswer>
+): { valid: boolean; error?: string } {
+  if (question.isRequired) {
+    const hasValue =
+      (answer.answerBoolean !== undefined && answer.answerBoolean !== null) ||
+      (typeof answer.answerString === 'string' && answer.answerString.trim().length > 0) ||
+      (typeof answer.answerNumber === 'number' && !isNaN(answer.answerNumber)) ||
+      (Array.isArray(answer.answerArray) && answer.answerArray.length > 0);
+    if (!hasValue) {
+      return { valid: false, error: `Question '${question.prompt}' is mandatory.` };
+    }
+  }
+
+  switch (question.responseType) {
+    case 'boolean':
+      if (answer.answerBoolean !== undefined && answer.answerBoolean !== null && typeof answer.answerBoolean !== 'boolean') {
+        return { valid: false, error: `Question '${question.id}' expects boolean response.` };
+      }
+      break;
+    case 'single_choice':
+      if (typeof answer.answerString === 'string' && question.options && question.options.length > 0) {
+        const allowed = question.options.map((o) => String(o.value));
+        if (!allowed.includes(answer.answerString)) {
+          return { valid: false, error: `Invalid option '${answer.answerString}' for question '${question.id}'.` };
+        }
+      }
+      break;
+    case 'multi_choice':
+    case 'string_array':
+      if (Array.isArray(answer.answerArray) && question.options && question.options.length > 0) {
+        const allowed = question.options.map((o) => String(o.value));
+        for (const item of answer.answerArray) {
+          if (!allowed.includes(item)) {
+            return { valid: false, error: `Invalid option '${item}' for question '${question.id}'.` };
+          }
+        }
+      }
+      break;
+    case 'numeric':
+      if (answer.answerNumber !== undefined && answer.answerNumber !== null && (typeof answer.answerNumber !== 'number' || isNaN(answer.answerNumber))) {
+        return { valid: false, error: `Question '${question.id}' expects a valid number.` };
+      }
+      break;
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Maps a TenantScopeAnswer to a structured TenantScopeFact.
+ */
+export function mapAnswerToScopeFact(
+  tenantId: string,
+  question: ScopeQuestion,
+  answer: TenantScopeAnswer,
+  userId: string
+): TenantScopeFact {
+  const now = new Date().toISOString();
+  let dataType: ScopeFactDataType = 'string';
+  if (question.responseType === 'boolean') dataType = 'boolean';
+  else if (question.responseType === 'numeric') dataType = 'number';
+  else if (question.responseType === 'multi_choice' || question.responseType === 'string_array') dataType = 'string_array';
+
+  return {
+    id: question.factKey,
+    tenantId,
+    ownerId: userId,
+    scopeProfileId: null,
+    frameworkId: question.isTriggerForFrameworks[0] || null,
+    factKey: question.factKey,
+    factTitle: question.prompt,
+    category: question.category,
+    dataType,
+    valueBoolean: answer.answerBoolean ?? null,
+    valueString: answer.answerString ?? null,
+    valueNumber: answer.answerNumber ?? null,
+    valueArray: answer.answerArray ?? null,
+    source: 'questionnaire',
+    sourceQuestionId: question.id,
+    confidence: 'verified',
+    verificationEvidenceId: null,
+    assessedBy: userId,
+    assessedAt: now,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+    createdBy: userId,
+    updatedBy: userId,
+  };
+}
+
+/**
+ * Calculates progress for a questionnaire given an array of questions and existing answers.
+ */
+export function calculateQuestionnaireProgress(
+  questions: ScopeQuestion[],
+  answers: Record<string, Partial<TenantScopeAnswer>>
+): QuestionnaireProgress {
+  const totalQuestions = questions.length;
+  const requiredQuestions = questions.filter((q) => q.isRequired).length;
+
+  let answeredQuestions = 0;
+  let answeredRequiredQuestions = 0;
+  const missingRequiredQuestionIds: string[] = [];
+
+  for (const q of questions) {
+    const ans = answers[q.id];
+    const isAnswered =
+      ans &&
+      ((ans.answerBoolean !== undefined && ans.answerBoolean !== null) ||
+        (typeof ans.answerString === 'string' && ans.answerString.trim().length > 0) ||
+        (typeof ans.answerNumber === 'number' && !isNaN(ans.answerNumber)) ||
+        (Array.isArray(ans.answerArray) && ans.answerArray.length > 0));
+
+    if (isAnswered) {
+      answeredQuestions++;
+      if (q.isRequired) {
+        answeredRequiredQuestions++;
+      }
+    } else if (q.isRequired) {
+      missingRequiredQuestionIds.push(q.id);
+    }
+  }
+
+  const progressPercentage =
+    totalQuestions === 0 ? 100 : Math.round((answeredQuestions / totalQuestions) * 100);
+  const isComplete = missingRequiredQuestionIds.length === 0 && (requiredQuestions === 0 ? answeredQuestions === totalQuestions : true);
+
+  return {
+    totalQuestions,
+    requiredQuestions,
+    answeredQuestions,
+    answeredRequiredQuestions,
+    progressPercentage,
+    isComplete,
+    missingRequiredQuestionIds,
+  };
+}
+
+/**
+ * Composes a unified questionnaire across multiple adopted frameworks, deduplicating shared questions.
+ */
+export function composeTenantQuestionnaire(
+  adoptedFrameworkIds: string[],
+  allQuestionnaires: ScopeQuestionnaire[],
+  allQuestions: ScopeQuestion[]
+): ComposedQuestionnaire {
+  const relevantQuestionnaires = allQuestionnaires.filter((qnr) =>
+    qnr.frameworkIds.some((fid) => adoptedFrameworkIds.includes(fid)) || qnr.frameworkIds.length === 0
+  );
+
+  const seenFactKeys = new Set<string>();
+  const sections: ComposedQuestionnaireSection[] = [];
+
+  let totalQuestionsCount = 0;
+  let requiredQuestionsCount = 0;
+
+  for (const qnr of relevantQuestionnaires) {
+    const qnrQuestions = allQuestions
+      .filter((q) => q.questionnaireId === qnr.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+
+    const sectionQuestions: ScopeQuestion[] = [];
+    for (const q of qnrQuestions) {
+      if (!seenFactKeys.has(q.factKey)) {
+        seenFactKeys.add(q.factKey);
+        sectionQuestions.push(q);
+        totalQuestionsCount++;
+        if (q.isRequired) {
+          requiredQuestionsCount++;
+        }
+      }
+    }
+
+    if (sectionQuestions.length > 0) {
+      sections.push({
+        id: qnr.id,
+        title: qnr.title,
+        description: qnr.description,
+        category: qnr.category,
+        frameworkIds: qnr.frameworkIds.filter((fid) => adoptedFrameworkIds.includes(fid)),
+        questions: sectionQuestions,
+      });
+    }
+  }
+
+  const sortedIds = [...adoptedFrameworkIds].sort();
+
+  return {
+    id: `composed_${sortedIds.join('_')}`,
+    title: 'Harmonized Scope Discovery Questionnaire',
+    description: `Multi-framework scoping assessment for adopted frameworks: ${adoptedFrameworkIds.join(', ')}`,
+    applicableFrameworkIds: [...adoptedFrameworkIds],
+    sections,
+    totalQuestionsCount,
+    requiredQuestionsCount,
+  };
 }

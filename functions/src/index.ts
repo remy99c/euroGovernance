@@ -194,4 +194,8 @@ export {
   batchRecordScopeFacts,
   listTenantScopeProfiles,
   listTenantScopeFacts,
+  getComposedScopeQuestionnaire,
+  saveScopeAnswers,
+  listTenantScopeAnswers,
+  getScopeQuestionnaireProgress,
 } from './handlers/scoping.js';

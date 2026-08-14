@@ -9,9 +9,19 @@ import {
   ScopeProfileStatus,
   ScopeFactCategory,
   ScopeFactDataType,
+  QuestionResponseType,
+  ScopeQuestionnaire,
+  ScopeQuestion,
+  TenantScopeAnswer,
   validateScopeProfile,
   validateScopeFactValue,
   calculateScopeCompleteness,
+  validateScopeAnswer,
+  mapAnswerToScopeFact,
+  calculateQuestionnaireProgress,
+  composeTenantQuestionnaire,
+  CANONICAL_SCOPE_QUESTIONNAIRES,
+  CANONICAL_SCOPE_QUESTIONS,
 } from '@eurogovernance/shared-types';
 
 const SCOPING_ADMIN_ROLES = [
@@ -569,4 +579,215 @@ export const listTenantScopeFacts = onCall(async (request) => {
   const facts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   return { facts };
+});
+
+export interface SaveScopeAnswerItem {
+  questionnaireId: string;
+  questionId: string;
+  factKey: string;
+  responseType: QuestionResponseType;
+  answerBoolean?: boolean | null;
+  answerString?: string | null;
+  answerNumber?: number | null;
+  answerArray?: string[] | null;
+  notes?: string;
+}
+
+export interface SaveScopeAnswersInput {
+  tenantId: string;
+  answers: SaveScopeAnswerItem[];
+  updateScopeFacts?: boolean;
+}
+
+export interface GetComposedScopeQuestionnaireInput {
+  tenantId: string;
+  frameworkIds?: string[];
+}
+
+/**
+ * 8. Get Composed Multi-Framework Scope Questionnaire
+ */
+export const getComposedScopeQuestionnaire = onCall<GetComposedScopeQuestionnaireInput>(async (request) => {
+  const { tenantId, frameworkIds } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let targetFrameworkIds = frameworkIds;
+  if (!targetFrameworkIds || targetFrameworkIds.length === 0) {
+    const adoptedSnap = await db.collection('tenants').doc(tenantId).collection('adopted_frameworks').get();
+    targetFrameworkIds = adoptedSnap.docs
+      .filter((d) => d.data()?.status !== 'retired')
+      .map((d) => d.id);
+  }
+
+  // Fetch questionnaires & questions from Firestore or fall back to canonical master
+  const qnrSnap = await db.collection('scope_questionnaires').get();
+  let questionnaires: ScopeQuestionnaire[] = [];
+  let questions: ScopeQuestion[] = [];
+
+  if (!qnrSnap.empty) {
+    questionnaires = qnrSnap.docs.map((d) => d.data() as ScopeQuestionnaire);
+    for (const qnrDoc of qnrSnap.docs) {
+      const qSnap = await qnrDoc.ref.collection('questions').get();
+      questions.push(...qSnap.docs.map((qd) => qd.data() as ScopeQuestion));
+    }
+  } else {
+    questionnaires = CANONICAL_SCOPE_QUESTIONNAIRES;
+    questions = CANONICAL_SCOPE_QUESTIONS;
+  }
+
+  const composed = composeTenantQuestionnaire(targetFrameworkIds, questionnaires, questions);
+  return { composedQuestionnaire: composed };
+});
+
+/**
+ * 9. Save / Update Tenant Scope Answers and Map to Scope Facts
+ */
+export const saveScopeAnswers = onCall<SaveScopeAnswersInput>(async (request) => {
+  const { tenantId, answers, updateScopeFacts = true } = request.data || {};
+
+  if (!tenantId || !Array.isArray(answers) || answers.length === 0) {
+    throw new HttpsError('invalid-argument', 'tenantId and non-empty answers array are required.');
+  }
+
+  const authCtx = await requireTenantMember(request, tenantId, [
+    ...SCOPING_ADMIN_ROLES,
+    'contributor',
+  ]);
+
+  // Fetch canonical questions for validation and mapping
+  const qMap = new Map<string, ScopeQuestion>();
+  for (const q of CANONICAL_SCOPE_QUESTIONS) {
+    qMap.set(q.id, q);
+  }
+
+  const batch = db.batch();
+  const now = new Date().toISOString();
+
+  for (const item of answers) {
+    const question = qMap.get(item.questionId);
+    if (!question) {
+      throw new HttpsError('not-found', `Question '${item.questionId}' not found.`);
+    }
+
+    const answerPayload: TenantScopeAnswer = {
+      id: item.questionId,
+      tenantId,
+      ownerId: authCtx.userId,
+      questionnaireId: item.questionnaireId || question.questionnaireId,
+      questionId: item.questionId,
+      factKey: item.factKey || question.factKey,
+      responseType: item.responseType || question.responseType,
+      answerBoolean: item.answerBoolean ?? null,
+      answerString: item.answerString ?? null,
+      answerNumber: item.answerNumber ?? null,
+      answerArray: item.answerArray ?? null,
+      notes: item.notes || '',
+      answeredBy: authCtx.userId,
+      answeredAt: now,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      createdBy: authCtx.userId,
+      updatedBy: authCtx.userId,
+    };
+
+    const validation = validateScopeAnswer(question, answerPayload);
+    if (!validation.valid) {
+      throw new HttpsError('invalid-argument', `Question '${item.questionId}': ${validation.error}`);
+    }
+
+    // Save answer
+    const ansRef = db.collection('tenants').doc(tenantId).collection('scope_answers').doc(item.questionId);
+    batch.set(ansRef, answerPayload, { merge: true });
+
+    // Map and save scope fact
+    if (updateScopeFacts) {
+      const factDoc = mapAnswerToScopeFact(tenantId, question, answerPayload, authCtx.userId);
+      const factRef = db.collection('tenants').doc(tenantId).collection('scope_facts').doc(factDoc.factKey);
+      batch.set(factRef, factDoc, { merge: true });
+    }
+  }
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authCtx.userId,
+    actorEmail: authCtx.email,
+    actorRole: authCtx.role,
+    entityType: 'scope_answer',
+    entityId: 'batch',
+    action: 'update',
+    afterSummary: { answersSubmitted: answers.length, updateScopeFacts },
+    source: 'cloud_function',
+    workflowContext: `Submitted ${answers.length} scope answers and synchronized scope facts`,
+  });
+
+  return { success: true, count: answers.length };
+});
+
+/**
+ * 10. List Tenant Scope Answers
+ */
+export const listTenantScopeAnswers = onCall(async (request) => {
+  const { tenantId, questionnaireId } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let q = db.collection('tenants').doc(tenantId).collection('scope_answers') as FirebaseFirestore.Query;
+  if (questionnaireId) {
+    q = q.where('questionnaireId', '==', questionnaireId);
+  }
+
+  const snap = await q.get();
+  const answers = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return { answers };
+});
+
+/**
+ * 11. Get Scope Questionnaire Progress
+ */
+export const getScopeQuestionnaireProgress = onCall(async (request) => {
+  const { tenantId, frameworkIds } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let targetFrameworkIds = frameworkIds;
+  if (!targetFrameworkIds || targetFrameworkIds.length === 0) {
+    const adoptedSnap = await db.collection('tenants').doc(tenantId).collection('adopted_frameworks').get();
+    targetFrameworkIds = adoptedSnap.docs
+      .filter((d) => d.data()?.status !== 'retired')
+      .map((d) => d.id);
+  }
+
+  const composed = composeTenantQuestionnaire(
+    targetFrameworkIds,
+    CANONICAL_SCOPE_QUESTIONNAIRES,
+    CANONICAL_SCOPE_QUESTIONS
+  );
+
+  const allComposedQuestions: ScopeQuestion[] = [];
+  for (const s of composed.sections) {
+    allComposedQuestions.push(...s.questions);
+  }
+
+  const answersSnap = await db.collection('tenants').doc(tenantId).collection('scope_answers').get();
+  const answersMap: Record<string, Partial<TenantScopeAnswer>> = {};
+  for (const doc of answersSnap.docs) {
+    answersMap[doc.id] = doc.data() as TenantScopeAnswer;
+  }
+
+  const progress = calculateQuestionnaireProgress(allComposedQuestions, answersMap);
+  return { progress, composedQuestionnaire: composed };
 });
