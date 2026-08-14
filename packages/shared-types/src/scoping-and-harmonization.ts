@@ -1,5 +1,10 @@
 import { BaseEntity } from './core.js';
-import { ControlImplementationStatus } from './grc.js';
+import {
+  ControlImplementationStatus,
+  Requirement,
+  MasterControl,
+  MasterRequirementControlMapping,
+} from './grc.js';
 
 // =============================================================================
 // ENUMS & CONSTANTS
@@ -1304,4 +1309,295 @@ export function evaluateFrameworkApplicabilityRules(
   facts: Record<string, TenantScopeFact | unknown>
 ): ApplicabilityRuleEvaluationResult[] {
   return rules.map((r) => evaluateApplicabilityRule(r, facts));
+}
+
+// =============================================================================
+// TENANT GRC INSTANTIATION ENGINE
+// =============================================================================
+
+export interface InstantiationInput {
+  tenantId: string;
+  defaultOwnerId: string;
+  decisions: TenantApplicabilityDecision[];
+  requirements: Requirement[];
+  masterControls: MasterControl[];
+  requirementControlMappings: MasterRequirementControlMapping[];
+  canonicalControlMappings?: CanonicalControlMapping[];
+  existingRequirementInstances?: TenantRequirementInstance[];
+  existingControlInstances?: TenantControlInstance[];
+}
+
+export interface InstantiationResult {
+  requirementInstances: TenantRequirementInstance[];
+  controlInstances: TenantControlInstance[];
+  createdRequirementsCount: number;
+  updatedRequirementsCount: number;
+  createdControlsCount: number;
+  updatedControlsCount: number;
+  harmonizedControlsCount: number;
+}
+
+export function mapOutcomeToComplianceStatus(outcome: ApplicabilityOutcome): RequirementComplianceStatus {
+  switch (outcome) {
+    case 'applicable':
+      return 'not_evaluated';
+    case 'not_applicable':
+      return 'not_applicable';
+    case 'review_required':
+      return 'not_evaluated';
+    case 'inherited':
+      return 'compliant';
+    case 'deferred':
+      return 'not_evaluated';
+    default:
+      return 'not_evaluated';
+  }
+}
+
+export function mapOutcomeToControlStatus(outcome: ApplicabilityOutcome): ControlImplementationStatus {
+  switch (outcome) {
+    case 'applicable':
+      return 'not_started';
+    case 'not_applicable':
+      return 'not_applicable';
+    case 'review_required':
+      return 'not_started';
+    case 'inherited':
+      return 'implemented';
+    case 'deferred':
+      return 'not_started';
+    default:
+      return 'not_started';
+  }
+}
+
+/**
+ * Deterministically instantiates or synchronizes tenant requirement instances and control instances.
+ * Guarantees cross-framework harmonization (non-duplication) and lifecycle safety on rerun.
+ */
+export function instantiateTenantGRC(input: InstantiationInput): InstantiationResult {
+  const now = new Date().toISOString();
+  const reqMap = new Map<string, TenantRequirementInstance>();
+  const ctrlMap = new Map<string, TenantControlInstance>();
+
+  if (input.existingRequirementInstances) {
+    for (const req of input.existingRequirementInstances) {
+      reqMap.set(req.requirementId, { ...req });
+    }
+  }
+
+  if (input.existingControlInstances) {
+    for (const ctrl of input.existingControlInstances) {
+      ctrlMap.set(ctrl.id, { ...ctrl });
+    }
+  }
+
+  const decisionsMap = new Map<string, TenantApplicabilityDecision>();
+  for (const d of input.decisions) {
+    decisionsMap.set(d.requirementId, d);
+  }
+
+  const masterControlById = new Map<string, MasterControl>();
+  for (const mc of input.masterControls) {
+    masterControlById.set(mc.id, mc);
+  }
+
+  // Canonical mapping lookups
+  const canonicalMapByMasterControl = new Map<string, string[]>();
+  if (input.canonicalControlMappings) {
+    for (const ccm of input.canonicalControlMappings) {
+      for (const mc of input.masterControls) {
+        if (mc.canonicalControlMappingKey === ccm.id || mc.domain.toLowerCase() === ccm.harmonizedDomain.toLowerCase()) {
+          const list = canonicalMapByMasterControl.get(mc.id) || [];
+          if (!list.includes(ccm.id)) list.push(ccm.id);
+          canonicalMapByMasterControl.set(mc.id, list);
+        }
+      }
+    }
+  }
+
+  let createdRequirementsCount = 0;
+  let updatedRequirementsCount = 0;
+  let createdControlsCount = 0;
+  let updatedControlsCount = 0;
+
+  for (const req of input.requirements) {
+    const decision = decisionsMap.get(req.id);
+    const outcome: ApplicabilityOutcome = decision?.status || (req.isMandatory ? 'applicable' : 'pending_evaluation');
+    const isApplicable =
+      outcome === 'applicable' ||
+      outcome === 'conditionally_applicable' ||
+      outcome === 'inherited' ||
+      outcome === 'review_required';
+
+    // Find master control IDs mapped to this requirement
+    const targetMasterControlIds = input.requirementControlMappings
+      .filter((rcm) => rcm.requirementId === req.id)
+      .map((rcm) => rcm.masterControlId);
+
+    const satisfyingControlIds: string[] = [];
+
+    for (const mcId of targetMasterControlIds) {
+      const masterControl = masterControlById.get(mcId);
+      if (!masterControl) continue;
+
+      const canonicalIds = canonicalMapByMasterControl.get(mcId) || (masterControl.canonicalControlMappingKey ? [masterControl.canonicalControlMappingKey] : []);
+
+      // Check if control already instantiated (by masterControlId, canonicalMappingIds, or code)
+      let existingControl: TenantControlInstance | undefined;
+      for (const candidate of ctrlMap.values()) {
+        if (
+          candidate.masterControlId === masterControl.id ||
+          (canonicalIds.length > 0 && candidate.canonicalMappingIds.some((cid) => canonicalIds.includes(cid))) ||
+          candidate.code.toUpperCase() === masterControl.code.toUpperCase()
+        ) {
+          existingControl = candidate;
+          break;
+        }
+      }
+
+      if (existingControl) {
+        // Update existing control (non-duplication / harmonization)
+        let modified = false;
+        if (!existingControl.frameworkIds.includes(req.frameworkId)) {
+          existingControl.frameworkIds.push(req.frameworkId);
+          modified = true;
+        }
+        if (!existingControl.requirementIds.includes(req.id)) {
+          existingControl.requirementIds.push(req.id);
+          modified = true;
+        }
+        for (const cid of canonicalIds) {
+          if (!existingControl.canonicalMappingIds.includes(cid)) {
+            existingControl.canonicalMappingIds.push(cid);
+            modified = true;
+          }
+        }
+        if (existingControl.frameworkIds.length > 1 && !existingControl.isHarmonized) {
+          existingControl.isHarmonized = true;
+          modified = true;
+        }
+        if (outcome === 'inherited' && existingControl.status === 'not_started') {
+          existingControl.status = 'implemented';
+          existingControl.healthScore = 100;
+          modified = true;
+        }
+
+        if (modified) {
+          existingControl.updatedAt = now;
+          existingControl.updatedBy = input.defaultOwnerId;
+          updatedControlsCount++;
+        }
+        satisfyingControlIds.push(existingControl.id);
+      } else {
+        // Instantiate new control
+        const initialStatus = mapOutcomeToControlStatus(outcome);
+        const newControlId = `ctrl_${masterControl.id.replace(/^ctl_master_/, '')}`;
+        const newControl: TenantControlInstance = {
+          id: newControlId,
+          tenantId: input.tenantId,
+          ownerId: input.defaultOwnerId,
+          masterControlId: masterControl.id,
+          code: masterControl.code,
+          title: masterControl.title,
+          description: masterControl.description,
+          domain: masterControl.domain,
+          frameworkIds: [req.frameworkId],
+          requirementIds: [req.id],
+          status: initialStatus,
+          healthScore: initialStatus === 'implemented' ? 100 : 0,
+          enforcementMechanism: 'manual',
+          reviewFrequencyDays: 90,
+          lastReviewDate: null,
+          nextReviewDate: null,
+          implementationNotes:
+            outcome === 'inherited'
+              ? 'Control inherited from enterprise parent scope.'
+              : outcome === 'review_required'
+              ? 'Requires scoping review.'
+              : outcome === 'not_applicable'
+              ? 'Control not applicable based on current scope facts.'
+              : '',
+          isHarmonized: false,
+          canonicalMappingIds: canonicalIds,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: input.defaultOwnerId,
+          updatedBy: input.defaultOwnerId,
+        };
+
+        ctrlMap.set(newControl.id, newControl);
+        satisfyingControlIds.push(newControl.id);
+        createdControlsCount++;
+      }
+    }
+
+    // Update or create TenantRequirementInstance
+    const existingReqInstance = reqMap.get(req.id);
+    let complianceStatus = mapOutcomeToComplianceStatus(outcome);
+
+    // If existing requirement has already achieved compliant status and is still applicable, retain progress
+    if (existingReqInstance && isApplicable && ['compliant', 'partially_compliant'].includes(existingReqInstance.complianceStatus)) {
+      complianceStatus = existingReqInstance.complianceStatus;
+    }
+
+    if (existingReqInstance) {
+      existingReqInstance.applicabilityDecisionId = decision?.id || req.id;
+      existingReqInstance.complianceStatus = complianceStatus;
+      existingReqInstance.satisfyingControlIds = Array.from(new Set([...existingReqInstance.satisfyingControlIds, ...satisfyingControlIds]));
+      existingReqInstance.assessmentNotes = decision?.rationale || existingReqInstance.assessmentNotes;
+      existingReqInstance.updatedAt = now;
+      existingReqInstance.updatedBy = input.defaultOwnerId;
+      updatedRequirementsCount++;
+    } else {
+      const newReqInstance: TenantRequirementInstance = {
+        id: `req_inst_${req.id}`,
+        tenantId: input.tenantId,
+        ownerId: input.defaultOwnerId,
+        requirementId: req.id,
+        frameworkId: req.frameworkId,
+        sectionCode: req.sectionCode,
+        title: req.title,
+        description: req.description,
+        category: req.category,
+        isMandatory: req.isMandatory,
+        applicabilityDecisionId: decision?.id || req.id,
+        status: complianceStatus,
+        complianceStatus,
+        satisfyingControlIds,
+        primaryAssigneeId: input.defaultOwnerId,
+        department: 'Compliance',
+        lastAssessmentDate: null,
+        nextAssessmentDate: null,
+        assessmentNotes:
+          decision?.rationale ||
+          (outcome === 'deferred'
+            ? 'Obligation deferred per scoping timeline.'
+            : outcome === 'review_required'
+            ? 'Applicability pending formal scoping review.'
+            : ''),
+        createdAt: now,
+        updatedAt: now,
+        createdBy: input.defaultOwnerId,
+        updatedBy: input.defaultOwnerId,
+      };
+
+      reqMap.set(req.id, newReqInstance);
+      createdRequirementsCount++;
+    }
+  }
+
+  const requirementInstances = Array.from(reqMap.values());
+  const controlInstances = Array.from(ctrlMap.values());
+  const harmonizedControlsCount = controlInstances.filter((c) => c.isHarmonized).length;
+
+  return {
+    requirementInstances,
+    controlInstances,
+    createdRequirementsCount,
+    updatedRequirementsCount,
+    createdControlsCount,
+    updatedControlsCount,
+    harmonizedControlsCount,
+  };
 }

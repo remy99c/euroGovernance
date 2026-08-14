@@ -200,9 +200,12 @@ export {
   getScopeQuestionnaireProgress,
 } from './handlers/scoping.js';
 
-// Deterministic Applicability Engine Handlers
+// Deterministic Applicability Engine & Instantiation Handlers
 export {
   evaluateTenantApplicability,
   testRuleEvaluation,
   listTenantApplicabilityDecisions,
+  instantiateTenantFrameworkControls,
+  listTenantRequirementInstances,
+  listTenantControlInstances,
 } from './handlers/applicability.js';

@@ -7,10 +7,14 @@ import {
   TenantScopeFact,
   TenantApplicabilityDecision,
   RequirementApplicability,
+  TenantRequirementInstance,
+  TenantControlInstance,
   evaluateApplicabilityRule,
   evaluateFrameworkApplicabilityRules,
   validateApplicabilityRule,
+  instantiateTenantGRC,
   CANONICAL_APPLICABILITY_RULES,
+  CANONICAL_MASTER_DATA,
 } from '@eurogovernance/shared-types';
 
 const COMPLIANCE_WRITE_ROLES = [
@@ -211,4 +215,153 @@ export const listTenantApplicabilityDecisions = onCall(async (request) => {
   const decisions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   return { decisions };
+});
+
+export interface InstantiateTenantControlsInput {
+  tenantId: string;
+  frameworkId?: string;
+  defaultOwnerId?: string;
+}
+
+/**
+ * 4. Tenant GRC Instantiation from Applicability Decisions
+ */
+export const instantiateTenantFrameworkControls = onCall<InstantiateTenantControlsInput>(async (request) => {
+  const { tenantId, frameworkId, defaultOwnerId } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing or invalid tenantId.');
+  }
+
+  const authCtx = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
+  const ownerId = defaultOwnerId || authCtx.userId;
+
+  // 1. Fetch adopted frameworks for tenant
+  const adoptedSnap = await db.collection('tenants').doc(tenantId).collection('adopted_frameworks').get();
+  const adoptedFrameworkIds = adoptedSnap.docs
+    .map((d) => d.id)
+    .filter((id) => !frameworkId || id === frameworkId);
+
+  // 2. Fetch applicability decisions
+  const decisionsSnap = await db.collection('tenants').doc(tenantId).collection('applicability_decisions').get();
+  const decisions: TenantApplicabilityDecision[] = decisionsSnap.docs.map((d) => d.data() as TenantApplicabilityDecision);
+
+  // 3. Fetch existing requirement instances and control instances
+  const reqInstSnap = await db.collection('tenants').doc(tenantId).collection('requirement_instances').get();
+  const existingReqInstances: TenantRequirementInstance[] = reqInstSnap.docs.map((d) => d.data() as TenantRequirementInstance);
+
+  const ctrlInstSnap = await db.collection('tenants').doc(tenantId).collection('controls').get();
+  const existingControlInstances: TenantControlInstance[] = ctrlInstSnap.docs.map((d) => d.data() as TenantControlInstance);
+
+  // 4. Fetch Master Catalog
+  const requirements = CANONICAL_MASTER_DATA.requirements.filter(
+    (r) => adoptedFrameworkIds.includes(r.frameworkId)
+  );
+  const masterControls = CANONICAL_MASTER_DATA.masterControls;
+  const requirementControlMappings = CANONICAL_MASTER_DATA.requirementControlMappings;
+  const canonicalControlMappings = CANONICAL_MASTER_DATA.canonicalControlMappings;
+
+  // 5. Execute instantiation & harmonization engine
+  const result = instantiateTenantGRC({
+    tenantId,
+    defaultOwnerId: ownerId,
+    decisions,
+    requirements,
+    masterControls,
+    requirementControlMappings,
+    canonicalControlMappings,
+    existingRequirementInstances: existingReqInstances,
+    existingControlInstances: existingControlInstances,
+  });
+
+  // 6. Batch commit requirement instances & control instances
+  const batch = db.batch();
+
+  for (const reqInst of result.requirementInstances) {
+    const docRef = db.collection('tenants').doc(tenantId).collection('requirement_instances').doc(reqInst.id);
+    batch.set(docRef, reqInst, { merge: true });
+  }
+
+  for (const ctrlInst of result.controlInstances) {
+    const docRef = db.collection('tenants').doc(tenantId).collection('controls').doc(ctrlInst.id);
+    batch.set(docRef, ctrlInst, { merge: true });
+  }
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authCtx.userId,
+    actorEmail: authCtx.email,
+    actorRole: authCtx.role,
+    entityType: 'control',
+    entityId: frameworkId || 'harmonized_catalog',
+    action: 'create',
+    afterSummary: {
+      createdRequirementsCount: result.createdRequirementsCount,
+      updatedRequirementsCount: result.updatedRequirementsCount,
+      createdControlsCount: result.createdControlsCount,
+      updatedControlsCount: result.updatedControlsCount,
+      harmonizedControlsCount: result.harmonizedControlsCount,
+    },
+    source: 'cloud_function',
+    workflowContext: `Instantiated ${result.createdControlsCount} controls and synchronized ${result.requirementInstances.length} requirements`,
+  });
+
+  return {
+    success: true,
+    ...result,
+  };
+});
+
+/**
+ * 5. List Tenant Requirement Instances
+ */
+export const listTenantRequirementInstances = onCall(async (request) => {
+  const { tenantId, frameworkId, complianceStatus } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let q = db.collection('tenants').doc(tenantId).collection('requirement_instances') as FirebaseFirestore.Query;
+  if (frameworkId) {
+    q = q.where('frameworkId', '==', frameworkId);
+  }
+  if (complianceStatus) {
+    q = q.where('complianceStatus', '==', complianceStatus);
+  }
+
+  const snap = await q.get();
+  const instances = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return { instances };
+});
+
+/**
+ * 6. List Tenant Control Instances
+ */
+export const listTenantControlInstances = onCall(async (request) => {
+  const { tenantId, frameworkId, domain, isHarmonized } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let q = db.collection('tenants').doc(tenantId).collection('controls') as FirebaseFirestore.Query;
+  if (frameworkId) {
+    q = q.where('frameworkIds', 'array-contains', frameworkId);
+  }
+  if (domain) {
+    q = q.where('domain', '==', domain);
+  }
+  if (typeof isHarmonized === 'boolean') {
+    q = q.where('isHarmonized', '==', isHarmonized);
+  }
+
+  const snap = await q.get();
+  const controls = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return { controls };
 });
