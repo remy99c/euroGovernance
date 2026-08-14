@@ -414,3 +414,122 @@ export function validateTransferArrangement(input: unknown): ValidateTransferArr
     errors,
   };
 }
+
+// -----------------------------------------------------------------------------
+// TIA INTEGRATION & DERIVED INDICATORS
+// -----------------------------------------------------------------------------
+
+export type ProcessorTIAStatus =
+  | 'not_applicable'
+  | 'tia_missing'
+  | 'tia_in_progress'
+  | 'tia_approved'
+  | 'tia_stale';
+
+export const VALID_PROCESSOR_TIA_STATUSES: readonly ProcessorTIAStatus[] = [
+  'not_applicable',
+  'tia_missing',
+  'tia_in_progress',
+  'tia_approved',
+  'tia_stale',
+] as const;
+
+export interface MinimalTIARecord {
+  id: string;
+  status: string;
+  approvedAt?: string | null;
+  nextReviewDate?: string | null;
+  updatedAt?: string | null;
+}
+
+/**
+ * Evaluates TIA status for a single TransferArrangement.
+ */
+export function deriveTransferArrangementTIAStatus(
+  arrangement: TransferArrangement,
+  tia: MinimalTIARecord | null,
+  nowISO: string = new Date().toISOString()
+): ProcessorTIAStatus {
+  if (!arrangement.restrictedTransfer) {
+    return 'not_applicable';
+  }
+
+  if (!arrangement.linkedTiaId || !tia) {
+    return 'tia_missing';
+  }
+
+  if (tia.status === 'draft' || tia.status === 'in_review' || tia.status === 'under_review') {
+    return 'tia_in_progress';
+  }
+
+  if (tia.status === 'approved') {
+    const nowTime = new Date(nowISO).getTime();
+
+    // Check nextReviewDate if present
+    if (tia.nextReviewDate) {
+      const reviewTime = new Date(tia.nextReviewDate).getTime();
+      if (!isNaN(reviewTime) && nowTime > reviewTime) {
+        return 'tia_stale';
+      }
+    }
+
+    // Check if approved more than 365 days ago
+    if (tia.approvedAt) {
+      const approvedTime = new Date(tia.approvedAt).getTime();
+      const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+      if (!isNaN(approvedTime) && nowTime - approvedTime > oneYearMs) {
+        return 'tia_stale';
+      }
+    }
+
+    return 'tia_approved';
+  }
+
+  return 'tia_in_progress';
+}
+
+/**
+ * Aggregates and derives overall TIA posture for a ProcessorProfile based on all linked transfers.
+ */
+export function deriveProcessorTIAStatus(
+  profile: ProcessorProfile,
+  transfers: TransferArrangement[],
+  tias: MinimalTIARecord[],
+  nowISO: string = new Date().toISOString()
+): ProcessorTIAStatus {
+  const restrictedTransfers = transfers.filter((t) => t.restrictedTransfer && t.processorProfileId === profile.id);
+
+  if (restrictedTransfers.length === 0) {
+    return 'not_applicable';
+  }
+
+  const tiaMap = new Map<string, MinimalTIARecord>();
+  tias.forEach((t) => tiaMap.set(t.id, t));
+
+  const statuses = restrictedTransfers.map((tr) => {
+    const tia = tr.linkedTiaId ? tiaMap.get(tr.linkedTiaId) || null : null;
+    return deriveTransferArrangementTIAStatus(tr, tia, nowISO);
+  });
+
+  // If any transfer has a missing TIA, the overall status is tia_missing (highest risk)
+  if (statuses.includes('tia_missing')) {
+    return 'tia_missing';
+  }
+
+  // Next, if any is stale
+  if (statuses.includes('tia_stale')) {
+    return 'tia_stale';
+  }
+
+  // Next, if any is in progress
+  if (statuses.includes('tia_in_progress')) {
+    return 'tia_in_progress';
+  }
+
+  // All approved
+  if (statuses.every((s) => s === 'tia_approved')) {
+    return 'tia_approved';
+  }
+
+  return 'tia_missing';
+}

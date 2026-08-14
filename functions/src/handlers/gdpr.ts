@@ -18,6 +18,8 @@ import {
   DSRRequest,
   DSRType,
   DSRStatus,
+  TransferArrangement,
+  ProcessorProfile,
 } from '@eurogovernance/shared-types';
 
 // -----------------------------------------------------------------------------
@@ -650,6 +652,239 @@ export const listTenantTIAs = onCall<ListTIAInput>(async (request) => {
   const tias: TIA[] = snap.docs.map((d) => d.data() as TIA);
 
   return { success: true, count: tias.length, tias };
+});
+
+export interface CreateTIAFromTransferArrangementInput {
+  tenantId: string;
+  arrangementId: string;
+  code?: string;
+  title?: string;
+  destinationCountryLegalAssessment?: string;
+  supplementaryTechnicalMeasures?: string;
+  supplementaryContractualMeasures?: string;
+  residualRiskLevel?: 'low' | 'medium' | 'high';
+  ownerId?: string;
+}
+
+export const createTIAFromTransferArrangement = onCall<CreateTIAFromTransferArrangementInput>(async (request) => {
+  const {
+    tenantId,
+    arrangementId,
+    code,
+    title,
+    destinationCountryLegalAssessment,
+    supplementaryTechnicalMeasures,
+    supplementaryContractualMeasures,
+    residualRiskLevel = 'medium',
+    ownerId,
+  } = request.data;
+
+  if (!tenantId || !arrangementId) {
+    throw new HttpsError('invalid-argument', 'tenantId and arrangementId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'privacy_manager',
+    'compliance_manager',
+  ]);
+
+  // 1. Fetch TransferArrangement
+  const arrangementRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(arrangementId);
+  const arrangementSnap = await arrangementRef.get();
+  if (!arrangementSnap.exists) {
+    throw new HttpsError('not-found', `Transfer arrangement with ID ${arrangementId} not found.`);
+  }
+
+  const arrangement = arrangementSnap.data() as TransferArrangement;
+
+  // 2. Fetch linked ProcessorProfile
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(arrangement.processorProfileId);
+  const profileSnap = await profileRef.get();
+  const profile = profileSnap.exists ? (profileSnap.data() as ProcessorProfile) : null;
+
+  // 3. Map transferMechanismType to TransferMechanism
+  let mappedLegalMechanism: TransferMechanism = 'standard_contractual_clauses';
+  if (arrangement.transferMechanismType === 'adequacy_decision') {
+    mappedLegalMechanism = 'adequacy_decision';
+  } else if (arrangement.transferMechanismType === 'binding_corporate_rules') {
+    mappedLegalMechanism = 'binding_corporate_rules';
+  } else if (arrangement.transferMechanismType === 'derogation_art49') {
+    mappedLegalMechanism = 'derogation_art49';
+  } else if (arrangement.transferMechanismType === 'other') {
+    mappedLegalMechanism = 'other';
+  }
+
+  const primaryCountry = (arrangement.destinationCountries && arrangement.destinationCountries[0]) || 'THIRD_COUNTRY';
+  const resolvedVendorId = arrangement.vendorId || profile?.vendorId || 'unknown_vendor';
+  const now = new Date().toISOString();
+
+  // One year from now for review
+  const nextYearDate = new Date();
+  nextYearDate.setFullYear(nextYearDate.getFullYear() + 1);
+
+  const generatedCode = code ? code.trim().toUpperCase() : `TIA-${primaryCountry.toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+  const generatedTitle = title ? title.trim() : `TIA for ${arrangement.name}`;
+  const effectiveTechnicalMeasures =
+    supplementaryTechnicalMeasures ||
+    arrangement.supplementaryMeasuresSummary ||
+    'End-to-end encryption (TLS 1.3 in transit, AES-256 at rest with customer-managed keys held within the EEA).';
+  const effectiveContractualMeasures =
+    supplementaryContractualMeasures ||
+    (arrangement.subprocessorInvolvement
+      ? `Subprocessor authorization obligations under GDPR Art. 28(2) & 46 SCCs; Subprocessors: ${arrangement.subprocessorsInvolved?.join(', ') || 'Listed in DPA'}`
+      : 'Direct processor standard contractual clause commitments with government access challenge clause.');
+  const effectiveLegalAssessment =
+    destinationCountryLegalAssessment ||
+    `Assessment of destination country (${arrangement.destinationCountries?.join(', ') || primaryCountry}) legal regime and surveillance laws for transfer under ${arrangement.transferMechanismType}.`;
+
+  const tiaRef = db.collection('tenants').doc(tenantId).collection('tia_assessments').doc();
+  const tiaId = tiaRef.id;
+
+  const tiaDoc: TIA = {
+    id: tiaId,
+    tenantId,
+    code: generatedCode,
+    title: generatedTitle,
+    vendorId: resolvedVendorId,
+    destinationCountry: primaryCountry.toUpperCase(),
+    legalMechanism: mappedLegalMechanism,
+    destinationCountryLegalAssessment: effectiveLegalAssessment,
+    supplementaryTechnicalMeasures: effectiveTechnicalMeasures,
+    supplementaryContractualMeasures: effectiveContractualMeasures,
+    status: 'in_review',
+    residualRiskLevel,
+    approvedBy: null,
+    approvedAt: null,
+    transferArrangementId: arrangementId,
+    processorProfileId: arrangement.processorProfileId,
+    nextReviewDate: nextYearDate.toISOString(),
+    ownerId: ownerId || authContext.userId,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: authContext.userId,
+    updatedBy: authContext.userId,
+  };
+
+  // 4. Save TIA
+  await tiaRef.set(tiaDoc);
+
+  // 5. Update TransferArrangement with linkedTiaId
+  await arrangementRef.update({
+    linkedTiaId: tiaId,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  // 6. Update ProcessorProfile with linkedTiaId if missing
+  if (profileRef && profileSnap.exists && !profile?.linkedTiaId) {
+    await profileRef.update({
+      linkedTiaId: tiaId,
+      updatedAt: now,
+      updatedBy: authContext.userId,
+    });
+  }
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'tia_assessment',
+    entityId: tiaId,
+    action: 'create',
+    beforeSummary: null,
+    afterSummary: {
+      tiaId,
+      code: tiaDoc.code,
+      arrangementId,
+      processorProfileId: arrangement.processorProfileId,
+      destinationCountry: primaryCountry,
+      legalMechanism: mappedLegalMechanism,
+    },
+    source: 'cloud_function',
+    workflowContext: 'tia_created_from_transfer_arrangement',
+  });
+
+  return { success: true, tiaId, tia: tiaDoc };
+});
+
+export interface LinkTIAToTransferArrangementInput {
+  tenantId: string;
+  arrangementId: string;
+  tiaId: string;
+}
+
+export const linkTIAToTransferArrangement = onCall<LinkTIAToTransferArrangementInput>(async (request) => {
+  const { tenantId, arrangementId, tiaId } = request.data;
+  if (!tenantId || !arrangementId || !tiaId) {
+    throw new HttpsError('invalid-argument', 'tenantId, arrangementId, and tiaId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'privacy_manager',
+    'compliance_manager',
+  ]);
+
+  // 1. Verify TransferArrangement exists
+  const arrangementRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(arrangementId);
+  const arrangementSnap = await arrangementRef.get();
+  if (!arrangementSnap.exists) {
+    throw new HttpsError('not-found', `Transfer arrangement ${arrangementId} not found.`);
+  }
+  const arrangement = arrangementSnap.data() as TransferArrangement;
+
+  // 2. Verify TIA exists
+  const tiaRef = db.collection('tenants').doc(tenantId).collection('tia_assessments').doc(tiaId);
+  const snapTia = await tiaRef.get();
+  if (!snapTia.exists) {
+    throw new HttpsError('not-found', `TIA assessment ${tiaId} not found.`);
+  }
+
+  const now = new Date().toISOString();
+
+  // 3. Update TransferArrangement
+  await arrangementRef.update({
+    linkedTiaId: tiaId,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  // 4. Update TIA with arrangement references
+  await tiaRef.update({
+    transferArrangementId: arrangementId,
+    processorProfileId: arrangement.processorProfileId,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  // 5. Update ProcessorProfile if applicable
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(arrangement.processorProfileId);
+  const profileSnap = await profileRef.get();
+  if (profileSnap.exists) {
+    await profileRef.update({
+      linkedTiaId: tiaId,
+      updatedAt: now,
+      updatedBy: authContext.userId,
+    });
+  }
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'transfer_arrangement',
+    entityId: arrangementId,
+    action: 'link',
+    beforeSummary: { previousLinkedTiaId: arrangement.linkedTiaId || null },
+    afterSummary: { arrangementId, tiaId, processorProfileId: arrangement.processorProfileId },
+    source: 'cloud_function',
+    workflowContext: 'tia_linked_to_transfer_arrangement',
+  });
+
+  return { success: true, arrangementId, tiaId, linked: true };
 });
 
 // -----------------------------------------------------------------------------

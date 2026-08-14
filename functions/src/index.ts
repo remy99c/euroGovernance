@@ -78,6 +78,8 @@ export {
   transitionTenantDPIAStatus,
   listTenantDPIAs,
   createTenantTIA,
+  createTIAFromTransferArrangement,
+  linkTIAToTransferArrangement,
   transitionTenantTIAStatus,
   listTenantTIAs,
   createTenantDSR,

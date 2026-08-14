@@ -24,7 +24,8 @@ export type TransferMechanism =
   | 'adequacy_decision'
   | 'standard_contractual_clauses'
   | 'binding_corporate_rules'
-  | 'derogation_art49';
+  | 'derogation_art49'
+  | 'other';
 
 export type BreachSeverity = 'low' | 'medium' | 'high' | 'critical';
 export type BreachStatus =
@@ -116,6 +117,9 @@ export interface TIA extends BaseEntity {
   residualRiskLevel: 'low' | 'medium' | 'high';
   approvedBy: string | null;
   approvedAt: string | null;
+  transferArrangementId?: string | null;
+  processorProfileId?: string | null;
+  nextReviewDate?: string | null;
 }
 
 /**

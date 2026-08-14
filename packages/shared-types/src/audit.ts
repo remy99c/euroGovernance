@@ -6,6 +6,7 @@ export type AuditActionType =
   | 'delete'
   | 'approve'
   | 'reject'
+  | 'link'
   | 'status_transition'
   | 'export_generated'
   | 'permission_assigned'
