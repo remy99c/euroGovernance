@@ -31,6 +31,22 @@ export {
   listTenantPolicies,
 } from './handlers/policies.js';
 
+// Risks, Issues & Tasks Handlers
+export {
+  createTenantRisk,
+  updateTenantRisk,
+  deleteTenantRisk,
+  listTenantRisks,
+  createTenantIssue,
+  updateTenantIssue,
+  deleteTenantIssue,
+  listTenantIssues,
+  createTenantTask,
+  updateTenantTask,
+  deleteTenantTask,
+  listTenantTasks,
+} from './handlers/risks.js';
+
 // Evidence Repository Handlers
 export {
   createEvidence,
