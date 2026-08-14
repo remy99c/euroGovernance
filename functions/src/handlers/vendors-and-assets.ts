@@ -7,6 +7,13 @@ import {
   VendorRiskTier,
   SystemAsset,
   SystemCriticality,
+  ProcessorProfile,
+  ProcessorRole,
+  ProcessorCriticality,
+  ProcessorReviewCadence,
+  ProcessorStatus,
+  validateProcessorProfile,
+  computeNextReviewDate,
 } from '@eurogovernance/shared-types';
 
 export interface CreateVendorInput {
@@ -459,4 +466,376 @@ export const listTenantSystemAssets = onCall<ListSystemAssetsInput>(async (reque
   const assets: SystemAsset[] = snap.docs.map((d) => d.data() as SystemAsset);
 
   return { success: true, count: assets.length, assets };
+});
+
+// -----------------------------------------------------------------------------
+// 3. PROCESSOR PROFILES (PRIVACY & DATA-PROCESSING OVERLAY)
+// -----------------------------------------------------------------------------
+
+export interface CreateProcessorProfileInput {
+  tenantId: string;
+  vendorId: string;
+  processorRole: ProcessorRole;
+  serviceDescription: string;
+  dataCategories: string[];
+  dataSubjects: string[];
+  isSpecialCategoryData: boolean;
+  specialCategoryTypes?: string[] | null;
+  jurisdictions: string[];
+  linkedSystemAssetIds?: string[];
+  criticality: ProcessorCriticality;
+  ownerUserId: string;
+  reviewCadence: ProcessorReviewCadence;
+  lastReviewDate?: string | null;
+  status?: ProcessorStatus;
+  notes?: string | null;
+  dpaSigned?: boolean;
+  dpaDate?: string | null;
+  linkedDpaEvidenceId?: string | null;
+  linkedTiaId?: string | null;
+  linkedRopaIds?: string[];
+  article28Checklist?: {
+    writtenInstructionsMandate: boolean;
+    confidentialityDuty: boolean;
+    securityMeasuresTOMs: boolean;
+    subprocessorAuthorization: boolean;
+    dataSubjectRightsAssistance: boolean;
+    breachAssistance: boolean;
+    dataReturnOrDeletion: boolean;
+    auditInspectionRights: boolean;
+  } | null;
+}
+
+export interface UpdateProcessorProfileInput {
+  tenantId: string;
+  profileId: string;
+  processorRole?: ProcessorRole;
+  serviceDescription?: string;
+  dataCategories?: string[];
+  dataSubjects?: string[];
+  isSpecialCategoryData?: boolean;
+  specialCategoryTypes?: string[] | null;
+  jurisdictions?: string[];
+  linkedSystemAssetIds?: string[];
+  criticality?: ProcessorCriticality;
+  ownerUserId?: string;
+  reviewCadence?: ProcessorReviewCadence;
+  lastReviewDate?: string | null;
+  nextReviewDate?: string | null;
+  status?: ProcessorStatus;
+  notes?: string | null;
+  dpaSigned?: boolean;
+  dpaDate?: string | null;
+  linkedDpaEvidenceId?: string | null;
+  linkedTiaId?: string | null;
+  linkedRopaIds?: string[];
+  article28Checklist?: {
+    writtenInstructionsMandate: boolean;
+    confidentialityDuty: boolean;
+    securityMeasuresTOMs: boolean;
+    subprocessorAuthorization: boolean;
+    dataSubjectRightsAssistance: boolean;
+    breachAssistance: boolean;
+    dataReturnOrDeletion: boolean;
+    auditInspectionRights: boolean;
+  } | null;
+}
+
+export interface DeleteProcessorProfileInput {
+  tenantId: string;
+  profileId: string;
+}
+
+export interface ListProcessorProfilesInput {
+  tenantId: string;
+  vendorId?: string;
+  processorRole?: ProcessorRole;
+  criticality?: ProcessorCriticality;
+  status?: ProcessorStatus;
+  isSpecialCategoryData?: boolean;
+}
+
+export const createTenantProcessorProfile = onCall<CreateProcessorProfileInput>(async (request) => {
+  const {
+    tenantId,
+    vendorId,
+    processorRole,
+    serviceDescription,
+    dataCategories,
+    dataSubjects,
+    isSpecialCategoryData = false,
+    specialCategoryTypes = null,
+    jurisdictions,
+    linkedSystemAssetIds = [],
+    criticality,
+    ownerUserId,
+    reviewCadence,
+    lastReviewDate = null,
+    status = 'active',
+    notes = null,
+    dpaSigned = false,
+    dpaDate = null,
+    linkedDpaEvidenceId = null,
+    linkedTiaId = null,
+    linkedRopaIds = [],
+    article28Checklist = null,
+  } = request.data;
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'privacy_manager',
+    'security_manager',
+  ]);
+
+  // 1. Verify Vendor exists in the tenant
+  const vendorRef = db.collection('tenants').doc(tenantId).collection('vendors').doc(vendorId);
+  const vendorSnap = await vendorRef.get();
+  if (!vendorSnap.exists) {
+    throw new HttpsError('not-found', `Vendor with ID ${vendorId} does not exist in tenant.`);
+  }
+
+  // 2. Compute Next Review Date
+  const now = new Date().toISOString();
+  let computedNextReview: string | null = null;
+  if (lastReviewDate) {
+    computedNextReview = computeNextReviewDate(lastReviewDate, reviewCadence);
+  } else {
+    computedNextReview = computeNextReviewDate(now, reviewCadence);
+  }
+
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc();
+  const profileId = profileRef.id;
+
+  const payload: ProcessorProfile = {
+    id: profileId,
+    tenantId,
+    vendorId,
+    processorRole,
+    serviceDescription,
+    dataCategories,
+    dataSubjects,
+    isSpecialCategoryData,
+    specialCategoryTypes,
+    jurisdictions,
+    linkedSystemAssetIds,
+    criticality,
+    ownerUserId: ownerUserId || authContext.userId,
+    reviewCadence,
+    lastReviewDate: lastReviewDate || now,
+    nextReviewDate: computedNextReview,
+    status,
+    notes,
+    article28Checklist,
+    dpaSigned,
+    dpaDate,
+    linkedDpaEvidenceId,
+    linkedTiaId,
+    linkedRopaIds,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: authContext.userId,
+    updatedBy: authContext.userId,
+    ownerId: ownerUserId || authContext.userId,
+  };
+
+  const validation = validateProcessorProfile(payload);
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', `Validation failed: ${validation.errors.join('; ')}`);
+  }
+
+  await profileRef.set(payload);
+
+  // 3. Update master Vendor to reflect active processor profile
+  await vendorRef.update({
+    hasProcessorProfile: true,
+    activeProcessorProfileId: profileId,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'processor_profile',
+    entityId: profileId,
+    action: 'create',
+    beforeSummary: null,
+    afterSummary: { vendorId, processorRole, criticality, status },
+    source: 'cloud_function',
+    workflowContext: 'processor_profile_creation',
+  });
+
+  return { success: true, profileId, processorProfile: payload };
+});
+
+export const updateTenantProcessorProfile = onCall<UpdateProcessorProfileInput>(async (request) => {
+  const {
+    tenantId,
+    profileId,
+    processorRole,
+    serviceDescription,
+    dataCategories,
+    dataSubjects,
+    isSpecialCategoryData,
+    specialCategoryTypes,
+    jurisdictions,
+    linkedSystemAssetIds,
+    criticality,
+    ownerUserId,
+    reviewCadence,
+    lastReviewDate,
+    nextReviewDate,
+    status,
+    notes,
+    dpaSigned,
+    dpaDate,
+    linkedDpaEvidenceId,
+    linkedTiaId,
+    linkedRopaIds,
+    article28Checklist,
+  } = request.data;
+
+  if (!tenantId || !profileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and profileId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'privacy_manager',
+    'security_manager',
+  ]);
+
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profileId);
+  const snap = await profileRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Processor profile ${profileId} not found.`);
+  }
+
+  const prev = snap.data() as ProcessorProfile;
+  const now = new Date().toISOString();
+
+  const updates: Partial<ProcessorProfile> = {
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  };
+
+  if (processorRole !== undefined) updates.processorRole = processorRole;
+  if (serviceDescription !== undefined) updates.serviceDescription = serviceDescription;
+  if (dataCategories !== undefined) updates.dataCategories = dataCategories;
+  if (dataSubjects !== undefined) updates.dataSubjects = dataSubjects;
+  if (isSpecialCategoryData !== undefined) updates.isSpecialCategoryData = isSpecialCategoryData;
+  if (specialCategoryTypes !== undefined) updates.specialCategoryTypes = specialCategoryTypes;
+  if (jurisdictions !== undefined) updates.jurisdictions = jurisdictions;
+  if (linkedSystemAssetIds !== undefined) updates.linkedSystemAssetIds = linkedSystemAssetIds;
+  if (criticality !== undefined) updates.criticality = criticality;
+  if (ownerUserId !== undefined) updates.ownerUserId = ownerUserId;
+  if (reviewCadence !== undefined) updates.reviewCadence = reviewCadence;
+  if (lastReviewDate !== undefined) updates.lastReviewDate = lastReviewDate;
+  if (nextReviewDate !== undefined) {
+    updates.nextReviewDate = nextReviewDate;
+  } else if (lastReviewDate && reviewCadence) {
+    updates.nextReviewDate = computeNextReviewDate(lastReviewDate, reviewCadence);
+  }
+  if (status !== undefined) updates.status = status;
+  if (notes !== undefined) updates.notes = notes;
+  if (dpaSigned !== undefined) updates.dpaSigned = dpaSigned;
+  if (dpaDate !== undefined) updates.dpaDate = dpaDate;
+  if (linkedDpaEvidenceId !== undefined) updates.linkedDpaEvidenceId = linkedDpaEvidenceId;
+  if (linkedTiaId !== undefined) updates.linkedTiaId = linkedTiaId;
+  if (linkedRopaIds !== undefined) updates.linkedRopaIds = linkedRopaIds;
+  if (article28Checklist !== undefined) updates.article28Checklist = article28Checklist;
+
+  const merged = { ...prev, ...updates };
+  const validation = validateProcessorProfile(merged);
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', `Validation failed: ${validation.errors.join('; ')}`);
+  }
+
+  await profileRef.update(updates);
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'processor_profile',
+    entityId: profileId,
+    action: 'update',
+    beforeSummary: { status: prev.status, criticality: prev.criticality },
+    afterSummary: updates as Record<string, unknown>,
+    source: 'cloud_function',
+    workflowContext: 'processor_profile_update',
+  });
+
+  return { success: true, profileId, updatedFields: updates };
+});
+
+export const deleteTenantProcessorProfile = onCall<DeleteProcessorProfileInput>(async (request) => {
+  const { tenantId, profileId } = request.data;
+  if (!tenantId || !profileId) {
+    throw new HttpsError('invalid-argument', 'tenantId and profileId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
+
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(profileId);
+  const snap = await profileRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'Processor profile not found.');
+  }
+
+  const prev = snap.data() as ProcessorProfile;
+  await profileRef.delete();
+
+  // If vendor references this profile, clear it
+  const vendorRef = db.collection('tenants').doc(tenantId).collection('vendors').doc(prev.vendorId);
+  const vendorSnap = await vendorRef.get();
+  if (vendorSnap.exists && vendorSnap.data()?.activeProcessorProfileId === profileId) {
+    await vendorRef.update({
+      hasProcessorProfile: false,
+      activeProcessorProfileId: null,
+      updatedAt: new Date().toISOString(),
+      updatedBy: authContext.userId,
+    });
+  }
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'processor_profile',
+    entityId: profileId,
+    action: 'delete',
+    beforeSummary: { vendorId: prev.vendorId, processorRole: prev.processorRole },
+    source: 'cloud_function',
+    workflowContext: 'processor_profile_deletion',
+  });
+
+  return { success: true, profileId, deleted: true };
+});
+
+export const listTenantProcessorProfiles = onCall<ListProcessorProfilesInput>(async (request) => {
+  const { tenantId, vendorId, processorRole, criticality, status, isSpecialCategoryData } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('processor_profiles');
+  if (vendorId) query = query.where('vendorId', '==', vendorId);
+  if (processorRole) query = query.where('processorRole', '==', processorRole);
+  if (criticality) query = query.where('criticality', '==', criticality);
+  if (status) query = query.where('status', '==', status);
+  if (isSpecialCategoryData !== undefined) query = query.where('isSpecialCategoryData', '==', isSpecialCategoryData);
+
+  const snap = await query.get();
+  const profiles: ProcessorProfile[] = snap.docs.map((d) => d.data() as ProcessorProfile);
+
+  return { success: true, count: profiles.length, profiles };
 });

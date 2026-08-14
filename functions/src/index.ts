@@ -47,12 +47,16 @@ export {
   listTenantTasks,
 } from './handlers/risks.js';
 
-// Vendor & System Asset Handlers
+// Vendor, Processor & System Asset Handlers
 export {
   createTenantVendor,
   updateTenantVendor,
   deleteTenantVendor,
   listTenantVendors,
+  createTenantProcessorProfile,
+  updateTenantProcessorProfile,
+  deleteTenantProcessorProfile,
+  listTenantProcessorProfiles,
   createTenantSystemAsset,
   updateTenantSystemAsset,
   deleteTenantSystemAsset,

@@ -277,8 +277,11 @@ export interface Task extends BaseEntity {
   completedAt: string | null;
 }
 
+export type VendorCommercialStatus = 'evaluating' | 'active' | 'contract_pending' | 'terminated';
+
 /**
  * Vendor Register (/tenants/{tenantId}/vendors/{vendorId})
+ * Master commercial third-party entity.
  */
 export interface Vendor extends BaseEntity {
   name: string;
@@ -293,6 +296,11 @@ export interface Vendor extends BaseEntity {
   countryOfIncorporation: string;
   dataHostingRegions: string[];
   subprocessorsListed: string[];
+  hasProcessorProfile?: boolean;
+  activeProcessorProfileId?: string | null;
+  commercialStatus?: VendorCommercialStatus;
+  businessOwnerUserId?: string | null;
+  annualSpendEur?: number | null;
 }
 
 /**

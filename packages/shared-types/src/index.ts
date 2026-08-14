@@ -8,3 +8,4 @@ export * from './iso.js';
 export * from './audit.js';
 export * from './scoping-and-harmonization.js';
 export * from './canonical-master-library.js';
+export * from './processors.js';
