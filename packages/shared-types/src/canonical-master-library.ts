@@ -970,6 +970,7 @@ export const CANONICAL_REQUIREMENT_CONTROL_MAPPINGS: MasterRequirementControlMap
 export const CANONICAL_CROSS_WALK_MAPPINGS: CanonicalControlMapping[] = [
   {
     id: 'map_cross_encryption_gdpr_iso',
+    canonicalGroupKey: 'group_cryptography_rest_transit',
     harmonizedDomain: 'cryptography',
     title: 'Production Data Encryption at Rest & in Transit',
     description: 'Enforce AES-256 at rest and TLS 1.3 in transit across all databases, file repositories, and external APIs.',
@@ -981,12 +982,15 @@ export const CANONICAL_CROSS_WALK_MAPPINGS: CanonicalControlMapping[] = [
     targetMasterControlId: 'ctl_master_iso_a824',
     mappingType: 'equivalent',
     confidence: 'high',
+    allowAutomaticMerge: true,
+    coverageRatio: 1.0,
     mappingRationale: 'Both GDPR Art. 32 and ISO 27001 A.8.24 mandate robust cryptographic protection and key lifecycle management.',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
   },
   {
     id: 'map_cross_incident_gdpr_iso_ai',
+    canonicalGroupKey: 'group_incident_mgmt',
     harmonizedDomain: 'incident_management',
     title: 'Statutory Incident Notification & Escalation Protocol',
     description: 'Establish unified triage, containment, and regulatory reporting for cybersecurity incidents, personal data breaches, and severe AI malfunctions.',
@@ -998,12 +1002,15 @@ export const CANONICAL_CROSS_WALK_MAPPINGS: CanonicalControlMapping[] = [
     targetMasterControlId: 'ctl_master_iso_a524',
     mappingType: 'superset',
     confidence: 'high',
+    allowAutomaticMerge: true,
+    coverageRatio: 1.0,
     mappingRationale: 'ISO 27001 Annex A.5.24 provides the foundational incident management framework that satisfies GDPR Art. 33 and EU AI Act Art. 73 notification timelines.',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
   },
   {
     id: 'map_cross_risk_management_ai_iso',
+    canonicalGroupKey: 'group_risk_management',
     harmonizedDomain: 'risk_management',
     title: 'Continuous System Risk Management Framework',
     description: 'Systematically identify, evaluate, and mitigate risks across software, infrastructure, and deployed artificial intelligence.',
@@ -1015,6 +1022,8 @@ export const CANONICAL_CROSS_WALK_MAPPINGS: CanonicalControlMapping[] = [
     targetMasterControlId: 'ctl_master_iso_scope',
     mappingType: 'intersecting',
     confidence: 'high',
+    allowAutomaticMerge: false, // Strict: do not auto-merge intersecting risk controls without tenant-specific configuration
+    coverageRatio: 0.7,
     mappingRationale: 'Integrates ISO 27005 / ISO 42001 risk methodologies to satisfy EU AI Act Article 9 lifecycle requirements.',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',

@@ -208,4 +208,6 @@ export {
   instantiateTenantFrameworkControls,
   listTenantRequirementInstances,
   listTenantControlInstances,
+  getTenantControlCoverageReport,
+  listTenantControlMappings,
 } from './handlers/applicability.js';

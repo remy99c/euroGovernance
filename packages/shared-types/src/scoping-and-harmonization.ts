@@ -1,6 +1,7 @@
 import { BaseEntity } from './core.js';
 import {
   ControlImplementationStatus,
+  Framework,
   Requirement,
   MasterControl,
   MasterRequirementControlMapping,
@@ -345,7 +346,8 @@ export interface ApplicabilityRule {
  */
 export interface CanonicalControlMapping {
   id: string; // e.g. 'map_enc_gdpr_iso27001_ai_act'
-  harmonizedDomain: string; // e.g. 'cryptography', 'incident_management', 'human_oversight'
+  canonicalGroupKey?: string;
+  harmonizedDomain: string; // e.g. 'cryptography', 'incident_management', 'risk_management'
   title: string;
   description: string;
   sourceFrameworkId: string;
@@ -356,9 +358,38 @@ export interface CanonicalControlMapping {
   targetMasterControlId: string | null;
   mappingType: ControlMappingType;
   confidence: ControlMappingConfidence;
+  allowAutomaticMerge?: boolean; // Explicit flag: only merge when true
+  coverageRatio?: number; // 0.0 to 1.0
   mappingRationale: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ControlObligationCoverage {
+  frameworkId: string;
+  frameworkTitle: string;
+  requirementId: string;
+  sectionCode: string;
+  requirementTitle: string;
+  mappingType: ControlMappingType;
+  coverageRatio: number;
+  isDirect: boolean;
+  statutoryRationale: string;
+  auditExplanation: string;
+}
+
+export interface ControlHarmonizedCoverage {
+  controlId: string;
+  controlCode: string;
+  controlTitle: string;
+  domain: string;
+  status: ControlImplementationStatus;
+  healthScore: number;
+  isHarmonized: boolean;
+  totalObligationsSatisfied: number;
+  frameworksCovered: string[];
+  obligations: ControlObligationCoverage[];
+  coverageSummaryExplanation: string;
 }
 
 // =============================================================================
@@ -551,8 +582,12 @@ export interface TenantControlMapping extends BaseEntity {
   controlId: string;
   frameworkId: string;
   requirementId: string;
+  sectionCode?: string;
+  requirementTitle?: string;
+  canonicalMappingId?: string | null;
   mappingType: ControlMappingType;
   coverageRatio: number; // 0.0 to 1.0 (1.0 = fully satisfies requirement)
+  isDirectRequirement?: boolean;
   mappingRationale: string;
   compensatingControlsJustification: string | null;
   verifiedBy: string | null;
@@ -1330,6 +1365,7 @@ export interface InstantiationInput {
 export interface InstantiationResult {
   requirementInstances: TenantRequirementInstance[];
   controlInstances: TenantControlInstance[];
+  controlMappings: TenantControlMapping[];
   createdRequirementsCount: number;
   updatedRequirementsCount: number;
   createdControlsCount: number;
@@ -1379,6 +1415,7 @@ export function instantiateTenantGRC(input: InstantiationInput): InstantiationRe
   const now = new Date().toISOString();
   const reqMap = new Map<string, TenantRequirementInstance>();
   const ctrlMap = new Map<string, TenantControlInstance>();
+  const controlMappings: TenantControlMapping[] = [];
 
   if (input.existingRequirementInstances) {
     for (const req of input.existingRequirementInstances) {
@@ -1443,18 +1480,34 @@ export function instantiateTenantGRC(input: InstantiationInput): InstantiationRe
 
       const canonicalIds = canonicalMapByMasterControl.get(mcId) || (masterControl.canonicalControlMappingKey ? [masterControl.canonicalControlMappingKey] : []);
 
-      // Check if control already instantiated (by masterControlId, canonicalMappingIds, or code)
+      // Check if control already instantiated with explicit harmonization merge permission
       let existingControl: TenantControlInstance | undefined;
+      let matchedCanonicalMapping: CanonicalControlMapping | undefined;
+
       for (const candidate of ctrlMap.values()) {
-        if (
-          candidate.masterControlId === masterControl.id ||
-          (canonicalIds.length > 0 && candidate.canonicalMappingIds.some((cid) => canonicalIds.includes(cid))) ||
-          candidate.code.toUpperCase() === masterControl.code.toUpperCase()
-        ) {
+        if (candidate.masterControlId === masterControl.id) {
           existingControl = candidate;
           break;
         }
+
+        // Check canonical cross-walk mapping allowing automatic merge
+        if (input.canonicalControlMappings && candidate.masterControlId) {
+          const mapping = input.canonicalControlMappings.find(
+            (ccm) =>
+              ccm.allowAutomaticMerge !== false &&
+              ['equivalent', 'superset'].includes(ccm.mappingType) &&
+              ((ccm.sourceMasterControlId === candidate.masterControlId && ccm.targetMasterControlId === masterControl.id) ||
+                (ccm.targetMasterControlId === candidate.masterControlId && ccm.sourceMasterControlId === masterControl.id))
+          );
+          if (mapping) {
+            existingControl = candidate;
+            matchedCanonicalMapping = mapping;
+            break;
+          }
+        }
       }
+
+      let assignedControlId: string;
 
       if (existingControl) {
         // Update existing control (non-duplication / harmonization)
@@ -1488,6 +1541,7 @@ export function instantiateTenantGRC(input: InstantiationInput): InstantiationRe
           existingControl.updatedBy = input.defaultOwnerId;
           updatedControlsCount++;
         }
+        assignedControlId = existingControl.id;
         satisfyingControlIds.push(existingControl.id);
       } else {
         // Instantiate new control
@@ -1527,9 +1581,38 @@ export function instantiateTenantGRC(input: InstantiationInput): InstantiationRe
         };
 
         ctrlMap.set(newControl.id, newControl);
+        assignedControlId = newControl.id;
         satisfyingControlIds.push(newControl.id);
         createdControlsCount++;
       }
+
+      // Record TenantControlMapping link
+      const mappingId = `tcm_${assignedControlId}_${req.id}`;
+      controlMappings.push({
+        id: mappingId,
+        tenantId: input.tenantId,
+        ownerId: input.defaultOwnerId,
+        controlId: assignedControlId,
+        frameworkId: req.frameworkId,
+        requirementId: req.id,
+        sectionCode: req.sectionCode,
+        requirementTitle: req.title,
+        canonicalMappingId: matchedCanonicalMapping?.id || null,
+        mappingType: matchedCanonicalMapping?.mappingType || 'equivalent',
+        coverageRatio: matchedCanonicalMapping?.coverageRatio ?? 1.0,
+        isDirectRequirement: matchedCanonicalMapping ? false : true,
+        status: 'active',
+        mappingRationale:
+          matchedCanonicalMapping?.mappingRationale ||
+          `Control satisfies ${req.frameworkId.toUpperCase()} ${req.sectionCode} (${req.title}).`,
+        compensatingControlsJustification: null,
+        verifiedBy: null,
+        verifiedAt: null,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: input.defaultOwnerId,
+        updatedBy: input.defaultOwnerId,
+      });
     }
 
     // Update or create TenantRequirementInstance
@@ -1594,10 +1677,91 @@ export function instantiateTenantGRC(input: InstantiationInput): InstantiationRe
   return {
     requirementInstances,
     controlInstances,
+    controlMappings,
     createdRequirementsCount,
     updatedRequirementsCount,
     createdControlsCount,
     updatedControlsCount,
     harmonizedControlsCount,
+  };
+}
+
+/**
+ * Builds an explainable "One Control, Many Obligations" coverage report for users and auditors.
+ */
+export function buildControlCoverageSummary(
+  control: TenantControlInstance,
+  allRequirements: Requirement[],
+  canonicalMappings?: CanonicalControlMapping[],
+  frameworks?: Framework[]
+): ControlHarmonizedCoverage {
+  const reqMap = new Map<string, Requirement>();
+  for (const r of allRequirements) {
+    reqMap.set(r.id, r);
+  }
+
+  const frameworkTitleMap = new Map<string, string>();
+  if (frameworks) {
+    for (const f of frameworks) {
+      frameworkTitleMap.set(f.id, f.name);
+    }
+  }
+
+  const obligations: ControlObligationCoverage[] = [];
+
+  for (const reqId of control.requirementIds) {
+    const req = reqMap.get(reqId);
+    if (!req) continue;
+
+    const fwTitle = frameworkTitleMap.get(req.frameworkId) || req.frameworkId.toUpperCase();
+    const isDirect = control.masterControlId ? true : false;
+
+    // Find if canonical mapping explains this relationship
+    const mapping = canonicalMappings?.find(
+      (m) =>
+        (m.sourceRequirementId === reqId || m.targetRequirementId === reqId) &&
+        (m.sourceMasterControlId === control.masterControlId || m.targetMasterControlId === control.masterControlId)
+    );
+
+    const mappingType: ControlMappingType = mapping?.mappingType || 'equivalent';
+    const coverageRatio = mapping?.coverageRatio ?? 1.0;
+    const statutoryRationale =
+      mapping?.mappingRationale || `Operational control satisfies ${fwTitle} ${req.sectionCode} (${req.title}).`;
+    const auditExplanation = `[${fwTitle} - ${req.sectionCode}] Coverage: ${(coverageRatio * 100).toFixed(
+      0
+    )}% via ${mappingType} mapping. ${statutoryRationale}`;
+
+    obligations.push({
+      frameworkId: req.frameworkId,
+      frameworkTitle: fwTitle,
+      requirementId: req.id,
+      sectionCode: req.sectionCode,
+      requirementTitle: req.title,
+      mappingType,
+      coverageRatio,
+      isDirect,
+      statutoryRationale,
+      auditExplanation,
+    });
+  }
+
+  const frameworksCovered = Array.from(new Set(obligations.map((o) => o.frameworkId)));
+  const isHarmonized = frameworksCovered.length > 1;
+  const coverageSummaryExplanation = isHarmonized
+    ? `Single harmonized control '${control.code}' simultaneously satisfies ${obligations.length} statutory obligations across ${frameworksCovered.length} adopted frameworks (${frameworksCovered.join(', ')}).`
+    : `Control '${control.code}' addresses ${obligations.length} requirement(s) under ${frameworksCovered.join(', ')}.`;
+
+  return {
+    controlId: control.id,
+    controlCode: control.code,
+    controlTitle: control.title,
+    domain: control.domain,
+    status: control.status,
+    healthScore: control.healthScore,
+    isHarmonized,
+    totalObligationsSatisfied: obligations.length,
+    frameworksCovered,
+    obligations,
+    coverageSummaryExplanation,
   };
 }

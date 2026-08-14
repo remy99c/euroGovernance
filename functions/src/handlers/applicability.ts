@@ -13,6 +13,7 @@ import {
   evaluateFrameworkApplicabilityRules,
   validateApplicabilityRule,
   instantiateTenantGRC,
+  buildControlCoverageSummary,
   CANONICAL_APPLICABILITY_RULES,
   CANONICAL_MASTER_DATA,
 } from '@eurogovernance/shared-types';
@@ -276,7 +277,7 @@ export const instantiateTenantFrameworkControls = onCall<InstantiateTenantContro
   // 6. Batch commit requirement instances & control instances
   const batch = db.batch();
 
-  for (const reqInst of result.requirementInstances) {
+    for (const reqInst of result.requirementInstances) {
     const docRef = db.collection('tenants').doc(tenantId).collection('requirement_instances').doc(reqInst.id);
     batch.set(docRef, reqInst, { merge: true });
   }
@@ -284,6 +285,11 @@ export const instantiateTenantFrameworkControls = onCall<InstantiateTenantContro
   for (const ctrlInst of result.controlInstances) {
     const docRef = db.collection('tenants').doc(tenantId).collection('controls').doc(ctrlInst.id);
     batch.set(docRef, ctrlInst, { merge: true });
+  }
+
+  for (const mapping of result.controlMappings) {
+    const docRef = db.collection('tenants').doc(tenantId).collection('control_mappings').doc(mapping.id);
+    batch.set(docRef, mapping, { merge: true });
   }
 
   await batch.commit();
@@ -364,4 +370,74 @@ export const listTenantControlInstances = onCall(async (request) => {
   const controls = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   return { controls };
+});
+
+/**
+ * 7. Get Tenant Control Harmonized Coverage Report ("One Control, Many Obligations")
+ */
+export const getTenantControlCoverageReport = onCall(async (request) => {
+  const { tenantId, controlId } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+  if (!controlId || typeof controlId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing controlId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const ctrlSnap = await db.collection('tenants').doc(tenantId).collection('controls').doc(controlId).get();
+  if (!ctrlSnap.exists) {
+    throw new HttpsError('not-found', `Control '${controlId}' not found.`);
+  }
+
+  const control = { id: ctrlSnap.id, ...ctrlSnap.data() } as TenantControlInstance;
+
+  // Load requirements & canonical mappings
+  const reqSnap = await db.collection('requirements').get();
+  const requirements = reqSnap.empty
+    ? CANONICAL_MASTER_DATA.requirements
+    : reqSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  const mappingSnap = await db.collection('control_mappings').get();
+  const canonicalMappings = mappingSnap.empty
+    ? CANONICAL_MASTER_DATA.canonicalControlMappings
+    : mappingSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  const fwSnap = await db.collection('frameworks').get();
+  const frameworks = fwSnap.empty
+    ? CANONICAL_MASTER_DATA.frameworks
+    : fwSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
+
+  const coverage = buildControlCoverageSummary(control, requirements, canonicalMappings, frameworks);
+
+  return { coverage };
+});
+
+/**
+ * 8. List Tenant Control Mappings
+ */
+export const listTenantControlMappings = onCall(async (request) => {
+  const { tenantId, controlId, frameworkId, requirementId } = request.data || {};
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let q = db.collection('tenants').doc(tenantId).collection('control_mappings') as FirebaseFirestore.Query;
+  if (controlId) {
+    q = q.where('controlId', '==', controlId);
+  }
+  if (frameworkId) {
+    q = q.where('frameworkId', '==', frameworkId);
+  }
+  if (requirementId) {
+    q = q.where('requirementId', '==', requirementId);
+  }
+
+  const snap = await q.get();
+  const mappings = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return { mappings };
 });
