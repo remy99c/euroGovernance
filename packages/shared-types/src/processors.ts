@@ -217,3 +217,199 @@ export function computeNextReviewDate(lastReviewDateISO: string, cadence: Proces
 
   return date.toISOString();
 }
+
+// -----------------------------------------------------------------------------
+// TRANSFER ARRANGEMENTS & CROSS-BORDER DATA FLOWS
+// -----------------------------------------------------------------------------
+
+export type TransferScopeType =
+  | 'hosting'
+  | 'support_access'
+  | 'onward_transfer'
+  | 'subprocessing'
+  | 'analytics'
+  | 'backup'
+  | 'maintenance'
+  | 'other';
+
+export const VALID_TRANSFER_SCOPES: readonly TransferScopeType[] = [
+  'hosting',
+  'support_access',
+  'onward_transfer',
+  'subprocessing',
+  'analytics',
+  'backup',
+  'maintenance',
+  'other',
+] as const;
+
+export type TransferMechanismType =
+  | 'standard_contractual_clauses'
+  | 'adequacy_decision'
+  | 'derogation_art49'
+  | 'binding_corporate_rules'
+  | 'intra_group_agreement'
+  | 'code_of_conduct_or_certification'
+  | 'no_mechanism_selected'
+  | 'other';
+
+export const VALID_TRANSFER_MECHANISM_TYPES: readonly TransferMechanismType[] = [
+  'standard_contractual_clauses',
+  'adequacy_decision',
+  'derogation_art49',
+  'binding_corporate_rules',
+  'intra_group_agreement',
+  'code_of_conduct_or_certification',
+  'no_mechanism_selected',
+  'other',
+] as const;
+
+export type TransferMechanismStatus =
+  | 'active_valid'
+  | 'pending_execution'
+  | 'under_review'
+  | 'restricted'
+  | 'expired'
+  | 'superseded'
+  | 'revoked';
+
+export const VALID_TRANSFER_MECHANISM_STATUSES: readonly TransferMechanismStatus[] = [
+  'active_valid',
+  'pending_execution',
+  'under_review',
+  'restricted',
+  'expired',
+  'superseded',
+  'revoked',
+] as const;
+
+export type EEATransferStatus =
+  | 'within_eea'
+  | 'third_country_adequate'
+  | 'third_country_non_adequate'
+  | 'mixed';
+
+export const VALID_EEA_TRANSFER_STATUSES: readonly EEATransferStatus[] = [
+  'within_eea',
+  'third_country_adequate',
+  'third_country_non_adequate',
+  'mixed',
+] as const;
+
+/**
+ * Structured Transfer Arrangement (/tenants/{tenantId}/transfer_arrangements/{arrangementId})
+ * Models international cross-border data transfers and legal mechanisms linked to a ProcessorProfile.
+ */
+export interface TransferArrangement extends BaseEntity {
+  processorProfileId: string; // Foreign Key to /tenants/{tenantId}/processor_profiles/{profileId}
+  vendorId?: string; // Foreign Key to /tenants/{tenantId}/vendors/{vendorId} for direct correlation
+  tenantId: string;
+  name: string; // e.g. 'US Customer Support Remote Access Transfer'
+  restrictedTransfer: boolean; // True if data leaves the EU/EEA to a non-EEA third country
+  destinationCountries: string[]; // e.g. ['US', 'IN', 'GB', 'JP']
+  eeaStatus: EEATransferStatus; // Status of destination territories under GDPR Chapter V
+  transferScopes: TransferScopeType[]; // e.g. ['hosting', 'support_access']
+  transferScopeDescription?: string | null;
+  transferMechanismType: TransferMechanismType; // e.g. 'standard_contractual_clauses', 'adequacy_decision'
+  transferMechanismStatus: TransferMechanismStatus; // e.g. 'active_valid', 'pending_execution'
+  effectiveDate: string; // ISO 8601 UTC
+  reviewDueDate: string | null; // ISO 8601 UTC
+  supplementaryMeasuresSummary: string | null; // Technical & organizational safeguards (e.g. EU key custody)
+  subprocessorInvolvement: boolean;
+  subprocessorsInvolved?: string[]; // Names or IDs of third-country subprocessors
+  linkedTiaId: string | null; // Foreign Key to /tenants/{tenantId}/tia_assessments/{tiaId}
+  linkedEvidenceIds: string[]; // Foreign Keys to Evidence documents (e.g. executed SCC PDF, DPF cert)
+  rationale: string | null;
+  notes: string | null;
+}
+
+export interface ValidateTransferArrangementResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/**
+ * Validates a TransferArrangement payload for data consistency and legal mechanism guardrails.
+ */
+export function validateTransferArrangement(input: unknown): ValidateTransferArrangementResult {
+  const errors: string[] = [];
+
+  if (!input || typeof input !== 'object') {
+    return { valid: false, errors: ['Payload must be a non-null object.'] };
+  }
+
+  const t = input as Partial<TransferArrangement>;
+
+  // 1. Identifiers
+  if (!t.processorProfileId || typeof t.processorProfileId !== 'string' || t.processorProfileId.trim() === '') {
+    errors.push('processorProfileId is required and must reference a valid ProcessorProfile.');
+  }
+
+  if (!t.tenantId || typeof t.tenantId !== 'string' || t.tenantId.trim() === '') {
+    errors.push('tenantId is required and must be a non-empty string.');
+  }
+
+  if (!t.name || typeof t.name !== 'string' || t.name.trim().length < 3) {
+    errors.push('name is required and must be at least 3 characters long.');
+  }
+
+  // 2. Restricted Transfer & Destination Countries
+  if (typeof t.restrictedTransfer !== 'boolean') {
+    errors.push('restrictedTransfer must be a boolean.');
+  }
+
+  if (!Array.isArray(t.destinationCountries) || t.destinationCountries.length === 0 || !t.destinationCountries.every(c => typeof c === 'string' && c.trim() !== '')) {
+    errors.push('destinationCountries must be a non-empty array of country/jurisdiction codes.');
+  }
+
+  if (!t.eeaStatus || !VALID_EEA_TRANSFER_STATUSES.includes(t.eeaStatus)) {
+    errors.push(`eeaStatus must be one of: ${VALID_EEA_TRANSFER_STATUSES.join(', ')}.`);
+  }
+
+  // 3. Transfer Scopes
+  if (!Array.isArray(t.transferScopes) || t.transferScopes.length === 0 || !t.transferScopes.every(s => VALID_TRANSFER_SCOPES.includes(s))) {
+    errors.push(`transferScopes must be a non-empty array with valid scopes (${VALID_TRANSFER_SCOPES.join(', ')}).`);
+  }
+
+  // 4. Mechanism Type & Status
+  if (!t.transferMechanismType || !VALID_TRANSFER_MECHANISM_TYPES.includes(t.transferMechanismType)) {
+    errors.push(`transferMechanismType must be one of: ${VALID_TRANSFER_MECHANISM_TYPES.join(', ')}.`);
+  }
+
+  if (!t.transferMechanismStatus || !VALID_TRANSFER_MECHANISM_STATUSES.includes(t.transferMechanismStatus)) {
+    errors.push(`transferMechanismStatus must be one of: ${VALID_TRANSFER_MECHANISM_STATUSES.join(', ')}.`);
+  }
+
+  // 5. Legal Guardrail: An active restricted transfer cannot have 'no_mechanism_selected'
+  if (
+    t.restrictedTransfer === true &&
+    t.transferMechanismType === 'no_mechanism_selected' &&
+    t.transferMechanismStatus === 'active_valid'
+  ) {
+    errors.push('An active restricted cross-border transfer must have an authorized transfer mechanism selected (e.g. SCC, Adequacy Decision, BCR, or Derogation).');
+  }
+
+  // 6. Effective Date
+  if (!t.effectiveDate || typeof t.effectiveDate !== 'string' || isNaN(new Date(t.effectiveDate).getTime())) {
+    errors.push('effectiveDate must be a valid ISO date string.');
+  }
+
+  // 7. Subprocessor Consistency
+  if (typeof t.subprocessorInvolvement !== 'boolean') {
+    errors.push('subprocessorInvolvement must be a boolean.');
+  } else if (t.subprocessorInvolvement === true) {
+    if (t.subprocessorsInvolved !== undefined && !Array.isArray(t.subprocessorsInvolved)) {
+      errors.push('subprocessorsInvolved must be an array of strings when subprocessorInvolvement is true.');
+    }
+  }
+
+  // 8. Evidence Links
+  if (t.linkedEvidenceIds !== undefined && (!Array.isArray(t.linkedEvidenceIds) || !t.linkedEvidenceIds.every(id => typeof id === 'string'))) {
+    errors.push('linkedEvidenceIds must be an array of string identifiers.');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}

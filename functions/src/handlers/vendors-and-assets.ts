@@ -14,6 +14,12 @@ import {
   ProcessorStatus,
   validateProcessorProfile,
   computeNextReviewDate,
+  TransferArrangement,
+  TransferScopeType,
+  TransferMechanismType,
+  TransferMechanismStatus,
+  EEATransferStatus,
+  validateTransferArrangement,
 } from '@eurogovernance/shared-types';
 
 export interface CreateVendorInput {
@@ -838,4 +844,323 @@ export const listTenantProcessorProfiles = onCall<ListProcessorProfilesInput>(as
   const profiles: ProcessorProfile[] = snap.docs.map((d) => d.data() as ProcessorProfile);
 
   return { success: true, count: profiles.length, profiles };
+});
+
+// -----------------------------------------------------------------------------
+// 4. TRANSFER ARRANGEMENTS (CROSS-BORDER & LEGAL TRANSFER MECHANISMS)
+// -----------------------------------------------------------------------------
+
+export interface CreateTransferArrangementInput {
+  tenantId: string;
+  processorProfileId: string;
+  vendorId?: string;
+  name: string;
+  restrictedTransfer: boolean;
+  destinationCountries: string[];
+  eeaStatus: EEATransferStatus;
+  transferScopes: TransferScopeType[];
+  transferScopeDescription?: string | null;
+  transferMechanismType: TransferMechanismType;
+  transferMechanismStatus: TransferMechanismStatus;
+  effectiveDate: string;
+  reviewDueDate?: string | null;
+  supplementaryMeasuresSummary?: string | null;
+  subprocessorInvolvement?: boolean;
+  subprocessorsInvolved?: string[];
+  linkedTiaId?: string | null;
+  linkedEvidenceIds?: string[];
+  rationale?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateTransferArrangementInput {
+  tenantId: string;
+  arrangementId: string;
+  name?: string;
+  restrictedTransfer?: boolean;
+  destinationCountries?: string[];
+  eeaStatus?: EEATransferStatus;
+  transferScopes?: TransferScopeType[];
+  transferScopeDescription?: string | null;
+  transferMechanismType?: TransferMechanismType;
+  transferMechanismStatus?: TransferMechanismStatus;
+  effectiveDate?: string;
+  reviewDueDate?: string | null;
+  supplementaryMeasuresSummary?: string | null;
+  subprocessorInvolvement?: boolean;
+  subprocessorsInvolved?: string[];
+  linkedTiaId?: string | null;
+  linkedEvidenceIds?: string[];
+  rationale?: string | null;
+  notes?: string | null;
+}
+
+export interface DeleteTransferArrangementInput {
+  tenantId: string;
+  arrangementId: string;
+}
+
+export interface ListTransferArrangementsInput {
+  tenantId: string;
+  processorProfileId?: string;
+  vendorId?: string;
+  restrictedTransfer?: boolean;
+  transferMechanismType?: TransferMechanismType;
+  transferMechanismStatus?: TransferMechanismStatus;
+}
+
+export const createTenantTransferArrangement = onCall<CreateTransferArrangementInput>(async (request) => {
+  const {
+    tenantId,
+    processorProfileId,
+    vendorId,
+    name,
+    restrictedTransfer,
+    destinationCountries,
+    eeaStatus,
+    transferScopes,
+    transferScopeDescription = null,
+    transferMechanismType,
+    transferMechanismStatus,
+    effectiveDate,
+    reviewDueDate = null,
+    supplementaryMeasuresSummary = null,
+    subprocessorInvolvement = false,
+    subprocessorsInvolved = [],
+    linkedTiaId = null,
+    linkedEvidenceIds = [],
+    rationale = null,
+    notes = null,
+  } = request.data;
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'privacy_manager',
+    'security_manager',
+  ]);
+
+  // 1. Verify ProcessorProfile exists in tenant
+  const profileRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+  const profileSnap = await profileRef.get();
+  if (!profileSnap.exists) {
+    throw new HttpsError('not-found', `Processor profile with ID ${processorProfileId} does not exist in tenant.`);
+  }
+
+  const profileData = profileSnap.data() as ProcessorProfile;
+  const resolvedVendorId = vendorId || profileData.vendorId;
+
+  const arrangementRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc();
+  const arrangementId = arrangementRef.id;
+  const now = new Date().toISOString();
+
+  const payload: TransferArrangement = {
+    id: arrangementId,
+    tenantId,
+    processorProfileId,
+    vendorId: resolvedVendorId,
+    name,
+    restrictedTransfer,
+    destinationCountries,
+    eeaStatus,
+    transferScopes,
+    transferScopeDescription,
+    transferMechanismType,
+    transferMechanismStatus,
+    effectiveDate,
+    reviewDueDate,
+    supplementaryMeasuresSummary,
+    subprocessorInvolvement,
+    subprocessorsInvolved,
+    linkedTiaId,
+    linkedEvidenceIds,
+    rationale,
+    notes,
+    status: transferMechanismStatus,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: authContext.userId,
+    updatedBy: authContext.userId,
+    ownerId: authContext.userId,
+  };
+
+  const validation = validateTransferArrangement(payload);
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', `Validation failed: ${validation.errors.join('; ')}`);
+  }
+
+  await arrangementRef.set(payload);
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'transfer_arrangement',
+    entityId: arrangementId,
+    action: 'create',
+    beforeSummary: null,
+    afterSummary: {
+      processorProfileId,
+      transferMechanismType,
+      transferMechanismStatus,
+      restrictedTransfer,
+      destinationCountries,
+    },
+    source: 'cloud_function',
+    workflowContext: 'transfer_arrangement_creation',
+  });
+
+  return { success: true, arrangementId, transferArrangement: payload };
+});
+
+export const updateTenantTransferArrangement = onCall<UpdateTransferArrangementInput>(async (request) => {
+  const {
+    tenantId,
+    arrangementId,
+    name,
+    restrictedTransfer,
+    destinationCountries,
+    eeaStatus,
+    transferScopes,
+    transferScopeDescription,
+    transferMechanismType,
+    transferMechanismStatus,
+    effectiveDate,
+    reviewDueDate,
+    supplementaryMeasuresSummary,
+    subprocessorInvolvement,
+    subprocessorsInvolved,
+    linkedTiaId,
+    linkedEvidenceIds,
+    rationale,
+    notes,
+  } = request.data;
+
+  if (!tenantId || !arrangementId) {
+    throw new HttpsError('invalid-argument', 'tenantId and arrangementId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'privacy_manager',
+    'security_manager',
+  ]);
+
+  const arrangementRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(arrangementId);
+  const snap = await arrangementRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Transfer arrangement ${arrangementId} not found.`);
+  }
+
+  const prev = snap.data() as TransferArrangement;
+  const now = new Date().toISOString();
+
+  const updates: Partial<TransferArrangement> = {
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  };
+
+  if (name !== undefined) updates.name = name;
+  if (restrictedTransfer !== undefined) updates.restrictedTransfer = restrictedTransfer;
+  if (destinationCountries !== undefined) updates.destinationCountries = destinationCountries;
+  if (eeaStatus !== undefined) updates.eeaStatus = eeaStatus;
+  if (transferScopes !== undefined) updates.transferScopes = transferScopes;
+  if (transferScopeDescription !== undefined) updates.transferScopeDescription = transferScopeDescription;
+  if (transferMechanismType !== undefined) updates.transferMechanismType = transferMechanismType;
+  if (transferMechanismStatus !== undefined) {
+    updates.transferMechanismStatus = transferMechanismStatus;
+    updates.status = transferMechanismStatus;
+  }
+  if (effectiveDate !== undefined) updates.effectiveDate = effectiveDate;
+  if (reviewDueDate !== undefined) updates.reviewDueDate = reviewDueDate;
+  if (supplementaryMeasuresSummary !== undefined) updates.supplementaryMeasuresSummary = supplementaryMeasuresSummary;
+  if (subprocessorInvolvement !== undefined) updates.subprocessorInvolvement = subprocessorInvolvement;
+  if (subprocessorsInvolved !== undefined) updates.subprocessorsInvolved = subprocessorsInvolved;
+  if (linkedTiaId !== undefined) updates.linkedTiaId = linkedTiaId;
+  if (linkedEvidenceIds !== undefined) updates.linkedEvidenceIds = linkedEvidenceIds;
+  if (rationale !== undefined) updates.rationale = rationale;
+  if (notes !== undefined) updates.notes = notes;
+
+  const merged = { ...prev, ...updates };
+  const validation = validateTransferArrangement(merged);
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', `Validation failed: ${validation.errors.join('; ')}`);
+  }
+
+  await arrangementRef.update(updates);
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'transfer_arrangement',
+    entityId: arrangementId,
+    action: 'update',
+    beforeSummary: {
+      transferMechanismType: prev.transferMechanismType,
+      transferMechanismStatus: prev.transferMechanismStatus,
+    },
+    afterSummary: updates as Record<string, unknown>,
+    source: 'cloud_function',
+    workflowContext: 'transfer_arrangement_update',
+  });
+
+  return { success: true, arrangementId, updatedFields: updates };
+});
+
+export const deleteTenantTransferArrangement = onCall<DeleteTransferArrangementInput>(async (request) => {
+  const { tenantId, arrangementId } = request.data;
+  if (!tenantId || !arrangementId) {
+    throw new HttpsError('invalid-argument', 'tenantId and arrangementId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
+
+  const arrangementRef = db.collection('tenants').doc(tenantId).collection('transfer_arrangements').doc(arrangementId);
+  const snap = await arrangementRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'Transfer arrangement not found.');
+  }
+
+  const prev = snap.data() as TransferArrangement;
+  await arrangementRef.delete();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'transfer_arrangement',
+    entityId: arrangementId,
+    action: 'delete',
+    beforeSummary: { name: prev.name, processorProfileId: prev.processorProfileId },
+    source: 'cloud_function',
+    workflowContext: 'transfer_arrangement_deletion',
+  });
+
+  return { success: true, arrangementId, deleted: true };
+});
+
+export const listTenantTransferArrangements = onCall<ListTransferArrangementsInput>(async (request) => {
+  const { tenantId, processorProfileId, vendorId, restrictedTransfer, transferMechanismType, transferMechanismStatus } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('transfer_arrangements');
+  if (processorProfileId) query = query.where('processorProfileId', '==', processorProfileId);
+  if (vendorId) query = query.where('vendorId', '==', vendorId);
+  if (restrictedTransfer !== undefined) query = query.where('restrictedTransfer', '==', restrictedTransfer);
+  if (transferMechanismType) query = query.where('transferMechanismType', '==', transferMechanismType);
+  if (transferMechanismStatus) query = query.where('transferMechanismStatus', '==', transferMechanismStatus);
+
+  const snap = await query.get();
+  const arrangements: TransferArrangement[] = snap.docs.map((d) => d.data() as TransferArrangement);
+
+  return { success: true, count: arrangements.length, arrangements };
 });
