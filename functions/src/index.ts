@@ -199,3 +199,10 @@ export {
   listTenantScopeAnswers,
   getScopeQuestionnaireProgress,
 } from './handlers/scoping.js';
+
+// Deterministic Applicability Engine Handlers
+export {
+  evaluateTenantApplicability,
+  testRuleEvaluation,
+  listTenantApplicabilityDecisions,
+} from './handlers/applicability.js';

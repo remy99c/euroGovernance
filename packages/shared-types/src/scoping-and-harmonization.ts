@@ -92,8 +92,49 @@ export type ApplicabilityConditionOperator =
   | 'in'
   | 'not_in'
   | 'contains'
+  | 'not_contains'
+  | 'contains_any'
+  | 'contains_all'
   | 'greater_than'
-  | 'less_than';
+  | 'less_than'
+  | 'greater_than_or_equal'
+  | 'less_than_or_equal'
+  | 'is_true'
+  | 'is_false'
+  | 'is_empty'
+  | 'is_not_empty'
+  | 'exists'
+  | 'not_exists';
+
+export const VALID_APPLICABILITY_OPERATORS: readonly ApplicabilityConditionOperator[] = [
+  'equals',
+  'not_equals',
+  'in',
+  'not_in',
+  'contains',
+  'not_contains',
+  'contains_any',
+  'contains_all',
+  'greater_than',
+  'less_than',
+  'greater_than_or_equal',
+  'less_than_or_equal',
+  'is_true',
+  'is_false',
+  'is_empty',
+  'is_not_empty',
+  'exists',
+  'not_exists',
+] as const;
+
+export type ConditionGroupLogicalOperator = 'all' | 'any' | 'none' | 'not';
+
+export const VALID_CONDITION_GROUP_OPERATORS: readonly ConditionGroupLogicalOperator[] = [
+  'all',
+  'any',
+  'none',
+  'not',
+] as const;
 
 export type ApplicabilityType =
   | 'statutory_mandatory'
@@ -108,18 +149,27 @@ export const VALID_APPLICABILITY_TYPES: readonly ApplicabilityType[] = [
   'manual_exclusion',
 ] as const;
 
-export type ApplicabilityStatus =
+export type ApplicabilityOutcome =
   | 'applicable'
   | 'not_applicable'
+  | 'review_required'
+  | 'inherited'
+  | 'deferred'
   | 'conditionally_applicable'
   | 'pending_evaluation';
 
-export const VALID_APPLICABILITY_STATUSES: readonly ApplicabilityStatus[] = [
+export const VALID_APPLICABILITY_OUTCOMES: readonly ApplicabilityOutcome[] = [
   'applicable',
   'not_applicable',
+  'review_required',
+  'inherited',
+  'deferred',
   'conditionally_applicable',
   'pending_evaluation',
 ] as const;
+
+export type ApplicabilityStatus = ApplicabilityOutcome;
+export const VALID_APPLICABILITY_STATUSES = VALID_APPLICABILITY_OUTCOMES;
 
 export type RequirementComplianceStatus =
   | 'not_evaluated'
@@ -223,6 +273,44 @@ export interface QuestionnaireProgress {
   missingRequiredQuestionIds: string[];
 }
 
+export interface ApplicabilityConditionClause {
+  factKey: string;
+  operator: ApplicabilityConditionOperator;
+  expectedValue?: boolean | string | number | string[] | null;
+  description?: string;
+}
+
+export type ApplicabilityRuleCondition = ApplicabilityConditionClause;
+
+export interface ApplicabilityConditionGroup {
+  logicalOperator: ConditionGroupLogicalOperator;
+  clauses: ApplicabilityConditionClause[];
+  nestedGroups?: ApplicabilityConditionGroup[];
+}
+
+export interface ClauseEvaluationDetail {
+  factKey: string;
+  operator: ApplicabilityConditionOperator;
+  expectedValue: unknown;
+  actualValue: unknown;
+  passed: boolean;
+  reason: string;
+}
+
+export interface ApplicabilityRuleEvaluationResult {
+  ruleId: string;
+  ruleName: string;
+  frameworkId: string;
+  targetRequirementId: string;
+  targetMasterControlId?: string | null;
+  matched: boolean;
+  resultingOutcome: ApplicabilityOutcome;
+  explanation: string;
+  auditTrail: string[];
+  clauseDetails: ClauseEvaluationDetail[];
+  evaluatedAt: string;
+}
+
 /**
  * Global Applicability Rule (/applicability_rules/{ruleId})
  * Deterministic rules that evaluate tenant scope facts to derive requirement applicability.
@@ -231,21 +319,19 @@ export interface ApplicabilityRule {
   id: string; // e.g. 'rule_gdpr_art30_threshold', 'rule_iso_a71_physical_dc'
   frameworkId: string;
   targetRequirementId: string;
+  targetMasterControlId?: string | null;
   ruleName: string;
   description: string;
-  condition: ApplicabilityRuleCondition;
-  resultingStatusIfMatched: ApplicabilityStatus;
+  conditionGroup?: ApplicabilityConditionGroup;
+  condition?: ApplicabilityConditionClause; // Single condition shorthand
+  resultingStatusIfMatched: ApplicabilityOutcome;
+  resultingStatusIfNotMatched?: ApplicabilityOutcome;
   statutoryRationale: string;
   isMandatoryUnlessExempt: boolean;
+  priority?: number;
   version: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface ApplicabilityRuleCondition {
-  factKey: string;
-  operator: ApplicabilityConditionOperator;
-  expectedValue: boolean | string | number | string[];
 }
 
 /**
@@ -855,4 +941,367 @@ export function composeTenantQuestionnaire(
     totalQuestionsCount,
     requiredQuestionsCount,
   };
+}
+
+/**
+ * Helper to extract raw value from a TenantScopeFact or primitive.
+ */
+export function extractScopeFactRawValue(factOrVal: unknown): unknown {
+  if (factOrVal === null || factOrVal === undefined) return null;
+  if (
+    typeof factOrVal === 'object' &&
+    ('valueBoolean' in (factOrVal as any) ||
+      'valueString' in (factOrVal as any) ||
+      'valueNumber' in (factOrVal as any) ||
+      'valueArray' in (factOrVal as any))
+  ) {
+    const f = factOrVal as TenantScopeFact;
+    if (f.valueBoolean !== null && f.valueBoolean !== undefined) return f.valueBoolean;
+    if (f.valueNumber !== null && f.valueNumber !== undefined) return f.valueNumber;
+    if (f.valueArray !== null && f.valueArray !== undefined) return f.valueArray;
+    if (f.valueString !== null && f.valueString !== undefined) return f.valueString;
+    return null;
+  }
+  return factOrVal;
+}
+
+/**
+ * Validates an ApplicabilityRule schema for structural correctness and condition integrity.
+ */
+export function validateApplicabilityRule(rule: Partial<ApplicabilityRule>): { valid: boolean; error?: string } {
+  if (!rule.id || typeof rule.id !== 'string' || rule.id.trim().length === 0) {
+    return { valid: false, error: 'Rule id is required and cannot be empty.' };
+  }
+  if (!rule.frameworkId || typeof rule.frameworkId !== 'string' || rule.frameworkId.trim().length === 0) {
+    return { valid: false, error: 'frameworkId is required.' };
+  }
+  if (!rule.targetRequirementId || typeof rule.targetRequirementId !== 'string' || rule.targetRequirementId.trim().length === 0) {
+    return { valid: false, error: 'targetRequirementId is required.' };
+  }
+  if (!rule.resultingStatusIfMatched || !VALID_APPLICABILITY_OUTCOMES.includes(rule.resultingStatusIfMatched)) {
+    return { valid: false, error: `Invalid resultingStatusIfMatched: '${rule.resultingStatusIfMatched}'.` };
+  }
+  if (rule.resultingStatusIfNotMatched && !VALID_APPLICABILITY_OUTCOMES.includes(rule.resultingStatusIfNotMatched)) {
+    return { valid: false, error: `Invalid resultingStatusIfNotMatched: '${rule.resultingStatusIfNotMatched}'.` };
+  }
+
+  // Validate condition or conditionGroup
+  const group = rule.conditionGroup || (rule.condition ? { logicalOperator: 'all' as const, clauses: [rule.condition] } : null);
+  if (!group) {
+    return { valid: false, error: 'Rule must define either conditionGroup or condition.' };
+  }
+
+  return validateConditionGroupStructure(group);
+}
+
+function validateConditionGroupStructure(group: ApplicabilityConditionGroup): { valid: boolean; error?: string } {
+  if (!group.logicalOperator || !VALID_CONDITION_GROUP_OPERATORS.includes(group.logicalOperator)) {
+    return { valid: false, error: `Invalid group logicalOperator: '${group.logicalOperator}'. Must be all, any, none, or not.` };
+  }
+  if (!Array.isArray(group.clauses) && !Array.isArray(group.nestedGroups)) {
+    return { valid: false, error: 'Condition group must define clauses or nestedGroups.' };
+  }
+
+  if (Array.isArray(group.clauses)) {
+    for (const c of group.clauses) {
+      if (!c.factKey || typeof c.factKey !== 'string' || c.factKey.trim().length === 0) {
+        return { valid: false, error: 'Condition clause factKey is required.' };
+      }
+      if (!c.operator || !VALID_APPLICABILITY_OPERATORS.includes(c.operator)) {
+        return { valid: false, error: `Invalid clause operator: '${c.operator}'.` };
+      }
+
+      // Check operator expected value compatibility
+      if (['greater_than', 'less_than', 'greater_than_or_equal', 'less_than_or_equal'].includes(c.operator)) {
+        if (typeof c.expectedValue !== 'number') {
+          return { valid: false, error: `Operator '${c.operator}' on fact '${c.factKey}' requires numeric expectedValue.` };
+        }
+      }
+      if (['contains_any', 'contains_all'].includes(c.operator)) {
+        if (!Array.isArray(c.expectedValue)) {
+          return { valid: false, error: `Operator '${c.operator}' on fact '${c.factKey}' requires array expectedValue.` };
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(group.nestedGroups)) {
+    for (const nested of group.nestedGroups) {
+      const nestedVal = validateConditionGroupStructure(nested);
+      if (!nestedVal.valid) return nestedVal;
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Evaluates a single condition clause against known tenant scope facts.
+ */
+export function evaluateConditionClause(
+  clause: ApplicabilityConditionClause,
+  facts: Record<string, TenantScopeFact | unknown>
+): { passed: boolean; actualValue: unknown; reason: string } {
+  const actualRaw = facts[clause.factKey];
+  const actual = extractScopeFactRawValue(actualRaw);
+  const expected = clause.expectedValue;
+
+  let passed = false;
+  let reason = '';
+
+  switch (clause.operator) {
+    case 'equals':
+      if (typeof actual === 'string' && typeof expected === 'string') {
+        passed = actual.trim().toLowerCase() === expected.trim().toLowerCase();
+      } else {
+        passed = actual === expected;
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' equals expected '${String(expected)}'`
+        : `Fact '${clause.factKey}' value '${String(actual)}' does not equal expected '${String(expected)}'`;
+      break;
+
+    case 'not_equals':
+      if (typeof actual === 'string' && typeof expected === 'string') {
+        passed = actual.trim().toLowerCase() !== expected.trim().toLowerCase();
+      } else {
+        passed = actual !== expected;
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' differs from '${String(expected)}'`
+        : `Fact '${clause.factKey}' unexpectedly equals '${String(expected)}'`;
+      break;
+
+    case 'in':
+      if (Array.isArray(expected)) {
+        passed = expected.some((exp) => (typeof actual === 'string' && typeof exp === 'string' ? actual.toLowerCase() === exp.toLowerCase() : actual === exp));
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' (${String(actual)}) is in [${Array.isArray(expected) ? expected.join(', ') : ''}]`
+        : `Fact '${clause.factKey}' (${String(actual)}) is not in expected set`;
+      break;
+
+    case 'not_in':
+      if (Array.isArray(expected)) {
+        passed = !expected.some((exp) => (typeof actual === 'string' && typeof exp === 'string' ? actual.toLowerCase() === exp.toLowerCase() : actual === exp));
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' (${String(actual)}) is not in [${Array.isArray(expected) ? expected.join(', ') : ''}]`
+        : `Fact '${clause.factKey}' (${String(actual)}) was found in excluded set`;
+      break;
+
+    case 'contains':
+      if (Array.isArray(actual)) {
+        passed = actual.some((item) => (typeof item === 'string' && typeof expected === 'string' ? item.toLowerCase() === expected.toLowerCase() : item === expected));
+      } else if (typeof actual === 'string' && typeof expected === 'string') {
+        passed = actual.toLowerCase().includes(expected.toLowerCase());
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' contains '${String(expected)}'`
+        : `Fact '${clause.factKey}' does not contain '${String(expected)}'`;
+      break;
+
+    case 'not_contains':
+      if (Array.isArray(actual)) {
+        passed = !actual.some((item) => (typeof item === 'string' && typeof expected === 'string' ? item.toLowerCase() === expected.toLowerCase() : item === expected));
+      } else if (typeof actual === 'string' && typeof expected === 'string') {
+        passed = !actual.toLowerCase().includes(expected.toLowerCase());
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' does not contain '${String(expected)}'`
+        : `Fact '${clause.factKey}' contains excluded '${String(expected)}'`;
+      break;
+
+    case 'contains_any':
+      if (Array.isArray(actual) && Array.isArray(expected)) {
+        const actualLower = actual.map((a) => (typeof a === 'string' ? a.toLowerCase() : a));
+        passed = expected.some((exp) => actualLower.includes(typeof exp === 'string' ? exp.toLowerCase() : exp));
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' matches at least one expected entry in [${Array.isArray(expected) ? expected.join(', ') : ''}]`
+        : `Fact '${clause.factKey}' shares no values with [${Array.isArray(expected) ? expected.join(', ') : ''}]`;
+      break;
+
+    case 'contains_all':
+      if (Array.isArray(actual) && Array.isArray(expected)) {
+        const actualLower = actual.map((a) => (typeof a === 'string' ? a.toLowerCase() : a));
+        passed = expected.every((exp) => actualLower.includes(typeof exp === 'string' ? exp.toLowerCase() : exp));
+      }
+      reason = passed
+        ? `Fact '${clause.factKey}' contains all required entries in [${Array.isArray(expected) ? expected.join(', ') : ''}]`
+        : `Fact '${clause.factKey}' is missing one or more required entries from [${Array.isArray(expected) ? expected.join(', ') : ''}]`;
+      break;
+
+    case 'greater_than':
+      passed = typeof actual === 'number' && typeof expected === 'number' && actual > expected;
+      reason = passed
+        ? `Fact '${clause.factKey}' (${actual}) > ${expected}`
+        : `Fact '${clause.factKey}' (${actual}) is not > ${expected}`;
+      break;
+
+    case 'less_than':
+      passed = typeof actual === 'number' && typeof expected === 'number' && actual < expected;
+      reason = passed
+        ? `Fact '${clause.factKey}' (${actual}) < ${expected}`
+        : `Fact '${clause.factKey}' (${actual}) is not < ${expected}`;
+      break;
+
+    case 'greater_than_or_equal':
+      passed = typeof actual === 'number' && typeof expected === 'number' && actual >= expected;
+      reason = passed
+        ? `Fact '${clause.factKey}' (${actual}) >= ${expected}`
+        : `Fact '${clause.factKey}' (${actual}) is not >= ${expected}`;
+      break;
+
+    case 'less_than_or_equal':
+      passed = typeof actual === 'number' && typeof expected === 'number' && actual <= expected;
+      reason = passed
+        ? `Fact '${clause.factKey}' (${actual}) <= ${expected}`
+        : `Fact '${clause.factKey}' (${actual}) is not <= ${expected}`;
+      break;
+
+    case 'is_true':
+      passed = actual === true;
+      reason = passed ? `Fact '${clause.factKey}' is true` : `Fact '${clause.factKey}' is not true (${String(actual)})`;
+      break;
+
+    case 'is_false':
+      passed = actual === false;
+      reason = passed ? `Fact '${clause.factKey}' is false` : `Fact '${clause.factKey}' is not false (${String(actual)})`;
+      break;
+
+    case 'is_empty':
+      passed = actual === null || actual === undefined || actual === '' || (Array.isArray(actual) && actual.length === 0);
+      reason = passed ? `Fact '${clause.factKey}' is empty` : `Fact '${clause.factKey}' has value (${String(actual)})`;
+      break;
+
+    case 'is_not_empty':
+      passed = actual !== null && actual !== undefined && actual !== '' && (!Array.isArray(actual) || actual.length > 0);
+      reason = passed ? `Fact '${clause.factKey}' is populated` : `Fact '${clause.factKey}' is empty`;
+      break;
+
+    case 'exists':
+      passed = actual !== null && actual !== undefined;
+      reason = passed ? `Fact '${clause.factKey}' is recorded` : `Fact '${clause.factKey}' is not recorded`;
+      break;
+
+    case 'not_exists':
+      passed = actual === null || actual === undefined;
+      reason = passed ? `Fact '${clause.factKey}' is absent` : `Fact '${clause.factKey}' unexpectedly exists`;
+      break;
+  }
+
+  return { passed, actualValue: actual, reason };
+}
+
+/**
+ * Evaluates a condition group (with support for 'all', 'any', 'none', 'not' and nested groups).
+ */
+export function evaluateConditionGroup(
+  group: ApplicabilityConditionGroup,
+  facts: Record<string, TenantScopeFact | unknown>
+): { passed: boolean; clauseDetails: ClauseEvaluationDetail[]; auditTrail: string[] } {
+  const clauseDetails: ClauseEvaluationDetail[] = [];
+  const auditTrail: string[] = [];
+
+  const clauseResults: boolean[] = [];
+
+  if (Array.isArray(group.clauses)) {
+    for (const clause of group.clauses) {
+      const evalRes = evaluateConditionClause(clause, facts);
+      clauseDetails.push({
+        factKey: clause.factKey,
+        operator: clause.operator,
+        expectedValue: clause.expectedValue ?? null,
+        actualValue: evalRes.actualValue,
+        passed: evalRes.passed,
+        reason: evalRes.reason,
+      });
+      auditTrail.push(`[Clause: ${clause.factKey} ${clause.operator}] ${evalRes.reason} -> ${evalRes.passed ? 'PASS' : 'FAIL'}`);
+      clauseResults.push(evalRes.passed);
+    }
+  }
+
+  if (Array.isArray(group.nestedGroups)) {
+    let groupIdx = 1;
+    for (const nestedGroup of group.nestedGroups) {
+      if (!nestedGroup) continue;
+      const nestedRes = evaluateConditionGroup(nestedGroup, facts);
+      clauseDetails.push(...nestedRes.clauseDetails);
+      auditTrail.push(`[Nested Group ${groupIdx} (${nestedGroup.logicalOperator})] -> ${nestedRes.passed ? 'PASS' : 'FAIL'}`);
+      auditTrail.push(...nestedRes.auditTrail.map((t) => `  ${t}`));
+      clauseResults.push(nestedRes.passed);
+      groupIdx++;
+    }
+  }
+
+  let passed = false;
+  switch (group.logicalOperator) {
+    case 'all':
+      passed = clauseResults.length === 0 || clauseResults.every(Boolean);
+      break;
+    case 'any':
+      passed = clauseResults.some(Boolean);
+      break;
+    case 'none':
+      passed = clauseResults.every((r) => !r);
+      break;
+    case 'not':
+      passed = !(clauseResults.length === 0 || clauseResults.every(Boolean));
+      break;
+  }
+
+  auditTrail.push(`[Group Summary (${group.logicalOperator})] Overall Result: ${passed ? 'MATCHED' : 'UNMATCHED'}`);
+  return { passed, clauseDetails, auditTrail };
+}
+
+/**
+ * Evaluates an ApplicabilityRule against tenant scope facts and returns structured audit explanation.
+ */
+export function evaluateApplicabilityRule(
+  rule: ApplicabilityRule,
+  facts: Record<string, TenantScopeFact | unknown>
+): ApplicabilityRuleEvaluationResult {
+  const group: ApplicabilityConditionGroup =
+    rule.conditionGroup ||
+    (rule.condition ? { logicalOperator: 'all', clauses: [rule.condition] } : { logicalOperator: 'all', clauses: [] });
+
+  const evalGroup = evaluateConditionGroup(group, facts);
+  const matched = evalGroup.passed;
+  const now = new Date().toISOString();
+
+  let resultingOutcome: ApplicabilityOutcome;
+  let explanation = '';
+
+  if (matched) {
+    resultingOutcome = rule.resultingStatusIfMatched;
+    explanation = `Rule '${rule.ruleName}' evaluated to MATCHED. Condition group (${group.logicalOperator}) satisfied. Statutory rationale: ${rule.statutoryRationale}`;
+  } else {
+    resultingOutcome = rule.resultingStatusIfNotMatched || (rule.resultingStatusIfMatched === 'applicable' ? 'not_applicable' : 'applicable');
+    explanation = `Rule '${rule.ruleName}' did not match condition group (${group.logicalOperator}). Derived outcome: ${resultingOutcome}.`;
+  }
+
+  return {
+    ruleId: rule.id,
+    ruleName: rule.ruleName,
+    frameworkId: rule.frameworkId,
+    targetRequirementId: rule.targetRequirementId,
+    targetMasterControlId: rule.targetMasterControlId || null,
+    matched,
+    resultingOutcome,
+    explanation,
+    auditTrail: evalGroup.auditTrail,
+    clauseDetails: evalGroup.clauseDetails,
+    evaluatedAt: now,
+  };
+}
+
+/**
+ * Evaluates an entire suite of ApplicabilityRules for a tenant against their scope facts.
+ */
+export function evaluateFrameworkApplicabilityRules(
+  rules: ApplicabilityRule[],
+  facts: Record<string, TenantScopeFact | unknown>
+): ApplicabilityRuleEvaluationResult[] {
+  return rules.map((r) => evaluateApplicabilityRule(r, facts));
 }

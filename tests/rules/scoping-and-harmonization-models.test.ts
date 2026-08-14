@@ -345,7 +345,7 @@ describe('Framework Scoping, Applicability & Harmonization Data Models & Validat
         updatedAt: now,
       };
 
-      expect(rule.condition.factKey).toBe('deploys_high_risk_ai_system');
+      expect(rule.condition?.factKey).toBe('deploys_high_risk_ai_system');
       expect(rule.resultingStatusIfMatched).toBe('applicable');
     });
 

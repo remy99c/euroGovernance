@@ -8,6 +8,7 @@ import {
   CanonicalControlMapping,
   ScopeQuestionnaire,
   ScopeQuestion,
+  ApplicabilityRule,
 } from './scoping-and-harmonization.js';
 
 export interface CanonicalMasterDataset {
@@ -1299,6 +1300,138 @@ export const CANONICAL_SCOPE_QUESTIONS: ScopeQuestion[] = [
   },
 ];
 
+export const CANONICAL_APPLICABILITY_RULES: ApplicabilityRule[] = [
+  {
+    id: 'rule_gdpr_art30_records',
+    frameworkId: 'gdpr',
+    targetRequirementId: 'gdpr_art_30',
+    targetMasterControlId: 'ctl_master_gdpr_art30',
+    ruleName: 'Article 30 Processing Activity Record Trigger',
+    description: 'Mandates formal records of processing activities if organization processes EU personal data or special category data.',
+    conditionGroup: {
+      logicalOperator: 'any',
+      clauses: [
+        { factKey: 'processes_personal_data', operator: 'is_true' },
+        { factKey: 'processes_special_category_data', operator: 'is_true' },
+      ],
+    },
+    resultingStatusIfMatched: 'applicable',
+    resultingStatusIfNotMatched: 'not_applicable',
+    statutoryRationale: 'GDPR Article 30 requires controllers and processors of personal data to maintain a formal register of processing operations.',
+    isMandatoryUnlessExempt: true,
+    version: '1.0',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+  },
+  {
+    id: 'rule_gdpr_art37_dpo',
+    frameworkId: 'gdpr',
+    targetRequirementId: 'gdpr_art_37',
+    targetMasterControlId: 'ctl_master_gdpr_art37',
+    ruleName: 'Mandatory Data Protection Officer Designation',
+    description: 'Enforces DPO designation if special category data are processed at scale or designated by policy.',
+    conditionGroup: {
+      logicalOperator: 'any',
+      clauses: [
+        { factKey: 'processes_special_category_data', operator: 'is_true' },
+        { factKey: 'has_dpo_appointed', operator: 'is_true' },
+      ],
+    },
+    resultingStatusIfMatched: 'applicable',
+    resultingStatusIfNotMatched: 'not_applicable',
+    statutoryRationale: 'GDPR Article 37 mandates DPO appointment for core activities involving large-scale special category processing.',
+    isMandatoryUnlessExempt: false,
+    version: '1.0',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+  },
+  {
+    id: 'rule_eu_ai_act_annex3_high_risk',
+    frameworkId: 'eu_ai_act',
+    targetRequirementId: 'aia_art_09',
+    targetMasterControlId: 'ctl_master_aia_art09',
+    ruleName: 'High-Risk AI System Chapter 2 Obligations',
+    description: 'Triggers risk management, data governance, and logging obligations for high-risk AI deployers.',
+    conditionGroup: {
+      logicalOperator: 'all',
+      clauses: [
+        { factKey: 'deploys_ai_systems', operator: 'is_true' },
+        { factKey: 'deploys_high_risk_ai', operator: 'is_true' },
+      ],
+    },
+    resultingStatusIfMatched: 'applicable',
+    resultingStatusIfNotMatched: 'not_applicable',
+    statutoryRationale: 'EU AI Act Article 9 imposes mandatory risk management system requirements on all deployers of Annex III high-risk AI.',
+    isMandatoryUnlessExempt: true,
+    version: '1.0',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+  },
+  {
+    id: 'rule_iso27001_annex_a71_physical_dc',
+    frameworkId: 'iso_27001',
+    targetRequirementId: 'iso_clause_43',
+    targetMasterControlId: 'ctl_master_iso_scope',
+    ruleName: 'Physical Data Center Security Boundaries',
+    description: 'Applies physical perimeter controls if organization operates physical server facilities.',
+    conditionGroup: {
+      logicalOperator: 'all',
+      clauses: [
+        { factKey: 'operates_physical_datacenters', operator: 'is_true' },
+      ],
+    },
+    resultingStatusIfMatched: 'applicable',
+    resultingStatusIfNotMatched: 'not_applicable',
+    statutoryRationale: 'Physical security controls are applicable only when physical premises are under direct operational control.',
+    isMandatoryUnlessExempt: false,
+    version: '1.0',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+  },
+  {
+    id: 'rule_iso27001_remote_working',
+    frameworkId: 'iso_27001',
+    targetRequirementId: 'iso_annex_a524',
+    targetMasterControlId: 'ctl_master_iso_a524',
+    ruleName: 'Teleworking and Hybrid Workforce Security Policy',
+    description: 'Requires remote working security controls if employees work remotely.',
+    conditionGroup: {
+      logicalOperator: 'all',
+      clauses: [
+        { factKey: 'has_remote_workforce', operator: 'is_true' },
+      ],
+    },
+    resultingStatusIfMatched: 'applicable',
+    resultingStatusIfNotMatched: 'review_required',
+    statutoryRationale: 'ISO/IEC 27001 Annex A.6.7 requires security measures to be implemented when personnel work remotely.',
+    isMandatoryUnlessExempt: true,
+    version: '1.0',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+  },
+  {
+    id: 'rule_eu_data_act_b2b_sharing',
+    frameworkId: 'eu_data_act',
+    targetRequirementId: 'da_art_03',
+    targetMasterControlId: 'ctl_master_da_art03',
+    ruleName: 'B2B Connected Product Data Access Mandate',
+    description: 'Mandates data access interfaces when organization qualifies as a B2B data holder.',
+    conditionGroup: {
+      logicalOperator: 'all',
+      clauses: [
+        { factKey: 'is_b2b_data_holder', operator: 'is_true' },
+      ],
+    },
+    resultingStatusIfMatched: 'applicable',
+    resultingStatusIfNotMatched: 'not_applicable',
+    statutoryRationale: 'EU Data Act Chapter II requires data holders to make product data accessible to users and authorized third parties.',
+    isMandatoryUnlessExempt: true,
+    version: '1.0',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-08-14T00:00:00.000Z',
+  },
+];
+
 export interface CanonicalMasterDataset {
   frameworks: Framework[];
   requirements: Requirement[];
@@ -1307,6 +1440,7 @@ export interface CanonicalMasterDataset {
   canonicalControlMappings: CanonicalControlMapping[];
   scopeQuestionnaires: ScopeQuestionnaire[];
   scopeQuestions: ScopeQuestion[];
+  applicabilityRules: ApplicabilityRule[];
 }
 
 export const CANONICAL_MASTER_DATA: CanonicalMasterDataset = {
@@ -1317,4 +1451,5 @@ export const CANONICAL_MASTER_DATA: CanonicalMasterDataset = {
   canonicalControlMappings: CANONICAL_CROSS_WALK_MAPPINGS,
   scopeQuestionnaires: CANONICAL_SCOPE_QUESTIONNAIRES,
   scopeQuestions: CANONICAL_SCOPE_QUESTIONS,
+  applicabilityRules: CANONICAL_APPLICABILITY_RULES,
 };

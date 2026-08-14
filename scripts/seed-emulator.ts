@@ -51,6 +51,10 @@ export async function seedEmulatorData() {
     await db.doc(`scope_questionnaires/${q.questionnaireId}/questions/${q.id}`).set(q);
   }
 
+  for (const rule of CANONICAL_MASTER_DATA.applicabilityRules) {
+    await db.doc(`applicability_rules/${rule.id}`).set(rule);
+  }
+
   // 3. Seed Tenant Organization
   console.log('🏢 Seeding Tenant Organization & Memberships...');
   await db.doc(`tenants/${tenantId}`).set({
