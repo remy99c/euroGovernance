@@ -482,11 +482,15 @@ service cloud.firestore {
         allow write: if false; // Materialized asynchronously by Cloud Functions Admin SDK
       }
 
-      // Notifications
+      // Notifications (In-App & Lifecycle Alerts)
       match /notifications/{notificationId} {
         allow read: if isTenantMember(tenantId) && resource.data.recipientId == request.auth.uid;
-        allow update: if isTenantMember(tenantId) && resource.data.recipientId == request.auth.uid;
-        allow create, delete: if false; // Managed by scheduled jobs / Functions
+        allow update: if isTenantMember(tenantId) &&
+                         resource.data.recipientId == request.auth.uid &&
+                         request.resource.data.recipientId == resource.data.recipientId &&
+                         request.resource.data.tenantId == resource.data.tenantId &&
+                         request.resource.data.type == resource.data.type;
+        allow create, delete: if false; // Generated and dispatched server-side by Cloud Functions
       }
 
       // Export Jobs
