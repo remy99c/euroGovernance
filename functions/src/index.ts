@@ -87,6 +87,7 @@ export {
   createTenantProcessorCertification,
   reviewProcessorCertification,
   replaceProcessorCertification,
+  listTenantProcessorCertifications,
   getProcessorCertificationReminders,
   dispatchProcessorCertificationReminders,
   getProcessorCertificationRiskIndicators,

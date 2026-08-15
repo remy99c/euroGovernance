@@ -451,6 +451,46 @@ export const replaceProcessorCertification = onCall<ReplaceProcessorCertificatio
   };
 });
 
+export interface ListTenantProcessorCertificationsInput {
+  tenantId: string;
+  processorProfileId?: string;
+  includeHistoric?: boolean;
+}
+
+/**
+ * Callable Function: listTenantProcessorCertifications
+ * Retrieves structured processor certification and attestation records.
+ */
+export const listTenantProcessorCertifications = onCall<ListTenantProcessorCertificationsInput>(async (request) => {
+  const { tenantId, processorProfileId, includeHistoric } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('processor_certifications');
+  if (processorProfileId) {
+    query = query.where('processorProfileId', '==', processorProfileId);
+  }
+
+  const snap = await query.get();
+  let certs = snap.docs.map((d) => d.data() as ProcessorCertification);
+
+  if (!includeHistoric) {
+    certs = certs.filter((c) => !c.isHistoricVersion && c.reviewStatus !== 'superseded');
+  }
+
+  // Sort by validUntil descending
+  certs.sort((a, b) => new Date(b.validUntil).getTime() - new Date(a.validUntil).getTime());
+
+  return {
+    success: true,
+    total: certs.length,
+    certifications: certs,
+  };
+});
+
 export interface GetProcessorCertificationRemindersInput {
   tenantId: string;
   processorProfileId?: string;

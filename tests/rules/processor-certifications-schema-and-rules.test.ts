@@ -1951,4 +1951,157 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       expect(snowflakeEntry?.controlSupportMap['ctl_vendor_mgmt_01']?.hasCurrentAssurance).toBe(false);
     });
   });
+
+  describe('10. Processor Detail Assurance Section, KPI Synthesis & Governance Filtering', () => {
+    const mockCerts: ProcessorCertification[] = [
+      {
+        id: 'cert_aws_current_iso',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_infra',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27001',
+        issuingBodyOrAuditor: 'EY CertifyPoint',
+        certificateOrReportNumber: 'EY-AWS-ISO27001-2025',
+        validFrom: '2024-01-01T00:00:00.000Z',
+        validUntil: '2027-01-01T00:00:00.000Z', // Current valid
+        status: 'active_valid',
+        assuranceScopeSummary: 'Global Cloud Infrastructure',
+        legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL',
+        systemsOrServicesCovered: ['Compute', 'Storage', 'Databases'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2025-01-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_aws_iso_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'cert_aws_expiring_soc2',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_infra',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'PwC LLP',
+        certificateOrReportNumber: 'PWC-AWS-SOC2-2024',
+        reportPeriodStart: '2023-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2023-12-31T23:59:59.000Z',
+        validFrom: '2024-01-01T00:00:00.000Z',
+        validUntil: '2025-05-20T00:00:00.000Z', // Expiring soon relative to 2025-05-01 (19 days)
+        status: 'active_valid',
+        assuranceScopeSummary: 'AWS EMEA Security Trust Services',
+        legalEntityOrRegionalScope: 'AWS EMEA',
+        systemsOrServicesCovered: ['Compute', 'Storage'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2025-04-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_aws_soc2_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'cert_aws_historic_iso_v1',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_infra',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27001',
+        issuingBodyOrAuditor: 'EY CertifyPoint',
+        certificateOrReportNumber: 'EY-AWS-ISO27001-2022',
+        validFrom: '2021-01-01T00:00:00.000Z',
+        validUntil: '2024-01-01T00:00:00.000Z',
+        status: 'superseded',
+        assuranceScopeSummary: 'Legacy AWS Scope',
+        legalEntityOrRegionalScope: 'AWS EMEA',
+        systemsOrServicesCovered: ['Compute'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'superseded',
+        replacedByCertificationId: 'cert_aws_current_iso',
+        isHistoricVersion: true,
+        versionNumber: 1,
+        reviewDueDate: '2023-12-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_aws_iso_v1_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2021-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'cert_aws_missing_evidence',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_infra',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27701',
+        issuingBodyOrAuditor: 'BSI Group',
+        certificateOrReportNumber: 'BSI-PIMS-2025',
+        validFrom: '2024-01-01T00:00:00.000Z',
+        validUntil: '2027-01-01T00:00:00.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'Privacy Information Management System',
+        legalEntityOrRegionalScope: 'AWS EMEA',
+        systemsOrServicesCovered: ['Databases'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'pending',
+        reviewDueDate: '2025-06-01T00:00:00.000Z',
+        linkedEvidenceIds: [], // Missing evidence!
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ];
+
+    it('accurately categorizes current vs superseded vs attention assurance items', () => {
+      const nowMillis = new Date('2025-05-01T00:00:00.000Z').getTime();
+
+      const currentCerts = mockCerts.filter((c) => !c.isHistoricVersion && c.reviewStatus !== 'superseded');
+      const supersededCerts = mockCerts.filter((c) => c.isHistoricVersion || c.reviewStatus === 'superseded');
+      const attentionCerts = currentCerts.filter(
+        (c) =>
+          c.isInsufficient ||
+          c.reviewStatus === 'rejected' ||
+          c.reviewStatus === 'insufficient' ||
+          c.status === 'expired' ||
+          new Date(c.validUntil).getTime() <= nowMillis + 60 * 24 * 60 * 60 * 1000 ||
+          !c.linkedEvidenceIds ||
+          c.linkedEvidenceIds.length === 0
+      );
+
+      expect(currentCerts.length).toBe(3);
+      expect(supersededCerts.length).toBe(1);
+      expect(supersededCerts[0]!.id).toBe('cert_aws_historic_iso_v1');
+
+      // Attention items include cert_aws_expiring_soc2 (<60d) and cert_aws_missing_evidence (no evidence)
+      expect(attentionCerts.length).toBe(2);
+      expect(attentionCerts.map((c) => c.id)).toContain('cert_aws_expiring_soc2');
+      expect(attentionCerts.map((c) => c.id)).toContain('cert_aws_missing_evidence');
+    });
+
+    it('formats display labels, validity countdowns, and standard taxonomies correctly', () => {
+      const isoTaxonomy = getAssuranceTaxonomy('iso_27001');
+      expect(isoTaxonomy.displayName).toBe('ISO/IEC 27001:2022 (ISMS)');
+      expect(isoTaxonomy.requiresReportPeriod).toBe(false);
+
+      const soc2Taxonomy = getAssuranceTaxonomy('soc2_type2');
+      expect(soc2Taxonomy.displayName).toBe('SOC 2 Type II (Operating Effectiveness)');
+      expect(soc2Taxonomy.requiresReportPeriod).toBe(true);
+
+      const pimsTaxonomy = getAssuranceTaxonomy('iso_27701');
+      expect(pimsTaxonomy.displayName).toBe('ISO/IEC 27701:2019 (PIMS)');
+    });
+  });
 });
