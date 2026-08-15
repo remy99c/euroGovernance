@@ -31,13 +31,15 @@
 - **Gross Margin on SaaS Pricing**: $>98\%$ at standard enterprise GRC seat pricing.
 
 ```mermaid
-pie title Monthly Cost Distribution for 1 Big Enterprise Tenant (~$6.30 Total)
-    "Next.js SSR Frontend (Cloud Run)" : 3.50
-    "Cloud Firestore Database" : 1.30
-    "Transactional Email Delivery" : 1.00
-    "Cloud Storage (Evidence Locker)" : 0.37
-    "Cloud Functions (Backend Compute)" : 0.12
-    "Network Egress & Bandwidth" : 0.01
+graph LR
+    subgraph TotalCost ["Monthly Cost Breakdown (~$6.29 / mo Total)"]
+        direction TB
+        SSR["<b>Next.js SSR Frontend (Cloud Run)</b><br>$3.50 / mo (55.6%)"]
+        DB["<b>Cloud Firestore Database</b><br>$1.30 / mo (20.7%)"]
+        MAIL["<b>Transactional Email Delivery</b><br>$1.00 / mo (15.9%)"]
+        GCS["<b>Cloud Storage (Evidence Locker)</b><br>$0.37 / mo (5.9%)"]
+        FN["<b>Cloud Functions (Backend Compute)</b><br>$0.12 / mo (1.9%)"]
+    end
 ```
 
 ---
