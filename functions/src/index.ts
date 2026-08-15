@@ -61,6 +61,7 @@ export {
   updateTenantProcessorProfile,
   deleteTenantProcessorProfile,
   listTenantProcessorProfiles,
+  listTenantProcessorInventory,
   createTenantTransferArrangement,
   updateTenantTransferArrangement,
   deleteTenantTransferArrangement,

@@ -18,6 +18,7 @@ import ApplicabilityReviewTab from './applicability-review';
 import FrameworkCoverageDashboardTab from './framework-coverage-dashboard';
 import ProcessorTransfersManager from './processor-transfers-manager';
 import ProcessorGovernanceHub from './processor-governance-hub';
+import ProcessorInventory from './processor-inventory';
 
 type TabType =
   | 'overview'
@@ -28,6 +29,7 @@ type TabType =
   | 'evidence'
   | 'risks_tasks'
   | 'gdpr'
+  | 'processor_inventory'
   | 'processor_hub'
   | 'processor_transfers'
   | 'ai_systems'
@@ -37,6 +39,7 @@ type TabType =
 export default function DashboardPage() {
   const { user, tenantId, setTenantId, userRole, availableTenants, loginDevUser } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+  const [selectedHubProcessorProfileId, setSelectedHubProcessorProfileId] = useState<string | undefined>(undefined);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
@@ -480,6 +483,7 @@ export default function DashboardPage() {
               { id: 'evidence', label: '📁 Evidence Inbox' },
               { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
               { id: 'gdpr', label: '🇪🇺 GDPR & Privacy' },
+              { id: 'processor_inventory', label: '📋 Processor Inventory' },
               { id: 'processor_hub', label: '🏢 Processor Hub' },
               { id: 'processor_transfers', label: '🌍 Processor Transfers' },
               { id: 'ai_systems', label: '🤖 EU AI Act Register' },
@@ -1006,6 +1010,25 @@ export default function DashboardPage() {
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
+                  onClick={() => setActiveTab('processor_inventory')}
+                  style={{
+                    backgroundColor: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-color)',
+                    padding: '8px 14px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>📋</span> Processor Inventory
+                </button>
+
+                <button
                   onClick={() => setActiveTab('processor_hub')}
                   style={{
                     backgroundColor: 'var(--bg-surface)',
@@ -1077,16 +1100,30 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* TAB 5B: PROCESSOR GOVERNANCE OPERATIONAL HUB */}
+        {/* TAB 5B: PROCESSOR INVENTORY */}
+        {activeTab === 'processor_inventory' && (
+          <ProcessorInventory
+            tenantId={tenantId}
+            onSelectProcessorForHub={(profId) => {
+              setSelectedHubProcessorProfileId(profId);
+              setActiveTab('processor_hub');
+            }}
+            onNavigateToTransfers={() => setActiveTab('processor_transfers')}
+            onNotice={showNotice}
+          />
+        )}
+
+        {/* TAB 5C: PROCESSOR GOVERNANCE OPERATIONAL HUB */}
         {activeTab === 'processor_hub' && (
           <ProcessorGovernanceHub
             tenantId={tenantId}
+            initialProcessorProfileId={selectedHubProcessorProfileId}
             onNavigateToTab={(tabId) => setActiveTab(tabId as TabType)}
             onNotice={showNotice}
           />
         )}
 
-        {/* TAB 5C: PROCESSOR CROSS-BORDER TRANSFERS */}
+        {/* TAB 5D: PROCESSOR CROSS-BORDER TRANSFERS */}
         {activeTab === 'processor_transfers' && (
           <ProcessorTransfersManager tenantId={tenantId} onNotice={showNotice} />
         )}

@@ -28,6 +28,11 @@ import {
   Evidence,
   ProcessorReminderCandidate,
   evaluateProcessorReminders,
+  evaluateProcessorEvidenceCompleteness,
+  evaluateProcessorRiskFlags,
+  TIA,
+  ListProcessorInventoryInput,
+  ProcessorInventoryItem,
 } from '@eurogovernance/shared-types';
 
 export interface CreateVendorInput {
@@ -1373,6 +1378,208 @@ export const listTenantProcessorProfiles = onCall<ListProcessorProfilesInput>(as
   const profiles: ProcessorProfile[] = snap.docs.map((d) => d.data() as ProcessorProfile);
 
   return { success: true, count: profiles.length, profiles };
+});
+
+export const listTenantProcessorInventory = onCall<ListProcessorInventoryInput>(async (request) => {
+  const {
+    tenantId,
+    status,
+    criticality,
+    restrictedTransfer,
+    transferMechanismType,
+    tiaStatus,
+    reviewStatus,
+    missingEvidence,
+    destinationCountry,
+    linkedSystemAssetId,
+    searchQuery,
+    limit = 200,
+    offset = 0,
+  } = request.data;
+
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // 1. Fetch Processor Profiles (applying primary database filters when provided)
+  let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('processor_profiles');
+  if (status) query = query.where('status', '==', status);
+  if (criticality) query = query.where('criticality', '==', criticality);
+
+  const profilesSnap = await query.get();
+  const profiles: ProcessorProfile[] = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+
+  // 2. Fetch supporting tenant context for multi-dimensional inventory correlation
+  const [vendorsSnap, transfersSnap, assetsSnap, tiasSnap, evidenceSnap] = await Promise.all([
+    db.collection('tenants').doc(tenantId).collection('vendors').get(),
+    db.collection('tenants').doc(tenantId).collection('transfer_arrangements').get(),
+    db.collection('tenants').doc(tenantId).collection('system_assets').get(),
+    db.collection('tenants').doc(tenantId).collection('tia_assessments').get(),
+    db.collection('tenants').doc(tenantId).collection('evidence').get(),
+  ]);
+
+  const vendorsMap = new Map<string, Vendor>();
+  vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+  const allTransfers: TransferArrangement[] = transfersSnap.docs.map((d) => d.data() as TransferArrangement);
+  const allAssets: SystemAsset[] = assetsSnap.docs.map((d) => d.data() as SystemAsset);
+  const allTias: TIA[] = tiasSnap.docs.map((d) => d.data() as TIA);
+  const allEvidence: Evidence[] = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+  const now = new Date();
+  const nowMillis = now.getTime();
+  const thirtyDaysMillis = 30 * 24 * 60 * 60 * 1000;
+  const ninetyDaysMillis = 90 * 24 * 60 * 60 * 1000;
+
+  // 3. Build Processor Inventory Items
+  let inventoryItems: ProcessorInventoryItem[] = profiles.map((p) => {
+    const vendor = p.vendorId ? vendorsMap.get(p.vendorId) || null : null;
+    const procTransfers = allTransfers.filter((t) => t.processorProfileId === p.id);
+    const procAssets = allAssets.filter((a) => a.processorProfileIds?.includes(p.id) || p.linkedSystemAssetIds?.includes(a.id));
+    const procTias = allTias.filter(
+      (tia) =>
+        tia.processorProfileId === p.id ||
+        (p.vendorId && tia.vendorId === p.vendorId) ||
+        procTransfers.some((t) => t.id === tia.transferArrangementId || t.linkedTiaId === tia.id)
+    );
+    const procEvidence = allEvidence.filter(
+      (e) =>
+        e.processorProfileIds?.includes(p.id) ||
+        (p.vendorId && e.vendorIds?.includes(p.vendorId)) ||
+        procTransfers.some((t) => t.linkedEvidenceIds?.includes(e.id))
+    );
+
+    const hasRestricted = procTransfers.some((t) => t.restrictedTransfer);
+    const destCountries = Array.from(new Set(procTransfers.flatMap((t) => t.destinationCountries || [])));
+    const mechanisms = Array.from(new Set(procTransfers.map((t) => t.transferMechanismType)));
+
+    // TIA Status determination
+    let determinedTiaStatus: 'approved' | 'in_review' | 'missing' | 'not_required' = 'not_required';
+    if (hasRestricted) {
+      const approvedTia = procTias.find((t) => t.status === 'approved');
+      const inReviewTia = procTias.find((t) => t.status === 'in_review' || t.status === 'draft');
+      if (approvedTia) {
+        determinedTiaStatus = 'approved';
+      } else if (inReviewTia) {
+        determinedTiaStatus = 'in_review';
+      } else {
+        determinedTiaStatus = 'missing';
+      }
+    }
+
+    // Review Status determination
+    let isOverdue = false;
+    let computedReviewStatus: 'overdue' | 'due_soon_30d' | 'due_soon_90d' | 'on_track' | 'no_review_scheduled' = 'no_review_scheduled';
+    if (p.nextReviewDate) {
+      const nextRevMillis = new Date(p.nextReviewDate).getTime();
+      if (!isNaN(nextRevMillis)) {
+        if (nextRevMillis < nowMillis) {
+          isOverdue = true;
+          computedReviewStatus = 'overdue';
+        } else if (nextRevMillis - nowMillis <= thirtyDaysMillis) {
+          computedReviewStatus = 'due_soon_30d';
+        } else if (nextRevMillis - nowMillis <= ninetyDaysMillis) {
+          computedReviewStatus = 'due_soon_90d';
+        } else {
+          computedReviewStatus = 'on_track';
+        }
+      }
+    }
+
+    // Evidence Completeness
+    const evCompleteness = evaluateProcessorEvidenceCompleteness(p, procEvidence);
+    const missingCats = evCompleteness.requirements
+      .filter((r) => r.status === 'missing' || r.status === 'expired')
+      .map((r) => r.category);
+
+    // Governance Risk Level
+    const riskEval = evaluateProcessorRiskFlags(p, procTransfers, procEvidence, now);
+
+    return {
+      profile: p,
+      vendorName: vendor?.name || null,
+      vendorCategory: vendor?.category || null,
+      vendorRiskTier: vendor?.riskTier || null,
+      transferArrangementsCount: procTransfers.length,
+      hasRestrictedTransfer: hasRestricted,
+      destinationCountries: destCountries,
+      transferMechanismTypes: mechanisms,
+      tiaStatus: determinedTiaStatus,
+      linkedTiaIds: procTias.map((t) => t.id),
+      linkedSystemAssetIds: procAssets.map((a) => a.id),
+      linkedSystemNames: procAssets.map((a) => a.name),
+      isReviewOverdue: isOverdue,
+      reviewStatus: computedReviewStatus,
+      evidenceCompleteness: {
+        isComplete: evCompleteness.isComplete,
+        missingCount: evCompleteness.missingCount,
+        missingCategories: missingCats,
+      },
+      governanceRiskLevel: riskEval.overallRiskLevel,
+    };
+  });
+
+  // 4. Apply Multi-Dimensional Filters
+  if (restrictedTransfer !== undefined) {
+    inventoryItems = inventoryItems.filter((i) => i.hasRestrictedTransfer === restrictedTransfer);
+  }
+
+  if (transferMechanismType) {
+    inventoryItems = inventoryItems.filter((i) => i.transferMechanismTypes.includes(transferMechanismType));
+  }
+
+  if (tiaStatus) {
+    if (tiaStatus === 'has_approved_tia') {
+      inventoryItems = inventoryItems.filter((i) => i.tiaStatus === 'approved');
+    } else if (tiaStatus === 'has_in_review_tia') {
+      inventoryItems = inventoryItems.filter((i) => i.tiaStatus === 'in_review');
+    } else if (tiaStatus === 'missing_tia') {
+      inventoryItems = inventoryItems.filter((i) => i.tiaStatus === 'missing');
+    } else if (tiaStatus === 'not_required') {
+      inventoryItems = inventoryItems.filter((i) => i.tiaStatus === 'not_required');
+    }
+  }
+
+  if (reviewStatus) {
+    inventoryItems = inventoryItems.filter((i) => i.reviewStatus === reviewStatus);
+  }
+
+  if (missingEvidence !== undefined) {
+    inventoryItems = inventoryItems.filter((i) => (missingEvidence ? !i.evidenceCompleteness.isComplete : i.evidenceCompleteness.isComplete));
+  }
+
+  if (destinationCountry) {
+    const targetCountry = destinationCountry.trim().toUpperCase();
+    inventoryItems = inventoryItems.filter((i) => i.destinationCountries.includes(targetCountry));
+  }
+
+  if (linkedSystemAssetId) {
+    inventoryItems = inventoryItems.filter((i) => i.linkedSystemAssetIds.includes(linkedSystemAssetId));
+  }
+
+  if (searchQuery && searchQuery.trim()) {
+    const q = searchQuery.toLowerCase().trim();
+    inventoryItems = inventoryItems.filter(
+      (i) =>
+        (i.profile.engagementName && i.profile.engagementName.toLowerCase().includes(q)) ||
+        (i.vendorName && i.vendorName.toLowerCase().includes(q)) ||
+        i.profile.vendorId.toLowerCase().includes(q) ||
+        i.destinationCountries.some((c: string) => c.toLowerCase().includes(q)) ||
+        i.linkedSystemNames.some((n: string) => n.toLowerCase().includes(q))
+    );
+  }
+
+  const total = inventoryItems.length;
+  const paginatedItems = inventoryItems.slice(offset, offset + limit);
+
+  return {
+    success: true,
+    total,
+    count: paginatedItems.length,
+    items: paginatedItems,
+  };
 });
 
 // -----------------------------------------------------------------------------

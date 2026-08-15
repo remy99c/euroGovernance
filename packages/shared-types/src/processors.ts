@@ -1764,3 +1764,53 @@ export function evaluateProcessorReminders(
 
   return reminders;
 }
+
+// -----------------------------------------------------------------------------
+// 7. PROCESSOR INVENTORY LIST & SEARCH TYPES
+// -----------------------------------------------------------------------------
+
+export interface ListProcessorInventoryInput {
+  tenantId: string;
+  status?: ProcessorStatus;
+  criticality?: ProcessorCriticality;
+  restrictedTransfer?: boolean;
+  transferMechanismType?: TransferMechanismType;
+  tiaStatus?: 'has_approved_tia' | 'has_in_review_tia' | 'missing_tia' | 'not_required';
+  reviewStatus?: 'overdue' | 'due_soon_30d' | 'due_soon_90d' | 'on_track' | 'no_review_scheduled';
+  missingEvidence?: boolean;
+  destinationCountry?: string;
+  linkedSystemAssetId?: string;
+  searchQuery?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ProcessorInventoryItem {
+  profile: ProcessorProfile;
+  vendorName: string | null;
+  vendorCategory: string | null;
+  vendorRiskTier: string | null;
+  transferArrangementsCount: number;
+  hasRestrictedTransfer: boolean;
+  destinationCountries: string[];
+  transferMechanismTypes: TransferMechanismType[];
+  tiaStatus: 'approved' | 'in_review' | 'missing' | 'not_required';
+  linkedTiaIds: string[];
+  linkedSystemAssetIds: string[];
+  linkedSystemNames: string[];
+  isReviewOverdue: boolean;
+  reviewStatus: 'overdue' | 'due_soon_30d' | 'due_soon_90d' | 'on_track' | 'no_review_scheduled';
+  evidenceCompleteness: {
+    isComplete: boolean;
+    missingCount: number;
+    missingCategories: string[];
+  };
+  governanceRiskLevel: 'critical' | 'high' | 'medium' | 'low';
+}
+
+export interface ProcessorInventoryResponse {
+  success: boolean;
+  count: number;
+  total: number;
+  items: ProcessorInventoryItem[];
+}
