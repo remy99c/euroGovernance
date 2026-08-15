@@ -1,19 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 :root {
-  --bg-primary: #0a0e17;
+  /* =========================================================================
+     Sovereign European GRC Design System (Drata/Vanta Inspired)
+     ========================================================================= */
+
+  /* Surface & Canvas Hierarchy (Calm Dark Palette) */
+  --bg-canvas: #090d16;
+  --bg-canvas-subtle: #0d1322;
   --bg-surface: #111827;
-  --bg-surface-hover: #1f2937;
-  --border-color: #374151;
-  --text-primary: #f9fafb;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
-  --accent-blue: #2563eb;
-  --accent-blue-hover: #1d4ed8;
+  --bg-surface-elevated: #1a2234;
+  --bg-surface-hover: #222d42;
+  --bg-surface-active: #2a3752;
+
+  /* Border & Dividers */
+  --border-subtle: #1e293b;
+  --border-default: #283548;
+  --border-focus: #3b82f6;
+  --border-accent: #2563eb;
+
+  /* High-Contrast Typography */
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-disabled: #475569;
+
+  /* Brand Accents */
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-primary-glow: rgba(37, 99, 235, 0.15);
+
+  /* Semantic Compliance Signals */
+  --status-compliant-bg: rgba(16, 185, 129, 0.12);
+  --status-compliant-fg: #34d399;
+  --status-compliant-border: rgba(16, 185, 129, 0.25);
+  --status-compliant-dot: #10b981;
+
+  --status-warning-bg: rgba(245, 158, 11, 0.12);
+  --status-warning-fg: #fbbf24;
+  --status-warning-border: rgba(245, 158, 11, 0.25);
+  --status-warning-dot: #f59e0b;
+
+  --status-critical-bg: rgba(244, 63, 94, 0.12);
+  --status-critical-fg: #fb7185;
+  --status-critical-border: rgba(244, 63, 94, 0.25);
+  --status-critical-dot: #f43f5e;
+
+  --status-review-bg: rgba(59, 130, 246, 0.12);
+  --status-review-fg: #60a5fa;
+  --status-review-border: rgba(59, 130, 246, 0.25);
+  --status-review-dot: #3b82f6;
+
+  --status-neutral-bg: rgba(100, 116, 139, 0.12);
+  --status-neutral-fg: #cbd5e1;
+  --status-neutral-border: rgba(100, 116, 139, 0.25);
+  --status-neutral-dot: #94a3b8;
+
+  /* Backward Compatibility Variables */
+  --bg-primary: var(--bg-canvas);
+  --border-color: var(--border-subtle);
+  --accent-blue: var(--accent-primary);
+  --accent-blue-hover: var(--accent-primary-hover);
   --status-success: #10b981;
   --status-warning: #f59e0b;
   --status-danger: #ef4444;
   --status-info: #3b82f6;
-  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* Typography & Layout */
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
+
+/* =========================================================================
+   Global Reset & Baseline Styles
+   ========================================================================= */
 
 * {
   box-sizing: border-box;
@@ -21,13 +81,14 @@
   padding: 0;
 }
 
-body {
-  background-color: var(--bg-primary);
+html, body {
+  background-color: var(--bg-canvas);
   color: var(--text-primary);
-  font-family: var(--font-family);
+  font-family: var(--font-sans);
   min-height: 100vh;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {
@@ -40,4 +101,221 @@ button {
   border: none;
   background: none;
   font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Tabular Numerics for precision compliance metrics */
+.font-tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* =========================================================================
+   Standardized UI Utility Classes
+   ========================================================================= */
+
+/* Cards & Surfaces */
+.card-modern {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 20px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-interactive:hover {
+  border-color: var(--border-focus);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Buttons */
+.btn-primary {
+  background-color: var(--accent-primary);
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.15s ease, transform 0.05s ease;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-primary-hover);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-secondary {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-surface-hover);
+  border-color: var(--border-focus);
+}
+
+.btn-success {
+  background-color: var(--status-success);
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-success:hover {
+  background-color: #059669;
+}
+
+.btn-danger {
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #f87171;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.btn-danger:hover {
+  background-color: rgba(239, 68, 68, 0.25);
+}
+
+/* Inputs & Form Controls */
+.input-modern {
+  background-color: var(--bg-canvas-subtle);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input-modern:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--accent-primary-glow);
+}
+
+/* Badges & Status Pills */
+.badge-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge-compliant {
+  background-color: var(--status-compliant-bg);
+  color: var(--status-compliant-fg);
+  border: 1px solid var(--status-compliant-border);
+}
+
+.badge-warning {
+  background-color: var(--status-warning-bg);
+  color: var(--status-warning-fg);
+  border: 1px solid var(--status-warning-border);
+}
+
+.badge-critical {
+  background-color: var(--status-critical-bg);
+  color: var(--status-critical-fg);
+  border: 1px solid var(--status-critical-border);
+}
+
+.badge-review {
+  background-color: var(--status-review-bg);
+  color: var(--status-review-fg);
+  border: 1px solid var(--status-review-border);
+}
+
+.badge-neutral {
+  background-color: var(--status-neutral-bg);
+  color: var(--status-neutral-fg);
+  border: 1px solid var(--status-neutral-border);
+}
+
+/* Modern High-Density Table */
+.table-modern {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.table-modern th {
+  background-color: var(--bg-canvas-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.table-modern td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.table-modern tr:hover td {
+  background-color: var(--bg-surface-hover);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }

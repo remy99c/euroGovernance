@@ -23,6 +23,10 @@ import ProcessorAssuranceInventory from './processor-assurance-inventory';
 import { CertificationsManager } from './certifications-manager';
 import { ProcessorAssessmentWorkspace } from './processor-assessment-workspace';
 import ComplianceOverviewCards, { FrameworkReadinessItem } from './compliance-overview-cards';
+import { UIModal } from './components/ui-modal';
+import { UIEmptyState } from './components/ui-empty-state';
+import { UIBadge } from './components/ui-badge';
+import { UIStatCard } from './components/ui-stat-card';
 
 type TabType =
   | 'overview'
@@ -44,23 +48,73 @@ type TabType =
   | 'exports';
 
 export default function DashboardPage() {
-  const { user, tenantId, setTenantId, userRole, availableTenants, loginDevUser } = useAuth();
+  const { user, userRole, tenantId: currentTenantId, loginDevUser } = useAuth();
+  const [tenantId, setTenantId] = useState<string>(currentTenantId || 'tenant_acme_eu');
   const [activeTab, setActiveTab] = useState<TabType>('overview');
-  const [selectedHubProcessorProfileId, setSelectedHubProcessorProfileId] = useState<string | undefined>(undefined);
-  const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [selectedHubProcessorProfileId, setSelectedHubProcessorProfileId] = useState<string | undefined>();
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Live Data States
+  // Modals state
+  const [createControlModalOpen, setCreateControlModalOpen] = useState(false);
+  const [newControlCode, setNewControlCode] = useState('');
+  const [newControlTitle, setNewControlTitle] = useState('');
+  const [newControlDomain, setNewControlDomain] = useState('Access Control');
+  const [newControlFrameworks, setNewControlFrameworks] = useState('iso_27001, gdpr');
+
+  const [inviteMemberModalOpen, setInviteMemberModalOpen] = useState(false);
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [newMemberRole, setNewMemberRole] = useState('auditor');
+  const [newMemberDept, setNewMemberDept] = useState('Risk & Assurance');
+
+  const [approveEvidenceModal, setApproveEvidenceModal] = useState<{ open: boolean; evidenceId: string; title: string; notes: string }>({
+    open: false,
+    evidenceId: '',
+    title: '',
+    notes: 'Verified compliance with European regulatory safeguards.',
+  });
+
+  const [rejectEvidenceModal, setRejectEvidenceModal] = useState<{ open: boolean; evidenceId: string; title: string; reason: string }>({
+    open: false,
+    evidenceId: '',
+    title: '',
+    reason: 'Requires updated cryptographic signature and ISO control mapping.',
+  });
+
+  const [classifyAIModal, setClassifyAIModal] = useState<{
+    open: boolean;
+    systemId: string;
+    name: string;
+    isProhibited: boolean;
+    annexThreeCategory: string;
+  }>({
+    open: false,
+    systemId: '',
+    name: '',
+    isProhibited: false,
+    annexThreeCategory: 'none',
+  });
+
+  const [adoptFrameworkModal, setAdoptFrameworkModal] = useState<{
+    open: boolean;
+    frameworkId: string;
+    frameworkName: string;
+    scope: string;
+  }>({
+    open: false,
+    frameworkId: '',
+    frameworkName: '',
+    scope: 'Primary EU Operations, Cloud Infrastructure & Customer Data Processing',
+  });
+
+  // State: Data Collections
   const [metrics, setMetrics] = useState<any>(null);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [notifications, setNotifications] = useState<any[]>([]);
   const [controlsList, setControlsList] = useState<any[]>([]);
   const [evidenceList, setEvidenceList] = useState<any[]>([]);
   const [risksList, setRisksList] = useState<any[]>([]);
-  const [issuesList, setIssuesList] = useState<any[]>([]);
   const [tasksList, setTasksList] = useState<any[]>([]);
+  const [issuesList, setIssuesList] = useState<any[]>([]);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [ropaList, setRopaList] = useState<any[]>([]);
-  const [dpiaList, setDpiaList] = useState<any[]>([]);
   const [breachesList, setBreachesList] = useState<any[]>([]);
   const [aiSystemsList, setAiSystemsList] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
@@ -69,194 +123,143 @@ export default function DashboardPage() {
   const [certificationsList, setCertificationsList] = useState<any[]>([]);
   const [assessmentsList, setAssessmentsList] = useState<any[]>([]);
 
+  // State: UI & Actions
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+
+  // Sync tenant ID with auth context
+  useEffect(() => {
+    if (currentTenantId && currentTenantId !== tenantId) {
+      setTenantId(currentTenantId);
+    }
+  }, [currentTenantId]);
+
+  // Notice notification helper
   const showNotice = (msg: string) => {
     setActionNotice(msg);
-    setTimeout(() => setActionNotice(null), 5000);
+    setTimeout(() => setActionNotice(null), 6000);
   };
 
-  // 1. Subscribe to Tenant Data
+  // Subscriptions to Firestore Collections rooted at /tenants/{tenantId}
   useEffect(() => {
-    if (!tenantId || !user) return;
+    if (!tenantId) return;
 
-    // Summary Metrics
-    const metricsRef = doc(db, 'tenants', tenantId, 'summary_metrics', 'current');
-    const unsubMetrics = onSnapshot(
-      metricsRef,
-      (snap) => {
-        if (snap.exists()) {
-          setMetrics(snap.data());
-        }
-      },
-      (err) => console.warn('Metrics snapshot notice:', err.message)
-    );
+    // 1. Summary Metrics
+    const metricsRef = doc(db, 'tenants', tenantId, 'summary_metrics', 'latest');
+    const unsubMetrics = onSnapshot(metricsRef, (snap) => {
+      if (snap.exists()) setMetrics(snap.data());
+    });
 
-    // Audit Logs Stream
-    const auditQuery = query(
-      collection(db, 'tenants', tenantId, 'audit_logs'),
-      orderBy('timestamp', 'desc'),
-      limit(25)
-    );
-    const unsubAudit = onSnapshot(
-      auditQuery,
-      (snap) => {
-        setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Audit logs snapshot notice:', err.message)
-    );
+    // 2. Controls
+    const controlsRef = collection(db, 'tenants', tenantId, 'controls');
+    const unsubControls = onSnapshot(controlsRef, (snap) => {
+      setControlsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Controls
-    const unsubControls = onSnapshot(
-      collection(db, 'tenants', tenantId, 'controls'),
-      (snap) => {
-        setControlsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Controls snapshot notice:', err.message)
-    );
+    // 3. Evidence
+    const evidenceRef = collection(db, 'tenants', tenantId, 'evidence');
+    const unsubEvidence = onSnapshot(evidenceRef, (snap) => {
+      setEvidenceList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Evidence
-    const unsubEvidence = onSnapshot(
-      collection(db, 'tenants', tenantId, 'evidence'),
-      (snap) => {
-        setEvidenceList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Evidence snapshot notice:', err.message)
-    );
+    // 4. Risks
+    const risksRef = collection(db, 'tenants', tenantId, 'risks');
+    const unsubRisks = onSnapshot(risksRef, (snap) => {
+      setRisksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Certifications & Structured Assurance Records
-    const unsubCertifications = onSnapshot(
-      collection(db, 'tenants', tenantId, 'certifications'),
-      (snap) => {
-        setCertificationsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Certifications snapshot notice:', err.message)
-    );
+    // 5. Tasks
+    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+    const unsubTasks = onSnapshot(tasksRef, (snap) => {
+      setTasksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Risks
-    const unsubRisks = onSnapshot(
-      collection(db, 'tenants', tenantId, 'risks'),
-      (snap) => {
-        setRisksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Risks snapshot notice:', err.message)
-    );
+    // 6. Issues
+    const issuesRef = collection(db, 'tenants', tenantId, 'issues');
+    const unsubIssues = onSnapshot(issuesRef, (snap) => {
+      setIssuesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Issues
-    const unsubIssues = onSnapshot(
-      collection(db, 'tenants', tenantId, 'issues'),
-      (snap) => {
-        setIssuesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Issues snapshot notice:', err.message)
-    );
+    // 7. Audit Logs
+    const auditLogsRef = collection(db, 'tenants', tenantId, 'audit_logs');
+    const auditQuery = query(auditLogsRef, orderBy('timestamp', 'desc'), limit(15));
+    const unsubAudit = onSnapshot(auditQuery, (snap) => {
+      setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Tasks
-    const unsubTasks = onSnapshot(
-      collection(db, 'tenants', tenantId, 'tasks'),
-      (snap) => {
-        setTasksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Tasks snapshot notice:', err.message)
-    );
+    // 8. ROPA
+    const ropaRef = collection(db, 'tenants', tenantId, 'ropa_activities');
+    const unsubRopa = onSnapshot(ropaRef, (snap) => {
+      setRopaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // ROPA
-    const unsubRopa = onSnapshot(
-      collection(db, 'tenants', tenantId, 'ropa_entries'),
-      (snap) => {
-        setRopaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('ROPA snapshot notice:', err.message)
-    );
+    // 9. Breaches
+    const breachesRef = collection(db, 'tenants', tenantId, 'breaches');
+    const unsubBreaches = onSnapshot(breachesRef, (snap) => {
+      setBreachesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // DPIA
-    const unsubDpia = onSnapshot(
-      collection(db, 'tenants', tenantId, 'dpia_assessments'),
-      (snap) => {
-        setDpiaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('DPIA snapshot notice:', err.message)
-    );
+    // 10. AI Systems
+    const aiSystemsRef = collection(db, 'tenants', tenantId, 'ai_systems');
+    const unsubAI = onSnapshot(aiSystemsRef, (snap) => {
+      setAiSystemsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Breaches
-    const unsubBreaches = onSnapshot(
-      collection(db, 'tenants', tenantId, 'breaches'),
-      (snap) => {
-        setBreachesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Breaches snapshot notice:', err.message)
-    );
+    // 11. Members
+    const membersRef = collection(db, 'tenants', tenantId, 'members');
+    const unsubMembers = onSnapshot(membersRef, (snap) => {
+      setMembersList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // AI Systems
-    const unsubAI = onSnapshot(
-      collection(db, 'tenants', tenantId, 'ai_systems'),
-      (snap) => {
-        setAiSystemsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('AI snapshot notice:', err.message)
-    );
+    // 12. Export Jobs
+    const exportJobsRef = collection(db, 'tenants', tenantId, 'export_jobs');
+    const unsubExports = onSnapshot(exportJobsRef, (snap) => {
+      setExportJobsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Members
-    const unsubMembers = onSnapshot(
-      collection(db, 'tenants', tenantId, 'memberships'),
-      (snap) => {
-        setMembersList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Members snapshot notice:', err.message)
-    );
+    // 13. Adopted Frameworks
+    const adoptedFrameworksRef = collection(db, 'tenants', tenantId, 'adopted_frameworks');
+    const unsubFrameworks = onSnapshot(adoptedFrameworksRef, (snap) => {
+      setAdoptedFrameworksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Export Jobs
-    const unsubExports = onSnapshot(
-      collection(db, 'tenants', tenantId, 'export_jobs'),
-      (snap) => {
-        setExportJobsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Exports snapshot notice:', err.message)
-    );
+    // 14. Certifications
+    const certsRef = collection(db, 'tenants', tenantId, 'certifications');
+    const unsubCerts = onSnapshot(certsRef, (snap) => {
+      setCertificationsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
-    // Adopted Frameworks
-    const unsubFrameworks = onSnapshot(
-      collection(db, 'tenants', tenantId, 'adopted_frameworks'),
-      (snap) => {
-        setAdoptedFrameworksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Frameworks snapshot notice:', err.message)
-    );
-
-    // Processor Assessments & Questionnaires
-    const unsubAssessments = onSnapshot(
-      collection(db, 'tenants', tenantId, 'processor_assessments'),
-      (snap) => {
-        setAssessmentsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.warn('Processor assessments snapshot notice:', err.message)
-    );
+    // 15. Processor Assessments
+    const assessmentsRef = collection(db, 'tenants', tenantId, 'processor_assessments');
+    const unsubAssessments = onSnapshot(assessmentsRef, (snap) => {
+      setAssessmentsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
 
     return () => {
       unsubMetrics();
-      unsubAudit();
       unsubControls();
       unsubEvidence();
-      unsubCertifications();
       unsubRisks();
-      unsubIssues();
       unsubTasks();
+      unsubIssues();
+      unsubAudit();
       unsubRopa();
-      unsubDpia();
       unsubBreaches();
       unsubAI();
       unsubMembers();
       unsubExports();
       unsubFrameworks();
+      unsubCerts();
       unsubAssessments();
     };
-  }, [tenantId, user]);
+  }, [tenantId]);
 
-  // Actions: Recompute Metrics
+  // Actions: Metrics Recalculation
   const handleRecalculateMetrics = async () => {
     setLoadingAction('metrics');
     try {
-      const fn = httpsCallable(functions, 'materializeTenantMetrics');
-      const res: any = await fn({ tenantId });
-      setMetrics(res.data.metrics);
+      const fn = httpsCallable(functions, 'recalculateTenantMetrics');
+      await fn({ tenantId });
       showNotice('✅ Summary compliance metrics successfully re-materialized from live database records.');
     } catch (err: any) {
       showNotice(`❌ Error recalculating metrics: ${err.message}`);
@@ -266,13 +269,14 @@ export default function DashboardPage() {
   };
 
   // Actions: Four-Eyes Evidence Approval
-  const handleApproveEvidence = async (evidenceId: string) => {
-    const notes = window.prompt('Enter Approval Decision Notes (optional):', 'Verified compliance with European regulatory safeguards.') || 'Verified.';
+  const handleApproveEvidence = async () => {
+    const { evidenceId, notes } = approveEvidenceModal;
     setLoadingAction(`approve_${evidenceId}`);
     try {
       const fn = httpsCallable(functions, 'approveEvidence');
-      await fn({ tenantId, evidenceId, decisionNotes: notes });
+      await fn({ tenantId, evidenceId, decisionNotes: notes || 'Verified.' });
       showNotice('✅ Evidence signed off via Four-Eyes authorization! Immutable audit log recorded.');
+      setApproveEvidenceModal({ open: false, evidenceId: '', title: '', notes: '' });
     } catch (err: any) {
       showNotice(`❌ Approval failed: ${err.message}`);
     } finally {
@@ -281,15 +285,19 @@ export default function DashboardPage() {
   };
 
   // Actions: Evidence Rejection
-  const handleRejectEvidence = async (evidenceId: string) => {
-    const reason = window.prompt('Enter Mandatory Rejection Rationale:', 'Requires updated signature and ISO control mapping.');
-    if (!reason) return;
+  const handleRejectEvidence = async () => {
+    const { evidenceId, reason } = rejectEvidenceModal;
+    if (!reason.trim()) {
+      showNotice('❌ Mandatory rejection rationale is required.');
+      return;
+    }
 
     setLoadingAction(`reject_${evidenceId}`);
     try {
       const fn = httpsCallable(functions, 'rejectEvidence');
       await fn({ tenantId, evidenceId, rejectionReason: reason });
       showNotice('⚠️ Evidence marked as rejected. Contributor notified for revision.');
+      setRejectEvidenceModal({ open: false, evidenceId: '', title: '', reason: '' });
     } catch (err: any) {
       showNotice(`❌ Rejection failed: ${err.message}`);
     } finally {
@@ -299,26 +307,30 @@ export default function DashboardPage() {
 
   // Actions: Create New Control
   const handleCreateControl = async () => {
-    const code = window.prompt('Enter Control Code (e.g. CTL-SEC-99):', `CTL-${Date.now().toString().slice(-4)}`);
-    const title = window.prompt('Enter Control Title:', 'Automated WebAuthn MFA Gateway');
-    if (!code || !title) return;
+    if (!newControlCode || !newControlTitle) {
+      showNotice('❌ Control Code and Title are required.');
+      return;
+    }
 
     setLoadingAction('create_control');
     try {
       const fn = httpsCallable(functions, 'createTenantControl');
       await fn({
         tenantId,
-        code,
-        title,
+        code: newControlCode,
+        title: newControlTitle,
         description: 'Enforces hardware security key token authentication across all administrative interfaces.',
-        domain: 'Access Control',
-        frameworkIds: ['iso_27001', 'gdpr', 'eu_ai_act'],
+        domain: newControlDomain,
+        frameworkIds: newControlFrameworks.split(',').map((f) => f.trim()),
         requirementIds: ['A.9.1', 'Art. 32'],
         status: 'implemented',
         healthScore: 100,
         enforcementMechanism: 'automated',
       });
-      showNotice(`✅ Control ${code} created successfully!`);
+      showNotice(`✅ Control ${newControlCode} created successfully!`);
+      setCreateControlModalOpen(false);
+      setNewControlCode('');
+      setNewControlTitle('');
     } catch (err: any) {
       showNotice(`❌ Control creation failed: ${err.message}`);
     } finally {
@@ -328,15 +340,18 @@ export default function DashboardPage() {
 
   // Actions: Invite New Member
   const handleInviteMember = async () => {
-    const email = window.prompt('Enter colleague email address:', 'auditor@kpmg.de');
-    const role = window.prompt('Enter role (tenant_admin, compliance_manager, security_manager, privacy_manager, ai_governance_manager, auditor, contributor, viewer):', 'auditor');
-    if (!email || !role) return;
+    if (!newMemberEmail || !newMemberRole) {
+      showNotice('❌ Email and Role are required.');
+      return;
+    }
 
     setLoadingAction('invite_member');
     try {
       const fn = httpsCallable(functions, 'inviteUserToTenant');
-      await fn({ tenantId, email, role, department: 'Risk & Assurance' });
-      showNotice(`✅ Invitation dispatched to ${email} with role ${role}!`);
+      await fn({ tenantId, email: newMemberEmail, role: newMemberRole, department: newMemberDept });
+      showNotice(`✅ Invitation dispatched to ${newMemberEmail} with role ${newMemberRole}!`);
+      setInviteMemberModalOpen(false);
+      setNewMemberEmail('');
     } catch (err: any) {
       showNotice(`❌ Invitation failed: ${err.message}`);
     } finally {
@@ -348,30 +363,30 @@ export default function DashboardPage() {
   const handleRequestExport = async (exportType: string) => {
     setLoadingAction(`export_${exportType}`);
     try {
-      const fn = httpsCallable(functions, 'generateTenantEvidenceExport');
-      const res: any = await fn({ tenantId, exportType });
-      showNotice(`✅ Export job ${res.data.jobId} completed! File stored at ${res.data.fileStoragePath}`);
+      const fn = httpsCallable(functions, 'requestExportPackage');
+      const res: any = await fn({
+        tenantId,
+        exportType,
+        format: exportType.endsWith('_pdf') ? 'pdf' : exportType.endsWith('_xlsx') ? 'xlsx' : 'zip',
+      });
+      showNotice(`📦 Export queued! Storage Path: ${res.data.fileStoragePath}`);
     } catch (err: any) {
-      showNotice(`❌ Export request failed: ${err.message}`);
+      showNotice(`❌ Export failed: ${err.message}`);
     } finally {
       setLoadingAction(null);
     }
   };
 
-  // Actions: Processor Assessment Handlers
-  const handleCreateAssessment = async (assessmentData: any, autoSend: boolean) => {
+  // Actions: Assessment Lifecycle Handlers
+  const handleCreateAssessment = async (assessment: any, autoSend: boolean) => {
     setLoadingAction('create_assessment');
     try {
       const fn = httpsCallable(functions, 'createProcessorAssessment');
-      const res: any = await fn({
-        tenantId,
-        ...assessmentData,
-        autoSend,
-      });
-      showNotice(`✅ Processor assessment "${assessmentData.title}" created successfully!`);
+      const res: any = await fn({ tenantId, ...assessment, autoSend });
+      showNotice(`✅ Assessment ${res.data.title || res.data.id} created!`);
       return res.data;
     } catch (err: any) {
-      showNotice(`❌ Assessment creation failed: ${err.message}`);
+      showNotice(`❌ Creation failed: ${err.message}`);
       throw err;
     } finally {
       setLoadingAction(null);
@@ -383,7 +398,7 @@ export default function DashboardPage() {
     try {
       const fn = httpsCallable(functions, 'sendProcessorAssessment');
       const res: any = await fn({ tenantId, assessmentId });
-      showNotice(`✅ Assessment access link dispatched to ${res.data.respondentEmail}!`);
+      showNotice(`🚀 Assessment access link generated!`);
       return res.data;
     } catch (err: any) {
       showNotice(`❌ Send failed: ${err.message}`);
@@ -399,21 +414,19 @@ export default function DashboardPage() {
     reviewNotes?: string,
     rejectionReason?: string,
     revisionRequestNotes?: string,
-    questionReviews?: Record<string, any>
+    questionReviews?: Record<string, { reviewerFlag?: 'ok' | 'concern' | 'gap' | 'critical_finding'; reviewerComment?: string }>
   ) => {
     setLoadingAction(`review_${assessmentId}`);
     try {
       const fn = httpsCallable(functions, 'reviewProcessorAssessment');
-      const res: any = await fn({
+      await fn({
         tenantId,
         assessmentId,
-        decision,
-        reviewNotes,
-        rejectionReason,
-        revisionRequestNotes,
-        questionReviews,
+        reviewDecision: decision === 'accept' ? 'approved' : decision === 'reject' ? 'rejected' : decision === 'request_revision' ? 'remediation_required' : 'in_review',
+        reviewNotes: reviewNotes || revisionRequestNotes || rejectionReason,
+        findings: questionReviews ? Object.entries(questionReviews).map(([qId, val]) => ({ questionId: qId, ...val })) : [],
       });
-      showNotice(`✅ Assessment review updated! New status: ${res.data.status.toUpperCase()}, Score: ${res.data.score}%.`);
+      showNotice(`✅ Assessment review updated!`);
     } catch (err: any) {
       showNotice(`❌ Review failed: ${err.message}`);
       throw err;
@@ -425,7 +438,7 @@ export default function DashboardPage() {
   const handleRenewAssessment = async (previousAssessmentId: string, dueDate: string) => {
     setLoadingAction(`renew_${previousAssessmentId}`);
     try {
-      const fn = httpsCallable(functions, 'renewRecurringProcessorAssessment');
+      const fn = httpsCallable(functions, 'renewRecurringAssessment');
       const res: any = await fn({
         tenantId,
         previousAssessmentId,
@@ -440,16 +453,15 @@ export default function DashboardPage() {
       setLoadingAction(null);
     }
   };
-  const handleClassifyAI = async (aiSystemId: string) => {
-    const isProhibited = window.confirm('Does this system perform biometric categorization or cognitive manipulation? (OK = Yes, Cancel = No)');
-    const isAnnex3 = window.confirm('Is this system used in credit scoring, employment, or critical infrastructure? (OK = Yes, Cancel = No)');
 
-    setLoadingAction(`classify_${aiSystemId}`);
+  const handleClassifyAI = async () => {
+    const { systemId, isProhibited, annexThreeCategory } = classifyAIModal;
+    setLoadingAction(`classify_${systemId}`);
     try {
       const fn = httpsCallable(functions, 'classifyTenantAISystem');
       const res: any = await fn({
         tenantId,
-        aiSystemId,
+        aiSystemId: systemId,
         prohibitedPracticesCheck: {
           cognitiveBehavioralManipulation: isProhibited,
           vulnerabilityExploitation: false,
@@ -460,10 +472,11 @@ export default function DashboardPage() {
           biometricCategorizationSensitive: false,
           realTimeRemoteBiometricIdentification: false,
         },
-        annexThreeCategory: isAnnex3 ? 'essential_services_benefits' : 'none',
+        annexThreeCategory,
         justificationSummary: 'Classification determination processed via automated governance matrix.',
       });
       showNotice(`✅ AI System reclassified to: ${res.data.determinedRiskTier.toUpperCase()}!`);
+      setClassifyAIModal({ open: false, systemId: '', name: '', isProhibited: false, annexThreeCategory: 'none' });
     } catch (err: any) {
       showNotice(`❌ AI classification failed: ${err.message}`);
     } finally {
@@ -472,13 +485,8 @@ export default function DashboardPage() {
   };
 
   // Actions: Framework Adoption & Scoping
-  const handleAdoptFramework = async (frameworkId: string, frameworkName: string) => {
-    const scope = window.prompt(
-      `Enter organizational compliance scope for ${frameworkName}:`,
-      'Primary EU Operations, Cloud Infrastructure & Customer Data Processing'
-    );
-    if (!scope) return;
-
+  const handleAdoptFramework = async () => {
+    const { frameworkId, frameworkName, scope } = adoptFrameworkModal;
     setLoadingAction(`adopt_${frameworkId}`);
     try {
       const fn = httpsCallable(functions, 'adoptFramework');
@@ -489,6 +497,7 @@ export default function DashboardPage() {
         scopingBoundaries: ['Frankfurt Production Cloud', 'EU Data Centers'],
       });
       showNotice(`✅ Successfully adopted ${frameworkName}! Initialized scoping and applicability matrix.`);
+      setAdoptFrameworkModal({ open: false, frameworkId: '', frameworkName: '', scope: '' });
     } catch (err: any) {
       showNotice(`❌ Framework adoption failed: ${err.message}`);
     } finally {
@@ -501,77 +510,79 @@ export default function DashboardPage() {
     setLoadingAction(`instantiate_${frameworkId}`);
     try {
       const fn = httpsCallable(functions, 'instantiateFrameworkControls');
-      const res: any = await fn({
-        tenantId,
-        frameworkId,
-      });
-      showNotice(
-        `✅ Instantiated ${res.data.createdControlsCount} controls from ${frameworkName} into tenant catalog!`
-      );
+      const res: any = await fn({ tenantId, frameworkId });
+      showNotice(`✅ ${frameworkName} instantiated! Added ${res.data.controlsCreatedCount} controls.`);
     } catch (err: any) {
-      showNotice(`❌ Control instantiation failed: ${err.message}`);
+      showNotice(`❌ Instantiation failed: ${err.message}`);
     } finally {
       setLoadingAction(null);
     }
   };
 
+  // Mock available tenants
+  const availableTenants = [
+    { id: 'tenant_acme_eu', name: 'Acme Health Europe (Frankfurt)' },
+    { id: 'tenant_fintech_berlin', name: 'Berlin FinTech Sovereign AG' },
+    { id: 'tenant_cloud_paris', name: 'Paris Cloud Solutions SAS' },
+  ];
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-primary)' }}>
-      {/* Sidebar */}
+    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-canvas)' }}>
+      {/* Sidebar Navigation */}
       <aside
         style={{
-          width: '260px',
+          width: '270px',
           backgroundColor: 'var(--bg-surface)',
-          borderRight: '1px solid var(--border-color)',
+          borderRight: '1px solid var(--border-subtle)',
           padding: '24px 16px',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
+          flexShrink: 0,
         }}
       >
         <div>
-          {/* Logo */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', paddingLeft: '8px' }}>
+          {/* Logo & Brand Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', padding: '0 8px' }}>
             <div
               style={{
                 width: '36px',
                 height: '36px',
                 borderRadius: '8px',
-                backgroundColor: 'var(--accent-blue)',
+                backgroundColor: 'var(--accent-primary)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontWeight: 700,
-                color: '#fff',
-                fontSize: '16px',
+                fontWeight: 800,
+                color: '#ffffff',
+                fontSize: '15px',
+                boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
               }}
             >
               EG
             </div>
             <div>
-              <div style={{ fontWeight: 600, fontSize: '15px' }}>euroGovernance</div>
+              <div style={{ fontWeight: 700, fontSize: '15px', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
+                euroGovernance
+              </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Sovereign GRC Operating System</div>
             </div>
           </div>
 
-          {/* Tenant Switcher */}
-          <div style={{ marginBottom: '20px', padding: '0 4px' }}>
-            <label style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+          {/* Tenant Context Selector */}
+          <div style={{ marginBottom: '20px', padding: '0 6px' }}>
+            <label style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               Active Tenant Context
             </label>
             <select
               value={tenantId}
               onChange={(e) => setTenantId(e.target.value)}
+              className="input-modern"
               style={{
                 width: '100%',
                 marginTop: '6px',
-                padding: '8px',
-                borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-                backgroundColor: 'var(--bg-primary)',
-                color: 'var(--text-primary)',
                 fontSize: '12px',
-                fontWeight: 500,
+                fontWeight: 600,
               }}
             >
               {availableTenants.map((t: { id: string; name: string }) => (
@@ -654,11 +665,14 @@ export default function DashboardPage() {
                           borderRadius: '6px',
                           fontSize: '12.5px',
                           fontWeight: isSelected ? 600 : 400,
-                          backgroundColor: isSelected ? 'var(--accent-blue)' : 'transparent',
+                          backgroundColor: isSelected ? 'var(--accent-primary)' : 'transparent',
                           color: isSelected ? '#ffffff' : 'var(--text-secondary)',
                           border: 'none',
                           cursor: 'pointer',
                           transition: 'background-color 0.15s ease, color 0.15s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
                         }}
                         onMouseEnter={(e) => {
                           if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
@@ -667,7 +681,7 @@ export default function DashboardPage() {
                           if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
                         }}
                       >
-                        {tab.label}
+                        <span>{tab.label}</span>
                       </button>
                     );
                   })}
@@ -678,10 +692,10 @@ export default function DashboardPage() {
         </div>
 
         {/* RBAC Persona Switcher (Dev Mode) */}
-        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px', paddingLeft: '4px' }}>
+        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '14px', paddingLeft: '4px' }}>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
             <span>Role Context:</span>
-            <span style={{ fontWeight: 700, color: 'var(--accent-blue)', textTransform: 'capitalize' }}>
+            <span style={{ fontWeight: 700, color: 'var(--accent-primary)', textTransform: 'capitalize' }}>
               {userRole?.replace('_', ' ')}
             </span>
           </div>
@@ -704,8 +718,8 @@ export default function DashboardPage() {
                   padding: '5px 2px',
                   textAlign: 'center',
                   borderRadius: '4px',
-                  border: '1px solid var(--border-color)',
-                  backgroundColor: userRole === r.id ? 'var(--accent-blue)' : 'var(--bg-primary)',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: userRole === r.id ? 'var(--accent-primary)' : 'var(--bg-canvas-subtle)',
                   color: userRole === r.id ? '#ffffff' : 'var(--text-secondary)',
                   cursor: 'pointer',
                   transition: 'background-color 0.15s ease',
@@ -725,8 +739,8 @@ export default function DashboardPage() {
           <div
             style={{
               padding: '12px 18px',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--accent-blue)',
+              backgroundColor: 'var(--bg-surface-elevated)',
+              border: '1px solid var(--border-focus)',
               borderRadius: '8px',
               marginBottom: '24px',
               fontSize: '13px',
@@ -734,10 +748,11 @@ export default function DashboardPage() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
             }}
           >
             <span>{actionNotice}</span>
-            <button onClick={() => setActionNotice(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+            <button onClick={() => setActionNotice(null)} style={{ color: 'var(--text-muted)', fontSize: '16px' }}>
               ✕
             </button>
           </div>
@@ -747,10 +762,10 @@ export default function DashboardPage() {
         {activeTab === 'overview' && (
           <div>
             {/* Dynamic Role Header */}
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
                     {userRole === 'auditor' && '🔍 Independent Auditor Assurance & Readiness Workspace'}
                     {userRole === 'tenant_admin' && '👑 Enterprise Administration & Health Posture'}
                     {(userRole === 'compliance_manager' || userRole === 'security_manager') && '🛡️ Continuous Compliance & Governance Operations'}
@@ -759,20 +774,9 @@ export default function DashboardPage() {
                     {userRole === 'contributor' && '✍️ My Compliance Action Inbox & Assigned Tasks'}
                     {!['auditor', 'tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'].includes(userRole) && '📊 Compliance & Governance Overview'}
                   </h1>
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      padding: '2px 8px',
-                      borderRadius: '9999px',
-                      backgroundColor: 'rgba(37, 99, 235, 0.15)',
-                      color: 'var(--accent-blue)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                    }}
-                  >
+                  <UIBadge variant={userRole === 'auditor' ? 'review' : 'compliant'}>
                     {userRole === 'auditor' ? 'Read-Only Assurance Mode' : `${userRole?.replace('_', ' ')} Mode`}
-                  </span>
+                  </UIBadge>
                 </div>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                   {userRole === 'auditor' && 'Inspect verified technical controls, four-eyes evidence lockers, deterministic scoping rationales, and generate compliance dossiers.'}
@@ -792,31 +796,13 @@ export default function DashboardPage() {
                     <button
                       onClick={() => handleRequestExport('framework_soc2_dossier')}
                       disabled={loadingAction === 'export_framework_soc2_dossier'}
-                      style={{
-                        backgroundColor: 'var(--status-success)',
-                        color: '#fff',
-                        padding: '8px 16px',
-                        borderRadius: '6px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        border: 'none',
-                        cursor: 'pointer',
-                      }}
+                      className="btn-success"
                     >
                       📦 1-Click Audit Dossier (ZIP)
                     </button>
                     <button
                       onClick={() => setActiveTab('applicability_review')}
-                      style={{
-                        backgroundColor: 'var(--bg-surface-hover)',
-                        color: '#fff',
-                        padding: '8px 16px',
-                        borderRadius: '6px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        border: '1px solid var(--border-color)',
-                        cursor: 'pointer',
-                      }}
+                      className="btn-secondary"
                     >
                       🔍 Inspect Scoping Rationale
                     </button>
@@ -825,32 +811,14 @@ export default function DashboardPage() {
                   <>
                     <button
                       onClick={() => setActiveTab('frameworks')}
-                      style={{
-                        backgroundColor: 'var(--status-success)',
-                        color: '#fff',
-                        padding: '8px 16px',
-                        borderRadius: '6px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        border: 'none',
-                        cursor: 'pointer',
-                      }}
+                      className="btn-success"
                     >
                       🚀 Framework Wizard
                     </button>
                     <button
                       onClick={handleRecalculateMetrics}
                       disabled={loadingAction === 'metrics'}
-                      style={{
-                        backgroundColor: 'var(--accent-blue)',
-                        color: '#fff',
-                        padding: '8px 16px',
-                        borderRadius: '6px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        border: 'none',
-                        cursor: 'pointer',
-                      }}
+                      className="btn-primary"
                     >
                       {loadingAction === 'metrics' ? 'Calculating...' : '🔄 Re-calculate Live Metrics'}
                     </button>
@@ -873,65 +841,60 @@ export default function DashboardPage() {
             {userRole === 'auditor' && (
               <div style={{ marginBottom: '24px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
-                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Audit Readiness Score</div>
-                    <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--status-success)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
-                      {metrics?.overallComplianceScore ?? 92}%
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      Ready for Statutory Review
-                    </div>
-                  </div>
+                  <UIStatCard
+                    label="Audit Readiness Score"
+                    value={`${metrics?.overallComplianceScore ?? 92}%`}
+                    subtext="Ready for Statutory Review"
+                    valueColor="var(--status-compliant-fg)"
+                    progressPercentage={metrics?.overallComplianceScore ?? 92}
+                  />
 
-                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Verified Controls</div>
-                    <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--text-primary)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
-                      {controlsList.filter((c) => c.status === 'implemented').length} <span style={{ fontSize: '16px', color: 'var(--text-muted)' }}>/ {controlsList.length || 85}</span>
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--status-success)', marginTop: '4px' }}>
-                      100% Deterministic Lineage
-                    </div>
-                  </div>
+                  <UIStatCard
+                    label="Verified Controls"
+                    value={`${controlsList.filter((c) => c.status === 'implemented').length} / ${controlsList.length || 85}`}
+                    subtext="100% Deterministic Lineage"
+                    progressPercentage={controlsList.length > 0 ? (controlsList.filter((c) => c.status === 'implemented').length / controlsList.length) * 100 : 90}
+                  />
 
-                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Four-Eyes Evidence Files</div>
-                    <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--accent-blue)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
-                      {evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      SHA-256 Hashed Artifacts
-                    </div>
-                  </div>
+                  <UIStatCard
+                    label="Four-Eyes Evidence"
+                    value={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
+                    subtext="SHA-256 Hashed Artifacts"
+                    valueColor="var(--accent-primary)"
+                  />
 
-                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Open Audit Gaps</div>
-                    <div style={{ fontSize: '28px', fontWeight: 800, color: issuesList.filter((i) => i.status === 'open').length > 0 ? 'var(--status-warning)' : 'var(--status-success)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
-                      {issuesList.filter((i) => i.status === 'open').length}
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      {issuesList.filter((i) => i.status === 'open').length === 0 ? 'Zero Critical Exceptions' : 'Remediations in Progress'}
-                    </div>
-                  </div>
+                  <UIStatCard
+                    label="Open Audit Gaps"
+                    value={issuesList.filter((i) => i.status === 'open').length}
+                    subtext={issuesList.filter((i) => i.status === 'open').length === 0 ? 'Zero Critical Exceptions' : 'Remediations in Progress'}
+                    valueColor={issuesList.filter((i) => i.status === 'open').length > 0 ? 'var(--status-warning-fg)' : 'var(--status-compliant-fg)'}
+                  />
                 </div>
 
                 {/* Auditor Quick Inspection Box */}
-                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '20px', marginBottom: '20px' }}>
+                <div className="card-modern" style={{ marginBottom: '20px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                     <div>
-                      <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>Four-Eyes Verified Evidence Repository Preview</h3>
+                      <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        Four-Eyes Verified Evidence Repository Preview
+                      </h3>
                       <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
                         Immutable compliance documentation verified with multi-stakeholder sign-offs.
                       </p>
                     </div>
                     <button
                       onClick={() => setActiveTab('evidence')}
-                      style={{ fontSize: '12px', color: 'var(--accent-blue)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}
+                      style={{ fontSize: '12px', color: 'var(--accent-primary)', fontWeight: 600 }}
                     >
                       View All Evidence ➔
                     </button>
                   </div>
                   {evidenceList.length === 0 ? (
-                    <div style={{ fontSize: '13px', color: 'var(--text-muted)', padding: '12px 0' }}>No evidence files submitted yet.</div>
+                    <UIEmptyState
+                      icon="📁"
+                      title="No Evidence Uploaded Yet"
+                      description="When evidence files are submitted and signed off, they will appear here with cryptographic SHA-256 hashes."
+                    />
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {evidenceList.slice(0, 4).map((ev) => (
@@ -942,9 +905,9 @@ export default function DashboardPage() {
                             justifyContent: 'space-between',
                             alignItems: 'center',
                             padding: '10px 14px',
-                            backgroundColor: 'var(--bg-primary)',
-                            borderRadius: '6px',
-                            border: '1px solid var(--border-color)',
+                            backgroundColor: 'var(--bg-canvas-subtle)',
+                            borderRadius: '8px',
+                            border: '1px solid var(--border-subtle)',
                             fontSize: '12px',
                           }}
                         >
@@ -957,20 +920,9 @@ export default function DashboardPage() {
                               </div>
                             </div>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span
-                              style={{
-                                fontSize: '10.5px',
-                                fontWeight: 700,
-                                padding: '2px 8px',
-                                borderRadius: '4px',
-                                backgroundColor: ev.status === 'approved' || ev.status === 'valid' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                                color: ev.status === 'approved' || ev.status === 'valid' ? 'var(--status-success)' : 'var(--status-warning)',
-                              }}
-                            >
-                              {(ev.status || 'valid').toUpperCase()}
-                            </span>
-                          </div>
+                          <UIBadge variant={ev.status === 'approved' || ev.status === 'valid' ? 'compliant' : 'warning'}>
+                            {(ev.status || 'valid').toUpperCase()}
+                          </UIBadge>
                         </div>
                       ))}
                     </div>
@@ -982,54 +934,45 @@ export default function DashboardPage() {
             {/* Standard Metrics & Operational Stream for Other Roles */}
             {userRole !== 'auditor' && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Overall Readiness Score</div>
-                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--status-success)', marginTop: '4px' }}>
-                    {metrics?.overallComplianceScore ?? 88}%
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    {metrics?.implementedControlsCount ?? controlsList.filter((c) => c.status === 'implemented').length} of{' '}
-                    {metrics?.totalControlsCount ?? controlsList.length} Controls Verified
-                  </div>
-                </div>
+                <UIStatCard
+                  label="Overall Readiness Score"
+                  value={`${metrics?.overallComplianceScore ?? 88}%`}
+                  subtext={`${metrics?.implementedControlsCount ?? controlsList.filter((c) => c.status === 'implemented').length} of ${metrics?.totalControlsCount ?? controlsList.length} Controls Verified`}
+                  valueColor="var(--status-compliant-fg)"
+                  progressPercentage={metrics?.overallComplianceScore ?? 88}
+                />
 
-                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pending Evidence Reviews</div>
-                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--status-warning)', marginTop: '4px' }}>
-                    {metrics?.pendingEvidenceReviewsCount ?? evidenceList.filter((e) => e.status === 'under_review').length}
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Four-Eyes Queue</div>
-                </div>
+                <UIStatCard
+                  label="Pending Evidence Reviews"
+                  value={metrics?.pendingEvidenceReviewsCount ?? evidenceList.filter((e) => e.status === 'under_review').length}
+                  subtext="Four-Eyes Queue"
+                  valueColor="var(--status-warning-fg)"
+                />
 
-                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Active AI Systems</div>
-                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '4px' }}>
-                    {metrics?.registeredAISystemsCount ?? aiSystemsList.length}
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    {aiSystemsList.filter((a) => a.riskTier === 'high_risk').length} High-Risk Models
-                  </div>
-                </div>
+                <UIStatCard
+                  label="Active AI Systems"
+                  value={metrics?.registeredAISystemsCount ?? aiSystemsList.length}
+                  subtext={`${aiSystemsList.filter((a) => a.riskTier === 'high_risk').length} High-Risk Models`}
+                  valueColor="var(--accent-primary)"
+                />
 
-                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Open Remediation Tasks</div>
-                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
-                    {tasksList.filter((t) => t.status !== 'completed').length}
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    {issuesList.filter((i) => i.status === 'open').length} Unresolved Issues
-                  </div>
-                </div>
+                <UIStatCard
+                  label="Open Remediation Tasks"
+                  value={tasksList.filter((t) => t.status !== 'completed').length}
+                  subtext={`${issuesList.filter((i) => i.status === 'open').length} Unresolved Issues`}
+                />
               </div>
             )}
 
             {/* Live Audit Stream */}
-            <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '20px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px' }}>Immutable Live Audit Trail</h2>
+            <div className="card-modern">
+              <h2 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '16px', color: 'var(--text-primary)' }}>
+                Immutable Live Audit Trail
+              </h2>
               {auditLogs.length === 0 ? (
                 <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>No audit events logged yet.</div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {auditLogs.map((log) => (
                     <div
                       key={log.id}
@@ -1037,16 +980,18 @@ export default function DashboardPage() {
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
-                        paddingBottom: '10px',
-                        borderBottom: '1px solid var(--border-color)',
+                        padding: '8px 12px',
+                        backgroundColor: 'var(--bg-canvas-subtle)',
+                        borderRadius: '6px',
                         fontSize: '12px',
+                        border: '1px solid var(--border-subtle)',
                       }}
                     >
                       <div>
-                        <span style={{ fontWeight: 600, color: 'var(--accent-blue)' }}>[{log.action?.toUpperCase()}]</span>{' '}
-                        <span style={{ fontWeight: 500 }}>{log.entityType}</span> ({log.entityId}) • {log.actorEmail || log.actorId}
+                        <span style={{ fontWeight: 700, color: 'var(--accent-primary)' }}>[{log.action?.toUpperCase()}]</span>{' '}
+                        <span style={{ fontWeight: 600 }}>{log.entityType}</span> ({log.entityId}) • {log.actorEmail || log.actorId}
                       </div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                      <div className="font-tabular" style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
                         {new Date(log.timestamp).toLocaleTimeString()}
                       </div>
                     </div>
@@ -1062,32 +1007,21 @@ export default function DashboardPage() {
           <div>
             <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div>
-                <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Unified Controls Catalog</h1>
+                <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                  Unified Controls Catalog
+                </h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                   Tenant-adopted technical, organizational, and AI governance controls.
                 </p>
               </div>
-              <button
-                onClick={handleCreateControl}
-                disabled={loadingAction === 'create_control'}
-                style={{
-                  backgroundColor: 'var(--status-success)',
-                  color: '#fff',
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
+              <button onClick={() => setCreateControlModalOpen(true)} className="btn-success">
                 + Custom Control
               </button>
             </header>
 
             {/* Framework Adoption & Instantiation Deck */}
-            <div style={{ marginBottom: '24px', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '16px' }}>
-              <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>
+            <div className="card-modern" style={{ marginBottom: '24px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '12px', color: 'var(--text-primary)' }}>
                 Adopt Canonical Frameworks & Instantiate Controls
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
@@ -1103,8 +1037,8 @@ export default function DashboardPage() {
                       style={{
                         padding: '14px',
                         borderRadius: '8px',
-                        border: '1px solid var(--border-color)',
-                        backgroundColor: 'var(--bg-surface-hover)',
+                        border: '1px solid var(--border-subtle)',
+                        backgroundColor: 'var(--bg-canvas-subtle)',
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
@@ -1112,19 +1046,10 @@ export default function DashboardPage() {
                     >
                       <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontWeight: 600, fontSize: '13px' }}>{fw.name}</span>
-                          <span
-                            style={{
-                              fontSize: '10px',
-                              padding: '2px 6px',
-                              borderRadius: '4px',
-                              fontWeight: 600,
-                              backgroundColor: adopted ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.15)',
-                              color: adopted ? 'var(--status-success)' : 'var(--text-muted)',
-                            }}
-                          >
+                          <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-primary)' }}>{fw.name}</span>
+                          <UIBadge variant={adopted ? 'compliant' : 'neutral'}>
                             {adopted ? adopted.status?.toUpperCase() : 'NOT ADOPTED'}
-                          </span>
+                          </UIBadge>
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                           {fw.domain}
@@ -1139,37 +1064,25 @@ export default function DashboardPage() {
                       <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
                         {!adopted ? (
                           <button
-                            onClick={() => handleAdoptFramework(fw.id, fw.name)}
-                            disabled={loadingAction === `adopt_${fw.id}`}
-                            style={{
-                              flex: 1,
-                              backgroundColor: 'var(--accent-blue)',
-                              color: '#fff',
-                              padding: '6px 10px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              border: 'none',
-                              cursor: 'pointer',
-                            }}
+                            onClick={() =>
+                              setAdoptFrameworkModal({
+                                open: true,
+                                frameworkId: fw.id,
+                                frameworkName: fw.name,
+                                scope: 'Primary EU Operations, Cloud Infrastructure & Customer Data Processing',
+                              })
+                            }
+                            className="btn-primary"
+                            style={{ flex: 1, padding: '6px 10px', fontSize: '11px' }}
                           >
-                            {loadingAction === `adopt_${fw.id}` ? 'Adopting...' : 'Adopt & Scope'}
+                            Adopt & Scope
                           </button>
                         ) : (
                           <button
                             onClick={() => handleInstantiateFramework(fw.id, fw.name)}
                             disabled={loadingAction === `instantiate_${fw.id}`}
-                            style={{
-                              flex: 1,
-                              backgroundColor: 'var(--accent-blue)',
-                              color: '#fff',
-                              padding: '6px 10px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              border: 'none',
-                              cursor: 'pointer',
-                            }}
+                            className="btn-primary"
+                            style={{ flex: 1, padding: '6px 10px', fontSize: '11px' }}
                           >
                             {loadingAction === `instantiate_${fw.id}` ? 'Instantiating...' : '⚡ Instantiate Controls'}
                           </button>
@@ -1181,52 +1094,54 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: 'var(--bg-surface-hover)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '12px 16px' }}>Code</th>
-                    <th style={{ padding: '12px 16px' }}>Title</th>
-                    <th style={{ padding: '12px 16px' }}>Domain</th>
-                    <th style={{ padding: '12px 16px' }}>Frameworks</th>
-                    <th style={{ padding: '12px 16px' }}>Status</th>
-                    <th style={{ padding: '12px 16px' }}>Health</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {controlsList.map((ctl) => (
-                    <tr key={ctl.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--accent-blue)' }}>{ctl.code}</td>
-                      <td style={{ padding: '12px 16px', fontWeight: 500 }}>{ctl.title}</td>
-                      <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{ctl.domain}</td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                          {(ctl.frameworkIds || []).map((fw: string) => (
-                            <span key={fw} style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-primary)', fontSize: '10px' }}>
-                              {fw}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <span
-                          style={{
-                            padding: '3px 8px',
-                            borderRadius: '4px',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            backgroundColor: ctl.status === 'implemented' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-                            color: ctl.status === 'implemented' ? 'var(--status-success)' : 'var(--status-warning)',
-                          }}
-                        >
-                          {ctl.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px 16px', fontWeight: 600 }}>{ctl.healthScore}%</td>
+            {/* Controls Table */}
+            <div className="card-modern" style={{ padding: 0, overflow: 'hidden' }}>
+              {controlsList.length === 0 ? (
+                <UIEmptyState
+                  icon="🛡️"
+                  title="No Controls Found"
+                  description="Adopt a compliance framework or instantiate custom security controls to begin continuous assurance."
+                  actionText="+ Create Custom Control"
+                  onAction={() => setCreateControlModalOpen(true)}
+                />
+              ) : (
+                <table className="table-modern">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Title</th>
+                      <th>Domain</th>
+                      <th>Frameworks</th>
+                      <th>Status</th>
+                      <th>Health</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {controlsList.map((ctl) => (
+                      <tr key={ctl.id}>
+                        <td style={{ fontWeight: 700, color: 'var(--accent-primary)' }}>{ctl.code}</td>
+                        <td style={{ fontWeight: 600 }}>{ctl.title}</td>
+                        <td style={{ color: 'var(--text-muted)' }}>{ctl.domain}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                            {(ctl.frameworkIds || []).map((fw: string) => (
+                              <span key={fw} style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-canvas-subtle)', fontSize: '10px', fontWeight: 600 }}>
+                                {fw}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          <UIBadge variant={ctl.status === 'implemented' ? 'compliant' : 'warning'}>
+                            {ctl.status}
+                          </UIBadge>
+                        </td>
+                        <td className="font-tabular" style={{ fontWeight: 700 }}>{ctl.healthScore}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}
@@ -1235,96 +1150,91 @@ export default function DashboardPage() {
         {activeTab === 'evidence' && (
           <div>
             <header style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Evidence Review & Four-Eyes Queue</h1>
+              <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                Evidence Review & Four-Eyes Queue
+              </h1>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                 Privileged approval workflows. Direct client status jumps are blocked by security rules.
               </p>
             </header>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {evidenceList.map((ev) => (
-                <div
-                  key={ev.id}
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '10px',
-                    padding: '20px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '14px', fontWeight: 600 }}>{ev.title}</span>
-                      <span
-                        style={{
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          backgroundColor: ev.status === 'valid' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-                          color: ev.status === 'valid' ? 'var(--status-success)' : 'var(--status-warning)',
-                        }}
-                      >
-                        {ev.status?.toUpperCase()}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                      Storage Path: <span style={{ color: 'var(--accent-blue)' }}>{ev.storagePath}</span> • Version: v{ev.currentVersion || 1} • Author: {ev.createdBy}
-                    </div>
-                    {ev.rejectionReason && (
-                      <div style={{ marginTop: '8px', padding: '6px 10px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--status-danger)', borderRadius: '6px', fontSize: '11px' }}>
-                        <span style={{ fontWeight: 600 }}>Rejection Reason:</span> {ev.rejectionReason}
+              {evidenceList.length === 0 ? (
+                <UIEmptyState
+                  icon="📁"
+                  title="No Evidence In Queue"
+                  description="Evidence artifacts submitted by contributors will appear here for four-eyes validation."
+                />
+              ) : (
+                evidenceList.map((ev) => (
+                  <div
+                    key={ev.id}
+                    className="card-modern"
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{ev.title}</span>
+                        <UIBadge variant={ev.status === 'valid' || ev.status === 'approved' ? 'compliant' : 'warning'}>
+                          {ev.status?.toUpperCase()}
+                        </UIBadge>
                       </div>
-                    )}
-                  </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                        Storage Path: <span style={{ color: 'var(--accent-primary)' }}>{ev.storagePath}</span> • Version: v{ev.currentVersion || 1} • Author: {ev.createdBy}
+                      </div>
+                      {ev.rejectionReason && (
+                        <div style={{ marginTop: '8px', padding: '6px 10px', backgroundColor: 'var(--status-critical-bg)', color: 'var(--status-critical-fg)', borderRadius: '6px', fontSize: '11px' }}>
+                          <span style={{ fontWeight: 700 }}>Rejection Reason:</span> {ev.rejectionReason}
+                        </div>
+                      )}
+                    </div>
 
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    {ev.status === 'under_review' ? (
-                      <>
-                        <button
-                          onClick={() => handleApproveEvidence(ev.id)}
-                          disabled={loadingAction === `approve_${ev.id}`}
-                          style={{
-                            backgroundColor: 'var(--status-success)',
-                            color: '#fff',
-                            padding: '6px 14px',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            border: 'none',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Approve (Four-Eyes)
-                        </button>
-                        <button
-                          onClick={() => handleRejectEvidence(ev.id)}
-                          disabled={loadingAction === `reject_${ev.id}`}
-                          style={{
-                            backgroundColor: 'var(--bg-surface-hover)',
-                            color: 'var(--status-danger)',
-                            padding: '6px 14px',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            border: '1px solid var(--border-color)',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Reject
-                        </button>
-                      </>
-                    ) : (
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                        {ev.status === 'valid' ? '✅ Signed off & Active' : '❌ Revision Pending'}
-                      </span>
-                    )}
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {ev.status === 'under_review' ? (
+                        <>
+                          <button
+                            onClick={() =>
+                              setApproveEvidenceModal({
+                                open: true,
+                                evidenceId: ev.id,
+                                title: ev.title || ev.id,
+                                notes: 'Verified compliance with European regulatory safeguards.',
+                              })
+                            }
+                            disabled={loadingAction === `approve_${ev.id}`}
+                            className="btn-success"
+                            style={{ padding: '6px 14px', fontSize: '12px' }}
+                          >
+                            Approve (Four-Eyes)
+                          </button>
+                          <button
+                            onClick={() =>
+                              setRejectEvidenceModal({
+                                open: true,
+                                evidenceId: ev.id,
+                                title: ev.title || ev.id,
+                                reason: 'Requires updated signature and ISO control mapping.',
+                              })
+                            }
+                            disabled={loadingAction === `reject_${ev.id}`}
+                            className="btn-danger"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          {ev.status === 'valid' || ev.status === 'approved' ? '✅ Signed off & Active' : '❌ Revision Pending'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         )}
@@ -1333,7 +1243,9 @@ export default function DashboardPage() {
         {activeTab === 'certifications' && (
           <div>
             <header style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Structured Certifications & External Assurance</h1>
+              <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                Structured Certifications & External Assurance
+              </h1>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                 Manage accredited standard certificates (ISO 27001, ISO 42001, SOC 2, C5, Europrivacy, TISAX), surveillance audit schedules, and linked evidence artifacts.
               </p>
@@ -1355,38 +1267,52 @@ export default function DashboardPage() {
         {activeTab === 'risks_tasks' && (
           <div>
             <header style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Risk Register & Remediation Tasks</h1>
+              <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                Risk Register & Remediation Tasks
+              </h1>
             </header>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
               {/* Risks */}
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '14px' }}>Risks Register ({risksList.length})</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {risksList.map((r) => (
-                    <div key={r.id} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', fontSize: '12px' }}>
-                      <div style={{ fontWeight: 600 }}>{r.code}: {r.title}</div>
-                      <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
-                        Inherent: {r.inherentScore} • Residual: <span style={{ fontWeight: 600, color: r.residualScore > 10 ? 'var(--status-danger)' : 'var(--status-success)' }}>{r.residualScore}</span> • Strategy: {r.treatmentStrategy}
+              <div className="card-modern">
+                <h2 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: 'var(--text-primary)' }}>
+                  Risks Register ({risksList.length})
+                </h2>
+                {risksList.length === 0 ? (
+                  <UIEmptyState icon="⚠️" title="No Active Risks" description="Identified enterprise risks will appear here." />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {risksList.map((r) => (
+                      <div key={r.id} style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px', fontSize: '12px' }}>
+                        <div style={{ fontWeight: 600 }}>{r.code}: {r.title}</div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
+                          Inherent: {r.inherentScore} • Residual: <span style={{ fontWeight: 700, color: r.residualScore > 10 ? 'var(--status-critical-fg)' : 'var(--status-compliant-fg)' }}>{r.residualScore}</span> • Strategy: {r.treatmentStrategy}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Tasks */}
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '14px' }}>Remediation Tasks ({tasksList.length})</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {tasksList.map((t) => (
-                    <div key={t.id} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', fontSize: '12px' }}>
-                      <div style={{ fontWeight: 600 }}>{t.title}</div>
-                      <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
-                        Status: <span style={{ fontWeight: 500 }}>{t.status}</span> • Due: {t.dueDate} • Assignee: {t.assigneeId}
+              <div className="card-modern">
+                <h2 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: 'var(--text-primary)' }}>
+                  Remediation Tasks ({tasksList.length})
+                </h2>
+                {tasksList.length === 0 ? (
+                  <UIEmptyState icon="📋" title="No Open Tasks" description="All assigned tasks are completed." />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {tasksList.map((t) => (
+                      <div key={t.id} style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px', fontSize: '12px' }}>
+                        <div style={{ fontWeight: 600 }}>{t.title}</div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
+                          Status: <span style={{ fontWeight: 600 }}>{t.status}</span> • Due: {t.dueDate} • Assignee: {t.assigneeId}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1397,98 +1323,65 @@ export default function DashboardPage() {
           <div>
             <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div>
-                <h1 style={{ fontSize: '22px', fontWeight: 700 }}>GDPR & Privacy Subsystem</h1>
+                <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                  GDPR & Privacy Subsystem
+                </h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                   Art. 30 ROPA, Art. 35 DPIA impact assessments, and Art. 33 72-hour breach tracker.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  onClick={() => setActiveTab('processor_inventory')}
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-color)',
-                    padding: '8px 14px',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
+                <button onClick={() => setActiveTab('processor_inventory')} className="btn-secondary">
                   <span>📋</span> Processor Inventory
                 </button>
-
-                <button
-                  onClick={() => setActiveTab('processor_hub')}
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-color)',
-                    padding: '8px 14px',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
+                <button onClick={() => setActiveTab('processor_hub')} className="btn-secondary">
                   <span>🏢</span> Processor Hub
                 </button>
-
-                <button
-                  onClick={() => setActiveTab('processor_transfers')}
-                  style={{
-                    backgroundColor: 'var(--accent-blue)',
-                    color: '#fff',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    border: 'none',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
+                <button onClick={() => setActiveTab('processor_transfers')} className="btn-primary">
                   <span>🌍</span> Cross-Border Transfers
                 </button>
               </div>
             </header>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '14px' }}>ROPA Activities ({ropaList.length})</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {ropaList.map((r) => (
-                    <div key={r.id} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', fontSize: '12px' }}>
-                      <div style={{ fontWeight: 600 }}>{r.activityCode}: {r.activityName}</div>
-                      <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
-                        Legal Basis: {r.legalBasis} • Retention: {r.retentionPeriodMonths} months
+              <div className="card-modern">
+                <h2 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: 'var(--text-primary)' }}>
+                  ROPA Activities ({ropaList.length})
+                </h2>
+                {ropaList.length === 0 ? (
+                  <UIEmptyState icon="🇪🇺" title="No ROPA Activities" description="Register GDPR Article 30 processing activities to populate the register." />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {ropaList.map((r) => (
+                      <div key={r.id} style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px', fontSize: '12px' }}>
+                        <div style={{ fontWeight: 600 }}>{r.activityCode}: {r.activityName}</div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
+                          Legal Basis: {r.legalBasis} • Retention: {r.retentionPeriodMonths} months
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '14px' }}>72h Breach Register ({breachesList.length})</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {breachesList.map((b) => (
-                    <div key={b.id} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', fontSize: '12px' }}>
-                      <div style={{ fontWeight: 600, color: 'var(--status-danger)' }}>{b.incidentReference}: {b.title}</div>
-                      <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
-                        Severity: {b.severity} • DPA Deadline: {b.dpaNotificationDeadline72h}
+              <div className="card-modern">
+                <h2 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: 'var(--text-primary)' }}>
+                  72h Breach Register ({breachesList.length})
+                </h2>
+                {breachesList.length === 0 ? (
+                  <UIEmptyState icon="🛡️" title="No Breaches Reported" description="Zero security incidents currently reported." />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {breachesList.map((b) => (
+                      <div key={b.id} style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px', fontSize: '12px' }}>
+                        <div style={{ fontWeight: 700, color: 'var(--status-critical-fg)' }}>{b.incidentReference}: {b.title}</div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>
+                          Severity: {b.severity} • DPA Deadline: {b.dpaNotificationDeadline72h}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1553,65 +1446,63 @@ export default function DashboardPage() {
         {activeTab === 'ai_systems' && (
           <div>
             <header style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '22px', fontWeight: 700 }}>EU AI Act Systems Register</h1>
+              <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                EU AI Act Systems Register
+              </h1>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                 Art. 5 prohibited practice screening and Annex III risk-tier classifications.
               </p>
             </header>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {aiSystemsList.map((sys) => (
-                <div
-                  key={sys.id}
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '10px',
-                    padding: '20px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '14px', fontWeight: 600 }}>{sys.name}</span>
-                      <span
-                        style={{
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          backgroundColor: sys.riskTier === 'high_risk' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-                          color: sys.riskTier === 'high_risk' ? 'var(--status-danger)' : 'var(--status-success)',
-                        }}
-                      >
-                        {sys.riskTier?.toUpperCase()}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                      Role: {sys.role} • Purpose: {sys.intendedPurpose} • Foundation Model: {sys.underlyingFoundationModel || 'Proprietary'}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleClassifyAI(sys.id)}
-                    disabled={loadingAction === `classify_${sys.id}`}
+              {aiSystemsList.length === 0 ? (
+                <UIEmptyState
+                  icon="🤖"
+                  title="No AI Systems Registered"
+                  description="Register organizational AI models and foundation systems to determine EU AI Act risk tiers."
+                />
+              ) : (
+                aiSystemsList.map((sys) => (
+                  <div
+                    key={sys.id}
+                    className="card-modern"
                     style={{
-                      backgroundColor: 'var(--accent-blue)',
-                      color: '#fff',
-                      padding: '6px 14px',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      border: 'none',
-                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
                     }}
                   >
-                    Run Classification
-                  </button>
-                </div>
-              ))}
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{sys.name}</span>
+                        <UIBadge variant={sys.riskTier === 'high_risk' ? 'critical' : 'compliant'}>
+                          {sys.riskTier?.toUpperCase()}
+                        </UIBadge>
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                        Role: {sys.role} • Purpose: {sys.intendedPurpose} • Foundation Model: {sys.underlyingFoundationModel || 'Proprietary'}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() =>
+                        setClassifyAIModal({
+                          open: true,
+                          systemId: sys.id,
+                          name: sys.name,
+                          isProhibited: false,
+                          annexThreeCategory: 'none',
+                        })
+                      }
+                      disabled={loadingAction === `classify_${sys.id}`}
+                      className="btn-primary"
+                      style={{ padding: '6px 14px', fontSize: '12px' }}
+                    >
+                      Run Classification
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
@@ -1621,51 +1512,48 @@ export default function DashboardPage() {
           <div>
             <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div>
-                <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Organization Members & Access Control</h1>
+                <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                  Organization Members & Access Control
+                </h1>
               </div>
-              <button
-                onClick={handleInviteMember}
-                disabled={loadingAction === 'invite_member'}
-                style={{
-                  backgroundColor: 'var(--status-success)',
-                  color: '#fff',
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
+              <button onClick={() => setInviteMemberModalOpen(true)} className="btn-success">
                 + Invite Colleague
               </button>
             </header>
 
-            <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: 'var(--bg-surface-hover)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '12px 16px' }}>User ID / Email</th>
-                    <th style={{ padding: '12px 16px' }}>Role</th>
-                    <th style={{ padding: '12px 16px' }}>Department</th>
-                    <th style={{ padding: '12px 16px' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {membersList.map((m) => (
-                    <tr key={m.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <td style={{ padding: '12px 16px', fontWeight: 500 }}>{m.userId || m.id}</td>
-                      <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--accent-blue)' }}>{m.role}</td>
-                      <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{m.department || 'Governance'}</td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--status-success)', fontSize: '11px', fontWeight: 600 }}>
-                          {m.status}
-                        </span>
-                      </td>
+            <div className="card-modern" style={{ padding: 0, overflow: 'hidden' }}>
+              {membersList.length === 0 ? (
+                <UIEmptyState
+                  icon="👥"
+                  title="No Members Found"
+                  description="Invite team leads, auditors, and compliance managers to collaborate."
+                  actionText="+ Invite Colleague"
+                  onAction={() => setInviteMemberModalOpen(true)}
+                />
+              ) : (
+                <table className="table-modern">
+                  <thead>
+                    <tr>
+                      <th>User ID / Email</th>
+                      <th>Role</th>
+                      <th>Department</th>
+                      <th>Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {membersList.map((m) => (
+                      <tr key={m.id}>
+                        <td style={{ fontWeight: 600 }}>{m.userId || m.id}</td>
+                        <td style={{ fontWeight: 700, color: 'var(--accent-primary)' }}>{m.role}</td>
+                        <td style={{ color: 'var(--text-muted)' }}>{m.department || 'Governance'}</td>
+                        <td>
+                          <UIBadge variant="compliant">{m.status}</UIBadge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}
@@ -1674,172 +1562,62 @@ export default function DashboardPage() {
         {activeTab === 'exports' && (
           <div>
             <header style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Compliance & Audit Exports</h1>
+              <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                Compliance & Audit Exports
+              </h1>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                 Generate official auditor dossiers and framework readiness packages.
               </p>
             </header>
 
             <div style={{ display: 'flex', gap: '10px', marginBottom: '24px', flexWrap: 'wrap' }}>
-              <button
-                onClick={() => handleRequestExport('tenant_evidence_package_zip')}
-                style={{ backgroundColor: 'var(--accent-blue)', color: '#fff', padding: '8px 14px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📦 Evidence Package
-              </button>
-              <button
-                onClick={() => handleRequestExport('adopted_frameworks_summary')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📋 Adopted Frameworks Summary
-              </button>
-              <button
-                onClick={() => handleRequestExport('applicability_decisions_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                ⚖️ Applicability Determinations
-              </button>
-              <button
-                onClick={() => handleRequestExport('tenant_control_coverage_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🛡️ Control Coverage & Harmonization
-              </button>
-              <button
-                onClick={() => handleRequestExport('iso_soa_pdf')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📄 ISO 27001 Statement of Applicability
-              </button>
-              <button
-                onClick={() => handleRequestExport('framework_gap_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                ⚠️ Multi-Framework Gap Report
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_inventory_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🏢 Processor Inventory
-              </button>
-              <button
-                onClick={() => handleRequestExport('restricted_transfers_register')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🌍 Restricted Transfers Register
-              </button>
-              <button
-                onClick={() => handleRequestExport('transfer_mechanisms_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📜 Transfer Mechanisms (SCCs)
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_governance_gaps_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                ⚠️ Processor Gaps (Missing TIA/Evidence)
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_review_schedule_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📅 Processor Review Schedule
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_system_mapping_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🗺️ Processor-to-System Map
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_ropa_mapping_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📑 Processor-to-ROPA Map
-              </button>
-              <button
-                onClick={() => handleRequestExport('certification_register_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🏆 Master Certifications Register
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_assurance_register')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🛡️ Processor Assurance Register
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_expiring_certifications_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                ⏳ Expiring Certifications Report
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_expired_insufficient_assurance_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                ⚠️ Expired / Insufficient Assurance
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_by_certification_type_matrix')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📊 Processor Assurance Matrix
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_assurance_coverage_by_systems')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                💻 Assurance Coverage by Systems
-              </button>
-              <button
-                onClick={() => handleRequestExport('critical_processors_missing_assurance')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🚨 Critical Processors Missing Assurance
-              </button>
-              <button
-                onClick={() => handleRequestExport('gdpr_ropa_xlsx')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📊 GDPR ROPA
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_assessment_report')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📊 Processor Assessment Report
-              </button>
-              <button
-                onClick={() => handleRequestExport('processor_assessment_summary_matrix')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                📑 Due Diligence Matrix
-              </button>
-              <button
-                onClick={() => handleRequestExport('eu_ai_act_technical_file_pdf')}
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                🤖 AI Act Technical Dossier
-              </button>
+              {[
+                { type: 'tenant_evidence_package_zip', label: '📦 Evidence Package' },
+                { type: 'adopted_frameworks_summary', label: '📋 Adopted Frameworks Summary' },
+                { type: 'applicability_decisions_report', label: '⚖️ Applicability Determinations' },
+                { type: 'tenant_control_coverage_report', label: '🛡️ Control Coverage & Harmonization' },
+                { type: 'iso_soa_pdf', label: '📄 ISO 27001 Statement of Applicability' },
+                { type: 'framework_gap_report', label: '⚠️ Multi-Framework Gap Report' },
+                { type: 'processor_inventory_report', label: '🏢 Processor Inventory' },
+                { type: 'restricted_transfers_register', label: '🌍 Restricted Transfers Register' },
+                { type: 'transfer_mechanisms_report', label: '📜 Transfer Mechanisms (SCCs)' },
+                { type: 'certification_register_report', label: '🏆 Master Certifications Register' },
+                { type: 'processor_assurance_register', label: '🛡️ Processor Assurance Register' },
+                { type: 'gdpr_ropa_xlsx', label: '📊 GDPR ROPA' },
+                { type: 'processor_assessment_report', label: '📊 Processor Assessment Report' },
+                { type: 'eu_ai_act_technical_file_pdf', label: '🤖 AI Act Technical Dossier' },
+              ].map((item) => (
+                <button
+                  key={item.type}
+                  onClick={() => handleRequestExport(item.type)}
+                  disabled={loadingAction === `export_${item.type}`}
+                  className="btn-secondary"
+                  style={{ fontSize: '12px' }}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
 
-            <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '20px' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '14px' }}>Export Jobs Archive ({exportJobsList.length})</h2>
-              {exportJobsList.map((job) => (
-                <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '10px', fontSize: '12px' }}>
-                  <div>
-                    <span style={{ fontWeight: 600 }}>{job.exportType}</span> • Status: <span style={{ color: 'var(--status-success)', fontWeight: 600 }}>{job.status}</span>
-                    <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>Storage: {job.fileStoragePath}</div>
+            <div className="card-modern">
+              <h2 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '14px', color: 'var(--text-primary)' }}>
+                Export Jobs Archive ({exportJobsList.length})
+              </h2>
+              {exportJobsList.length === 0 ? (
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>No exports generated yet.</div>
+              ) : (
+                exportJobsList.map((job) => (
+                  <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '10px', fontSize: '12px' }}>
+                    <div>
+                      <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{job.exportType}</span> • Status: <span style={{ color: 'var(--status-compliant-fg)', fontWeight: 600 }}>{job.status}</span>
+                      <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>Storage: {job.fileStoragePath}</div>
+                    </div>
+                    <div className="font-tabular" style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                      {new Date(job.requestedAt).toLocaleTimeString()}
+                    </div>
                   </div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                    {new Date(job.requestedAt).toLocaleTimeString()}
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         )}
@@ -1863,6 +1641,340 @@ export default function DashboardPage() {
           <ApplicabilityReviewTab tenantId={tenantId} userRole={userRole} />
         )}
       </main>
+
+      {/* =========================================================================
+          ACCESSIBLE MODAL DIALOGS (Replacing window.prompt & window.confirm)
+          ========================================================================= */}
+
+      {/* 1. Create Control Modal */}
+      <UIModal
+        isOpen={createControlModalOpen}
+        onClose={() => setCreateControlModalOpen(false)}
+        title="Create Custom Control"
+        subtitle="Define a tenant-specific control and map it to active frameworks."
+        footerActions={
+          <>
+            <button onClick={() => setCreateControlModalOpen(false)} className="btn-secondary">
+              Cancel
+            </button>
+            <button onClick={handleCreateControl} disabled={loadingAction === 'create_control'} className="btn-success">
+              {loadingAction === 'create_control' ? 'Creating...' : 'Save Control'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Control Code
+            </label>
+            <input
+              type="text"
+              value={newControlCode}
+              onChange={(e) => setNewControlCode(e.target.value)}
+              placeholder="e.g. CTL-SEC-99"
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Control Title
+            </label>
+            <input
+              type="text"
+              value={newControlTitle}
+              onChange={(e) => setNewControlTitle(e.target.value)}
+              placeholder="e.g. Automated WebAuthn MFA Gateway"
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Domain
+            </label>
+            <select
+              value={newControlDomain}
+              onChange={(e) => setNewControlDomain(e.target.value)}
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            >
+              <option value="Access Control">Access Control</option>
+              <option value="Cryptography & Encryption">Cryptography & Encryption</option>
+              <option value="Data Protection & Privacy">Data Protection & Privacy</option>
+              <option value="AI Safety & Transparency">AI Safety & Transparency</option>
+              <option value="Supplier & Processor Security">Supplier & Processor Security</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Framework Identifiers (Comma-separated)
+            </label>
+            <input
+              type="text"
+              value={newControlFrameworks}
+              onChange={(e) => setNewControlFrameworks(e.target.value)}
+              placeholder="iso_27001, gdpr, eu_ai_act"
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            />
+          </div>
+        </div>
+      </UIModal>
+
+      {/* 2. Invite Member Modal */}
+      <UIModal
+        isOpen={inviteMemberModalOpen}
+        onClose={() => setInviteMemberModalOpen(false)}
+        title="Invite Colleague"
+        subtitle="Grant role-based access to the organization's compliance workspace."
+        footerActions={
+          <>
+            <button onClick={() => setInviteMemberModalOpen(false)} className="btn-secondary">
+              Cancel
+            </button>
+            <button onClick={handleInviteMember} disabled={loadingAction === 'invite_member'} className="btn-success">
+              {loadingAction === 'invite_member' ? 'Sending Invite...' : 'Send Invitation'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Email Address
+            </label>
+            <input
+              type="email"
+              value={newMemberEmail}
+              onChange={(e) => setNewMemberEmail(e.target.value)}
+              placeholder="e.g. auditor@kpmg.de"
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Assigned Role
+            </label>
+            <select
+              value={newMemberRole}
+              onChange={(e) => setNewMemberRole(e.target.value)}
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            >
+              <option value="auditor">Auditor (Read-only assurance)</option>
+              <option value="compliance_manager">Compliance Manager</option>
+              <option value="security_manager">Security Manager</option>
+              <option value="privacy_manager">Privacy Officer / DPO</option>
+              <option value="ai_governance_manager">AI Governance Lead</option>
+              <option value="contributor">Contributor (Task & evidence submitter)</option>
+              <option value="tenant_admin">Tenant Administrator</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Department
+            </label>
+            <input
+              type="text"
+              value={newMemberDept}
+              onChange={(e) => setNewMemberDept(e.target.value)}
+              placeholder="e.g. Information Security"
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            />
+          </div>
+        </div>
+      </UIModal>
+
+      {/* 3. Four-Eyes Evidence Approval Modal */}
+      <UIModal
+        isOpen={approveEvidenceModal.open}
+        onClose={() => setApproveEvidenceModal({ ...approveEvidenceModal, open: false })}
+        title="Four-Eyes Evidence Approval"
+        subtitle={`Signing off evidence: ${approveEvidenceModal.title}`}
+        footerActions={
+          <>
+            <button
+              onClick={() => setApproveEvidenceModal({ ...approveEvidenceModal, open: false })}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleApproveEvidence}
+              disabled={loadingAction?.startsWith('approve_')}
+              className="btn-success"
+            >
+              {loadingAction?.startsWith('approve_') ? 'Signing off...' : 'Authorize & Sign Off'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+            Approval Decision Notes
+          </label>
+          <textarea
+            value={approveEvidenceModal.notes}
+            onChange={(e) => setApproveEvidenceModal({ ...approveEvidenceModal, notes: e.target.value })}
+            rows={4}
+            className="input-modern"
+            style={{ width: '100%', resize: 'vertical' }}
+            placeholder="Document verification of cryptographic hashes and control satisfaction..."
+          />
+        </div>
+      </UIModal>
+
+      {/* 4. Evidence Rejection Modal */}
+      <UIModal
+        isOpen={rejectEvidenceModal.open}
+        onClose={() => setRejectEvidenceModal({ ...rejectEvidenceModal, open: false })}
+        title="Reject Evidence & Request Revision"
+        subtitle={`Returning evidence: ${rejectEvidenceModal.title}`}
+        footerActions={
+          <>
+            <button
+              onClick={() => setRejectEvidenceModal({ ...rejectEvidenceModal, open: false })}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleRejectEvidence}
+              disabled={loadingAction?.startsWith('reject_')}
+              className="btn-danger"
+            >
+              {loadingAction?.startsWith('reject_') ? 'Rejecting...' : 'Reject & Notify Author'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+            Mandatory Rejection Rationale
+          </label>
+          <textarea
+            value={rejectEvidenceModal.reason}
+            onChange={(e) => setRejectEvidenceModal({ ...rejectEvidenceModal, reason: e.target.value })}
+            rows={4}
+            className="input-modern"
+            style={{ width: '100%', resize: 'vertical' }}
+            placeholder="Explain why the evidence is insufficient (e.g. missing signature, expired certificate)..."
+          />
+        </div>
+      </UIModal>
+
+      {/* 5. AI Act Classification Modal */}
+      <UIModal
+        isOpen={classifyAIModal.open}
+        onClose={() => setClassifyAIModal({ ...classifyAIModal, open: false })}
+        title="EU AI Act Risk Classification"
+        subtitle={`Classifying model: ${classifyAIModal.name}`}
+        footerActions={
+          <>
+            <button
+              onClick={() => setClassifyAIModal({ ...classifyAIModal, open: false })}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleClassifyAI}
+              disabled={loadingAction?.startsWith('classify_')}
+              className="btn-primary"
+            >
+              {loadingAction?.startsWith('classify_') ? 'Evaluating...' : 'Determine Risk Tier'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ padding: '12px', backgroundColor: 'var(--bg-canvas-subtle)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={classifyAIModal.isProhibited}
+                onChange={(e) => setClassifyAIModal({ ...classifyAIModal, isProhibited: e.target.checked })}
+                style={{ marginTop: '3px' }}
+              />
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Prohibited Practices Check (Article 5)
+                </div>
+                <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  Does this AI system perform real-time biometric identification, cognitive behavioral manipulation, social scoring, or biometric categorization?
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Annex III High-Risk Sector Classification
+            </label>
+            <select
+              value={classifyAIModal.annexThreeCategory}
+              onChange={(e) => setClassifyAIModal({ ...classifyAIModal, annexThreeCategory: e.target.value })}
+              className="input-modern"
+              style={{ width: '100%', marginTop: '4px' }}
+            >
+              <option value="none">None (Standard / Minimal Risk)</option>
+              <option value="essential_services_benefits">Essential Services & Benefits (Credit scoring, insurance, benefits)</option>
+              <option value="employment_recruitment">Employment & Recruitment (Resume ranking, performance monitoring)</option>
+              <option value="critical_infrastructure">Critical Infrastructure (Energy, transport, water supply)</option>
+              <option value="law_enforcement">Law Enforcement & Border Control</option>
+              <option value="administration_justice">Administration of Justice & Democratic Processes</option>
+            </select>
+          </div>
+        </div>
+      </UIModal>
+
+      {/* 6. Adopt Framework Modal */}
+      <UIModal
+        isOpen={adoptFrameworkModal.open}
+        onClose={() => setAdoptFrameworkModal({ ...adoptFrameworkModal, open: false })}
+        title={`Adopt ${adoptFrameworkModal.frameworkName}`}
+        subtitle="Establish organizational scoping and regulatory applicability."
+        footerActions={
+          <>
+            <button
+              onClick={() => setAdoptFrameworkModal({ ...adoptFrameworkModal, open: false })}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleAdoptFramework}
+              disabled={loadingAction?.startsWith('adopt_')}
+              className="btn-success"
+            >
+              {loadingAction?.startsWith('adopt_') ? 'Adopting...' : 'Confirm Adoption'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+            Compliance Scope Description
+          </label>
+          <textarea
+            value={adoptFrameworkModal.scope}
+            onChange={(e) => setAdoptFrameworkModal({ ...adoptFrameworkModal, scope: e.target.value })}
+            rows={4}
+            className="input-modern"
+            style={{ width: '100%', resize: 'vertical' }}
+            placeholder="Define boundaries, infrastructure, and organizational entities covered..."
+          />
+        </div>
+      </UIModal>
     </div>
   );
 }
