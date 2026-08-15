@@ -18,6 +18,9 @@ import {
   DynamicQuestionnaireSection,
   ExternalAssessmentSubmission,
   QuestionnaireAnswer,
+  Evidence,
+  EvidenceVersion,
+  EvidenceCategory,
   evaluateQuestionVisibility,
   evaluateQuestionScore,
   validateAnswer,
@@ -812,6 +815,94 @@ export const submitPublicAssessment = onCall<SubmitPublicAssessmentInput>(async 
         'failed-precondition',
         `Submission incomplete: ${missingRequiredQuestions.slice(0, 5).join('; ')}`
       );
+    }
+
+    // Map uploaded supporting documents into evidence repository
+    for (const sec of sections) {
+      for (const q of sec.questions) {
+        const ans = answers[q.id];
+        if (ans?.attachedFileMetadata && ans.attachedFileMetadata.length > 0) {
+          const newEvidenceIds: string[] = ans.attachedEvidenceIds || [];
+          for (const file of ans.attachedFileMetadata) {
+            const evidenceId = `ev_${crypto.randomBytes(10).toString('hex')}`;
+            let evidenceCategory: EvidenceCategory = 'assessment_doc';
+            const qCode = (q.code || '').toLowerCase();
+            const qTitle = (q.title || '').toLowerCase();
+            if (qCode.includes('iso') || qTitle.includes('iso')) {
+              evidenceCategory = 'iso_certificate';
+            } else if (qCode.includes('soc') || qTitle.includes('soc')) {
+              evidenceCategory = 'soc_report';
+            } else if (qCode.includes('dpa') || qTitle.includes('dpa')) {
+              evidenceCategory = 'dpa';
+            } else if (qCode.includes('tom') || qTitle.includes('tom')) {
+              evidenceCategory = 'toms';
+            }
+
+            const evidenceDoc: Evidence = {
+              id: evidenceId,
+              tenantId,
+              title: `${file.fileName} (${tokenData.thirdPartyName})`,
+              description: `Supporting document for questionnaire question [${q.code}] ${q.title}`,
+              category: evidenceCategory,
+              status: 'under_review',
+              storagePath: file.storagePath,
+              fileSizeBytes: file.fileSizeBytes,
+              mimeType: file.mimeType,
+              fileHashSha256: file.fileHashSha256 || '',
+              controlIds: [],
+              requirementIds: [],
+              policyIds: [],
+              riskIds: [],
+              assessmentIds: [requestId],
+              processorProfileIds: reqData.processorProfileId ? [reqData.processorProfileId] : [],
+              vendorIds: reqData.vendorId ? [reqData.vendorId] : [],
+              sourceType: 'external_questionnaire_submission',
+              isExternalSubmissionArtifact: true,
+              sourceAssessmentRequestId: requestId,
+              sourceSubmissionId: submissionId,
+              sourceQuestionId: q.id,
+              sourceThirdPartyName: tokenData.thirdPartyName,
+              sourceRespondentEmail: tokenData.recipientEmail,
+              collectedAt: nowIso,
+              reviewDueDate: null,
+              reviewedBy: null,
+              reviewedAt: null,
+              rejectionReason: null,
+              currentVersion: 1,
+              ownerId: reviewOwnerUserId,
+              createdBy: 'external_respondent',
+              updatedBy: 'external_respondent',
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            };
+
+            const evRef = db.collection('tenants').doc(tenantId).collection('evidence').doc(evidenceId);
+            batch.set(evRef, evidenceDoc);
+
+            const versionDoc: EvidenceVersion = {
+              id: 'v1',
+              tenantId,
+              evidenceId,
+              versionNumber: 1,
+              storagePath: file.storagePath,
+              fileSizeBytes: file.fileSizeBytes,
+              mimeType: file.mimeType,
+              fileHashSha256: file.fileHashSha256 || '',
+              changeSummary: `Uploaded by ${tokenData.recipientName} (${tokenData.recipientEmail}) for assessment ${requestId}`,
+              uploadedBy: tokenData.recipientEmail,
+              uploadedAt: nowIso,
+            };
+
+            const versionRef = evRef.collection('versions').doc('v1');
+            batch.set(versionRef, versionDoc);
+
+            if (!newEvidenceIds.includes(evidenceId)) {
+              newEvidenceIds.push(evidenceId);
+            }
+          }
+          ans.attachedEvidenceIds = newEvidenceIds;
+        }
+      }
     }
 
     computedScorePercent = totalPossiblePoints > 0 ? Math.round((totalEarnedPoints / totalPossiblePoints) * 100) : 100;

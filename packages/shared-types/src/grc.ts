@@ -216,6 +216,12 @@ export const VALID_EVIDENCE_CATEGORIES: readonly EvidenceCategory[] = [
   'custom_assurance_doc',
 ] as const;
 
+export type EvidenceSourceType =
+  | 'manual_upload'
+  | 'external_questionnaire_submission'
+  | 'automated_collector'
+  | 'system_generated';
+
 /**
  * Evidence Record (/tenants/{tenantId}/evidence/{evidenceId})
  */
@@ -238,6 +244,13 @@ export interface Evidence extends BaseEntity {
   vendorIds?: string[];
   certificationIds?: string[];
   processorCertificationIds?: string[];
+  sourceType?: EvidenceSourceType;
+  isExternalSubmissionArtifact?: boolean;
+  sourceAssessmentRequestId?: string | null;
+  sourceSubmissionId?: string | null;
+  sourceQuestionId?: string | null;
+  sourceThirdPartyName?: string | null;
+  sourceRespondentEmail?: string | null;
   collectedAt: string;
   reviewDueDate: string | null;
   reviewedBy: string | null;

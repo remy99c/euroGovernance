@@ -1,4 +1,5 @@
 import { AssessmentRiskTier } from './processor-assessments.js';
+import type { AssessmentAnswerItem } from './third-party-assessments.js';
 
 // =============================================================================
 // 1. QUESTION TYPES & OPTIONS
@@ -680,4 +681,78 @@ export function validateAnswer(
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+// =============================================================================
+// 7. MISSING EVIDENCE REQUIREMENTS EVALUATOR
+// =============================================================================
+
+export interface MissingEvidenceQuestionIndicator {
+  questionId: string;
+  questionCode: string;
+  questionTitle: string;
+  sectionId: string;
+  sectionTitle: string;
+  acceptedEvidenceCategories: string[];
+  isRequired: boolean;
+  scoringWeight: number;
+}
+
+export interface MissingEvidenceEvaluationResult {
+  hasMissingEvidence: boolean;
+  totalRequestedCount: number;
+  providedEvidenceCount: number;
+  missingEvidenceCount: number;
+  missingQuestions: MissingEvidenceQuestionIndicator[];
+}
+
+/**
+ * Evaluates a questionnaire submission to identify any visible questions requiring supporting evidence
+ * where no evidence document has been attached.
+ */
+export function evaluateMissingEvidenceRequirements(
+  sections: DynamicQuestionnaireSection[],
+  answers: Record<string, QuestionnaireAnswer | AssessmentAnswerItem>
+): MissingEvidenceEvaluationResult {
+  let totalRequestedCount = 0;
+  let providedEvidenceCount = 0;
+  const missingQuestions: MissingEvidenceQuestionIndicator[] = [];
+
+  for (const sec of sections) {
+    for (const q of sec.questions) {
+      const vis = evaluateQuestionVisibility(q, answers as Record<string, QuestionnaireAnswer>);
+      if (vis.isVisible && q.requiresEvidence) {
+        totalRequestedCount++;
+        const ans = answers[q.id];
+        const hasEvidence =
+          (ans?.attachedEvidenceIds && ans.attachedEvidenceIds.length > 0) ||
+          (ans?.attachedFileMetadata && ans.attachedFileMetadata.length > 0);
+
+        if (hasEvidence) {
+          providedEvidenceCount++;
+        } else {
+          missingQuestions.push({
+            questionId: q.id,
+            questionCode: q.code,
+            questionTitle: q.title,
+            sectionId: sec.id,
+            sectionTitle: sec.title,
+            acceptedEvidenceCategories: (q.acceptedEvidenceCategories || []) as string[],
+            isRequired: vis.isRequired,
+            scoringWeight: q.scoring?.weight || 1,
+          });
+        }
+      }
+    }
+  }
+
+  const missingEvidenceCount = missingQuestions.length;
+
+  return {
+    hasMissingEvidence: missingEvidenceCount > 0,
+    totalRequestedCount,
+    providedEvidenceCount,
+    missingEvidenceCount,
+    missingQuestions,
+  };
 }
