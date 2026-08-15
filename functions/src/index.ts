@@ -316,4 +316,5 @@ export {
   sendThirdPartyAssessmentRequest,
   cancelThirdPartyAssessmentRequest,
   reviewThirdPartyAssessmentSubmission,
+  linkAssessmentToVendorOrProcessor,
 } from './handlers/third-party-assessments.js';

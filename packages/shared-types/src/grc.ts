@@ -367,6 +367,10 @@ export interface Vendor extends BaseEntity {
   commercialStatus?: VendorCommercialStatus;
   businessOwnerUserId?: string | null;
   annualSpendEur?: number | null;
+  latestAssessmentRequestId?: string | null;
+  latestAssessmentSubmissionId?: string | null;
+  latestAssessmentScorePercent?: number | null;
+  latestAssessmentRiskTier?: VendorRiskTier | null;
 }
 
 export type ProcessorSystemRelationshipType =

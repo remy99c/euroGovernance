@@ -105,6 +105,10 @@ export interface ProcessorProfile extends BaseEntity {
     relationshipType: ProcessorSystemRelationshipType;
     relationshipDescription?: string | null;
   }>;
+  latestAssessmentRequestId?: string | null;
+  latestAssessmentSubmissionId?: string | null;
+  latestAssessmentScorePercent?: number | null;
+  latestAssessmentDate?: string | null;
 }
 
 export interface ValidateProcessorProfileResult {

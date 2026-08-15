@@ -15,6 +15,8 @@ import {
   SubmissionReviewDecision,
   QuestionReviewFinding,
   AssessmentRiskTier,
+  Vendor,
+  VendorRiskTier,
   validateThirdPartyAssessmentRequest,
   isValidRequestStateTransition,
 } from '@eurogovernance/shared-types';
@@ -805,6 +807,224 @@ export const reviewThirdPartyAssessmentSubmission = onCall<ReviewThirdPartyAsses
       requestStatus: nextRequestStatus,
       reissuedToken,
       reissuedAccessUrl,
+    };
+  }
+);
+
+// -----------------------------------------------------------------------------
+// 5. LINK ASSESSMENT TO VENDOR / PROCESSOR & PROSPECT CONVERSION
+// -----------------------------------------------------------------------------
+
+export interface LinkAssessmentToVendorOrProcessorInput {
+  tenantId: string;
+  requestId: string;
+  vendorId?: string | null;
+  processorProfileId?: string | null;
+  convertProspectToVendor?: boolean;
+  vendorCategory?: 'cloud_provider' | 'saas_service' | 'ai_model_provider' | 'subprocessor' | 'consultancy';
+  countryOfIncorporation?: string;
+  dataHostingRegions?: string[];
+}
+
+export const linkAssessmentToVendorOrProcessor = onCall<LinkAssessmentToVendorOrProcessorInput>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const {
+      tenantId,
+      requestId,
+      vendorId: providedVendorId,
+      processorProfileId = null,
+      convertProspectToVendor = false,
+      vendorCategory = 'saas_service',
+      countryOfIncorporation = 'EU',
+      dataHostingRegions = ['EU'],
+    } = data;
+
+    if (!tenantId || !requestId) {
+      throw new HttpsError('invalid-argument', 'tenantId and requestId are required.');
+    }
+
+    const authContext = await requireTenantMember(request, tenantId, [
+      'tenant_admin',
+      'compliance_manager',
+      'privacy_manager',
+      'security_manager',
+      'approver',
+    ]);
+
+    const reqRef = db.collection('tenants').doc(tenantId).collection('assessment_requests').doc(requestId);
+    const reqSnap = await reqRef.get();
+
+    if (!reqSnap.exists) {
+      throw new HttpsError('not-found', 'Assessment request not found.');
+    }
+
+    const reqData = reqSnap.data() as ThirdPartyAssessmentRequest;
+    const nowIso = new Date().toISOString();
+    const batch = db.batch();
+
+    let finalVendorId = providedVendorId || reqData.vendorId;
+
+    // Handle Prospect-to-Vendor Conversion
+    if (convertProspectToVendor || (!finalVendorId && reqData.targetType === 'prospective_vendor')) {
+      finalVendorId = finalVendorId || `vend_${crypto.randomBytes(8).toString('hex')}`;
+
+      let determinedRiskTier: VendorRiskTier = 'low';
+      if (reqData.overallRiskRating === 'high' || reqData.overallRiskRating === 'critical') {
+        determinedRiskTier = 'high';
+      } else if (reqData.overallRiskRating === 'medium') {
+        determinedRiskTier = 'medium';
+      }
+
+      const vendorDoc: Vendor = {
+        id: finalVendorId,
+        tenantId,
+        name: reqData.prospectCompanyName || reqData.thirdPartyName,
+        category: vendorCategory,
+        riskTier: determinedRiskTier,
+        primaryContactName: reqData.respondent.name,
+        primaryContactEmail: reqData.respondent.email,
+        dpaSigned: reqData.isCompliant || false,
+        dpaDate: reqData.reviewedAt || null,
+        securityAssessmentDate: reqData.reviewedAt || reqData.submittedAt || nowIso,
+        nextAssessmentDueDate: reqData.nextDueDate || null,
+        countryOfIncorporation,
+        dataHostingRegions,
+        subprocessorsListed: [],
+        hasProcessorProfile: !!processorProfileId,
+        activeProcessorProfileId: processorProfileId || null,
+        commercialStatus: 'active',
+        businessOwnerUserId: authContext.userId,
+        annualSpendEur: null,
+        latestAssessmentRequestId: requestId,
+        latestAssessmentSubmissionId: reqData.activeSubmissionId || null,
+        latestAssessmentScorePercent: reqData.finalScorePercent || null,
+        latestAssessmentRiskTier: determinedRiskTier,
+        status: 'active',
+        ownerId: authContext.userId,
+        createdBy: authContext.userId,
+        updatedBy: authContext.userId,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      const vendorRef = db.collection('tenants').doc(tenantId).collection('vendors').doc(finalVendorId);
+      batch.set(vendorRef, vendorDoc);
+    } else if (finalVendorId) {
+      // Update existing vendor with latest assessment metrics
+      const vendorRef = db.collection('tenants').doc(tenantId).collection('vendors').doc(finalVendorId);
+      const vendorSnap = await vendorRef.get();
+
+      if (vendorSnap.exists) {
+        let determinedRiskTier: VendorRiskTier = 'low';
+        if (reqData.overallRiskRating === 'high' || reqData.overallRiskRating === 'critical') {
+          determinedRiskTier = 'high';
+        } else if (reqData.overallRiskRating === 'medium') {
+          determinedRiskTier = 'medium';
+        }
+
+        batch.update(vendorRef, {
+          latestAssessmentRequestId: requestId,
+          latestAssessmentSubmissionId: reqData.activeSubmissionId || null,
+          latestAssessmentScorePercent: reqData.finalScorePercent || null,
+          latestAssessmentRiskTier: determinedRiskTier,
+          securityAssessmentDate: reqData.reviewedAt || reqData.submittedAt || nowIso,
+          updatedAt: nowIso,
+          updatedBy: authContext.userId,
+        });
+      }
+    }
+
+    // If processor profile is linked, update processor profile record
+    if (processorProfileId) {
+      const procRef = db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId);
+      const procSnap = await procRef.get();
+
+      if (procSnap.exists) {
+        batch.update(procRef, {
+          latestAssessmentRequestId: requestId,
+          latestAssessmentSubmissionId: reqData.activeSubmissionId || null,
+          latestAssessmentScorePercent: reqData.finalScorePercent || null,
+          latestAssessmentDate: reqData.reviewedAt || reqData.submittedAt || nowIso,
+          updatedAt: nowIso,
+          updatedBy: authContext.userId,
+        });
+      }
+    }
+
+    // Update Assessment Request with explicit Foreign Keys
+    const updateReqPayload: Partial<ThirdPartyAssessmentRequest> = {
+      vendorId: finalVendorId || null,
+      processorProfileId: processorProfileId || null,
+      targetType: processorProfileId ? 'active_processor' : 'existing_vendor',
+      updatedAt: nowIso,
+      updatedBy: authContext.userId,
+    };
+    batch.update(reqRef, updateReqPayload);
+
+    // Update linked Assessment Submissions
+    const submissionsSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('assessment_submissions')
+      .where('requestId', '==', requestId)
+      .get();
+
+    for (const doc of submissionsSnap.docs) {
+      batch.update(doc.ref, {
+        vendorId: finalVendorId || null,
+        processorProfileId: processorProfileId || null,
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      });
+    }
+
+    // Update linked Submission Reviews
+    const reviewsSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('submission_reviews')
+      .where('requestId', '==', requestId)
+      .get();
+
+    for (const doc of reviewsSnap.docs) {
+      batch.update(doc.ref, {
+        vendorId: finalVendorId || null,
+        processorProfileId: processorProfileId || null,
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      });
+    }
+
+    await batch.commit();
+
+    await recordAuditLog({
+      tenantId,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.role,
+      entityType: 'processor_assessment',
+      entityId: requestId,
+      action: 'update',
+      afterSummary: {
+        action: convertProspectToVendor ? 'prospect_converted_to_vendor' : 'assessment_linked_to_vendor',
+        vendorId: finalVendorId,
+        processorProfileId,
+      },
+      source: 'cloud_function',
+      workflowContext: 'third_party_assessment_vendor_linkage',
+    });
+
+    return {
+      success: true,
+      requestId,
+      vendorId: finalVendorId,
+      processorProfileId,
+      converted: !!convertProspectToVendor,
     };
   }
 );
