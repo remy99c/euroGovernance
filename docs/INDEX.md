@@ -101,6 +101,7 @@ graph TD
 - [[MIGRATION_SAFETY_REVIEW|Database Migration & Schema Evolution Safety]] — Safe rollout practices and schema versioning.
 - [[MVP_DELIVERY_ROADMAP|Product Delivery Roadmap & Implementation Phases]] — Milestones and capability delivery schedule.
 - [[MASTER_PROMPT_CONTEXT|Master System Context & Engineering Baseline]] — Core design principles and tech stack invariants.
+- [[ai Guide 2026-08-15|AI Agent Platform & Engineering Guide (2026-08-15)]] — Architectural briefing, capabilities, level of polish, and agent operating instructions.
 
 ### 2. Multi-Tenancy, Security & Access Control
 - [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant Model & Identity Provisioning Flows]] — Multi-tenant partitioning, membership lifecycle, and domain isolation.
