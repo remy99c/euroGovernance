@@ -691,5 +691,10 @@ service cloud.firestore {
         allow delete: if isTenantAdmin(tenantId);
       }
     }
+
+    // Root-Level Assessment Access Tokens (Restricted - Server-Side Admin SDK Access Only)
+    match /assessment_access_tokens/{tokenId} {
+      allow read, write: if false;
+    }
   }
 }

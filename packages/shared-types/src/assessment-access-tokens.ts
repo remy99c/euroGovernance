@@ -1,5 +1,6 @@
 import { BaseEntity } from './core.js';
 import { DynamicQuestionnaireSection, QuestionnaireAnswer } from './questionnaire-engine.js';
+import type { ThirdPartyAssessmentRequest } from './third-party-assessments.js';
 
 // =============================================================================
 // 1. TOKEN TYPES & STATUSES
@@ -175,4 +176,31 @@ export function evaluateAccessTokenValidity(
   }
 
   return { isValid: true };
+}
+
+/**
+ * Constructs a least-privilege sanitized view for external unauthenticated respondents,
+ * stripping internal control linkages, risk IDs, and tenant metadata.
+ */
+export function createSanitizedPublicAssessmentView(
+  request: ThirdPartyAssessmentRequest,
+  tokenData: AssessmentAccessToken,
+  existingAnswers: Record<string, QuestionnaireAnswer> = {}
+): SanitizedPublicAssessmentView {
+  return {
+    requestId: request.id,
+    tenantId: request.tenantId,
+    templateTitle: request.templateSnapshot?.title || request.title,
+    templateDescription: request.templateSnapshot?.description,
+    thirdPartyName: request.thirdPartyName,
+    recipientName: request.respondent?.name || tokenData.recipientName,
+    recipientEmail: request.respondent?.email || tokenData.recipientEmail,
+    dueDate: request.dueDate,
+    status: request.status,
+    sections: (request.templateSnapshot?.sections || []) as unknown as DynamicQuestionnaireSection[],
+    existingAnswers,
+    tokenExpiresAt: tokenData.expiresAt,
+    requiresEmailVerification: !!tokenData.requireEmailVerificationCode,
+    isEmailVerified: !!tokenData.emailVerifiedAt,
+  };
 }
