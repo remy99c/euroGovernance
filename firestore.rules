@@ -309,6 +309,66 @@ service cloud.firestore {
         allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
       }
 
+      // Tenant-Scoped Questionnaire Templates
+      match /questionnaire_templates/{templateId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+      }
+
+      // Third-Party Assessment Campaigns
+      match /assessment_campaigns/{campaignId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+      }
+
+      // Third-Party Assessment Requests
+      match /assessment_requests/{requestId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+      }
+
+      // Recurring Assessment Schedules
+      match /recurring_schedules/{scheduleId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+      }
+
+      // External Assessment Submissions
+      match /assessment_submissions/{submissionId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+      }
+
+      // Submission Reviews
+      match /submission_reviews/{reviewId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+      }
+
       // Systems & Assets
       match /system_assets/{assetId} {
         allow read: if isTenantMember(tenantId);
