@@ -298,6 +298,60 @@ export async function seedEmulatorData() {
     updatedBy: 'usr_ai_01',
   });
 
+  // AWS Q4 2025 Bridge Letter Evidence
+  await db.doc(`tenants/${tenantId}/evidence/ev_aws_bridge_letter`).set({
+    id: 'ev_aws_bridge_letter',
+    tenantId,
+    title: 'AWS SOC 2 Continuous Coverage Bridge Letter (Q4 2025)',
+    description: 'Gap letter covering operational effectiveness between audit report date and fiscal year end.',
+    status: 'valid',
+    category: 'bridge_letter',
+    controlIds: ['ctrl_iso27001_a5_1'],
+    requirementIds: [],
+    processorCertificationIds: ['procert_aws_soc2'],
+    certificationIds: [],
+    currentVersion: 1,
+    storagePath: `tenants/${tenantId}/evidence/ev_aws_bridge_letter/aws_soc2_bridge_letter_2025.pdf`,
+    downloadUrl: 'https://storage.googleapis.com/demo/aws_soc2_bridge_letter_2025.pdf',
+    fileName: 'aws_soc2_bridge_letter_2025.pdf',
+    fileSizeBytes: 314572,
+    sha256Hash: 'e10e1f0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+    reviewedBy: 'usr_compliance_01',
+    reviewedAt: now,
+    reviewDueDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: now,
+    updatedAt: now,
+    createdBy: 'usr_compliance_01',
+    updatedBy: 'usr_compliance_01',
+  });
+
+  // AWS Management Assertion on Controls Evidence
+  await db.doc(`tenants/${tenantId}/evidence/ev_aws_mgmt_assertion`).set({
+    id: 'ev_aws_mgmt_assertion',
+    tenantId,
+    title: 'AWS Executive Management Assertion on Controls & Infrastructure',
+    description: 'Signed management assertion regarding internal security control design and operating effectiveness.',
+    status: 'valid',
+    category: 'management_assertion',
+    controlIds: ['ctrl_iso27001_a5_1'],
+    requirementIds: [],
+    processorCertificationIds: ['procert_aws_soc2'],
+    certificationIds: [],
+    currentVersion: 1,
+    storagePath: `tenants/${tenantId}/evidence/ev_aws_mgmt_assertion/aws_mgmt_assertion_signed.pdf`,
+    downloadUrl: 'https://storage.googleapis.com/demo/aws_mgmt_assertion_signed.pdf',
+    fileName: 'aws_mgmt_assertion_signed.pdf',
+    fileSizeBytes: 524288,
+    sha256Hash: 'f20e1f0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+    reviewedBy: 'usr_compliance_01',
+    reviewedAt: now,
+    reviewDueDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: now,
+    updatedAt: now,
+    createdBy: 'usr_compliance_01',
+    updatedBy: 'usr_compliance_01',
+  });
+
   // 7. Seed Vendors, Processor Profiles, Transfer Arrangements, and TIAs
   console.log('🏢 Seeding Vendors, GDPR Article 28 Processors & Transfer Arrangements...');
   await db.doc(`tenants/${tenantId}/vendors/vnd_aws_emea`).set({
@@ -619,7 +673,126 @@ export async function seedEmulatorData() {
     updatedAt: now,
   });
 
-  // 11. Seed Materialized Summary Metrics
+  // 11. Seed Structured Processor Certifications (Linked to Processor Profiles & Evidence)
+  console.log('🛡️ Seeding Structured Processor Certifications...');
+  await db.doc(`tenants/${tenantId}/processor_certifications/procert_aws_soc2`).set({
+    id: 'procert_aws_soc2',
+    tenantId,
+    processorProfileId: 'prof_aws_hosting',
+    vendorId: 'vnd_aws_emea',
+    artifactKind: 'independent_attestation_report',
+    standardFamily: 'soc2_type2',
+    issuingBodyOrAuditor: 'PricewaterhouseCoopers LLP',
+    certificateOrReportNumber: 'PWC-SOC2-2025-AWS-GLOBAL',
+    reportPeriodStart: '2024-10-01T00:00:00.000Z',
+    reportPeriodEnd: '2025-09-30T23:59:59.000Z',
+    validFrom: '2025-10-15T00:00:00.000Z',
+    validUntil: '2026-10-14T23:59:59.000Z',
+    status: 'active_valid',
+    assuranceScopeSummary: 'Trust Services Criteria for Security, Availability, and Confidentiality covering AWS global regions and customer workloads.',
+    legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL (Frankfurt, Dublin, Paris, Stockholm)',
+    systemsOrServicesCovered: ['Compute (EC2)', 'Storage (S3)', 'Database (RDS)', 'Security (IAM, KMS)'],
+    reviewOwnerUserId: 'usr_compliance_01',
+    reviewStatus: 'compliant_verified',
+    reviewDueDate: '2026-08-01T00:00:00.000Z',
+    linkedEvidenceIds: ['ev_soc2_report', 'ev_aws_bridge_letter', 'ev_aws_mgmt_assertion'],
+    unresolvedFindingsCount: 0,
+    hasMajorDeficiencies: false,
+    ownerId: 'usr_compliance_01',
+    createdBy: 'usr_compliance_01',
+    updatedBy: 'usr_compliance_01',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await db.doc(`tenants/${tenantId}/processor_certifications/procert_aws_iso`).set({
+    id: 'procert_aws_iso',
+    tenantId,
+    processorProfileId: 'prof_aws_hosting',
+    vendorId: 'vnd_aws_emea',
+    artifactKind: 'accredited_certification',
+    standardFamily: 'iso_27001',
+    issuingBodyOrAuditor: 'EY CertifyPoint B.V.',
+    certificateOrReportNumber: '2023-010-AWS-ISMS',
+    validFrom: '2025-06-01T00:00:00.000Z',
+    validUntil: '2028-05-31T23:59:59.000Z',
+    status: 'active_valid',
+    assuranceScopeSummary: 'Information Security Management System covering AWS worldwide data center infrastructure and cloud operations.',
+    legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL',
+    systemsOrServicesCovered: ['All AWS Commercial Cloud Services'],
+    reviewOwnerUserId: 'usr_privacy_01',
+    reviewStatus: 'compliant_verified',
+    reviewDueDate: '2026-05-15T00:00:00.000Z',
+    linkedEvidenceIds: ['ev_iso27001_cert'],
+    unresolvedFindingsCount: 0,
+    hasMajorDeficiencies: false,
+    ownerId: 'usr_privacy_01',
+    createdBy: 'usr_privacy_01',
+    updatedBy: 'usr_privacy_01',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await db.doc(`tenants/${tenantId}/processor_certifications/procert_datadog_soc2`).set({
+    id: 'procert_datadog_soc2',
+    tenantId,
+    processorProfileId: 'prof_datadog_monitoring',
+    vendorId: 'vnd_datadog_us',
+    artifactKind: 'independent_attestation_report',
+    standardFamily: 'soc2_type2',
+    issuingBodyOrAuditor: 'Schellman & Company, LLC',
+    certificateOrReportNumber: 'SCH-DD-SOC2-2025',
+    reportPeriodStart: '2024-11-01T00:00:00.000Z',
+    reportPeriodEnd: '2025-10-31T23:59:59.000Z',
+    validFrom: '2025-11-15T00:00:00.000Z',
+    validUntil: '2026-11-14T23:59:59.000Z',
+    status: 'active_valid',
+    assuranceScopeSummary: 'Datadog Observability and Cloud Security Platform Trust Services Criteria.',
+    legalEntityOrRegionalScope: 'Datadog Inc. (US & EU regions)',
+    systemsOrServicesCovered: ['APM', 'Log Management', 'Infrastructure Monitoring'],
+    reviewOwnerUserId: 'usr_privacy_01',
+    reviewStatus: 'compliant_verified',
+    reviewDueDate: '2026-09-01T00:00:00.000Z',
+    linkedEvidenceIds: ['ev_soc2_report'],
+    unresolvedFindingsCount: 0,
+    hasMajorDeficiencies: false,
+    ownerId: 'usr_privacy_01',
+    createdBy: 'usr_privacy_01',
+    updatedBy: 'usr_privacy_01',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // Missing Evidence Demonstration Record (shows gap indicator)
+  await db.doc(`tenants/${tenantId}/processor_certifications/procert_missing_evidence`).set({
+    id: 'procert_missing_evidence',
+    tenantId,
+    processorProfileId: 'prof_datadog_monitoring',
+    vendorId: 'vnd_datadog_us',
+    artifactKind: 'accredited_certification',
+    standardFamily: 'iso_27701',
+    issuingBodyOrAuditor: 'TÜV SÜD Management Service GmbH',
+    certificateOrReportNumber: 'TUV-PIMS-2025-UNLINKED',
+    validFrom: '2025-01-01T00:00:00.000Z',
+    validUntil: '2028-01-01T00:00:00.000Z',
+    status: 'active_valid',
+    assuranceScopeSummary: 'Privacy Information Management System (PIMS) extension.',
+    legalEntityOrRegionalScope: 'Datadog Global',
+    systemsOrServicesCovered: ['Privacy Portal'],
+    reviewOwnerUserId: 'usr_privacy_01',
+    reviewStatus: 'under_assessment',
+    reviewDueDate: '2025-12-01T00:00:00.000Z',
+    linkedEvidenceIds: [], // Missing evidence file triggers gap
+    unresolvedFindingsCount: 0,
+    hasMajorDeficiencies: false,
+    ownerId: 'usr_privacy_01',
+    createdBy: 'usr_privacy_01',
+    updatedBy: 'usr_privacy_01',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // 12. Seed Materialized Summary Metrics
   console.log('📊 Seeding Materialized Summary Metrics...');
   await db.doc(`tenants/${tenantId}/summary_metrics/latest`).set({
     tenantId,
