@@ -87,6 +87,8 @@ export {
   createTenantProcessorCertification,
   reviewProcessorCertification,
   replaceProcessorCertification,
+  getProcessorCertificationReminders,
+  dispatchProcessorCertificationReminders,
 } from './handlers/processor-certifications.js';
 
 // GDPR Phase 1 Module Handlers

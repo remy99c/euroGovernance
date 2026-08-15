@@ -3,7 +3,9 @@ import { db } from '../lib/firebase.js';
 import {
   Evidence,
   Certification,
+  ProcessorCertification,
   evaluateCertificationReminders,
+  evaluateProcessorCertificationReminders,
 } from '@eurogovernance/shared-types';
 
 /**
@@ -54,14 +56,16 @@ export const checkEvidenceExpiriesAndReminders = onSchedule('0 4 * * *', async (
       });
     }
 
-    // 2. Process certifications
-    const [certSnap, evSnap] = await Promise.all([
+    // 2. Process internal certifications
+    const [certSnap, evSnap, procertSnap] = await Promise.all([
       db.collection('tenants').doc(tenantId).collection('certifications').get(),
       db.collection('tenants').doc(tenantId).collection('evidence').get(),
+      db.collection('tenants').doc(tenantId).collection('processor_certifications').get(),
     ]);
 
     const certs = certSnap.docs.map((d) => d.data() as Certification);
     const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
+    const processorCerts = procertSnap.docs.map((d) => d.data() as ProcessorCertification);
 
     // Auto-transition expired active certifications
     for (const doc of certSnap.docs) {
@@ -76,7 +80,25 @@ export const checkEvidenceExpiriesAndReminders = onSchedule('0 4 * * *', async (
       }
     }
 
-    // Evaluate reminders
+    // Auto-transition expired processor certifications
+    for (const doc of procertSnap.docs) {
+      const pc = doc.data() as ProcessorCertification;
+      if (
+        pc.status === 'active_valid' &&
+        !pc.isHistoricVersion &&
+        pc.reviewStatus !== 'superseded' &&
+        new Date(pc.validUntil).getTime() <= nowDate.getTime()
+      ) {
+        batch.update(doc.ref, {
+          status: 'expired',
+          updatedAt: now,
+          updatedBy: 'system_cron',
+        });
+        hasUpdates = true;
+      }
+    }
+
+    // Evaluate internal certification reminders
     const reminders = evaluateCertificationReminders(certs, evidenceDocs, { asOfDate: nowDate, windowDays: 90 });
     for (const r of reminders) {
       const notificationRef = db.collection('tenants').doc(tenantId).collection('notifications').doc();
@@ -88,6 +110,31 @@ export const checkEvidenceExpiriesAndReminders = onSchedule('0 4 * * *', async (
         title: r.title,
         body: r.message,
         actionUrl: `/certifications/${r.certificationId}`,
+        isRead: false,
+        readAt: null,
+        createdAt: now,
+      });
+      hasUpdates = true;
+    }
+
+    // Evaluate processor certification reminders
+    const procertReminders = evaluateProcessorCertificationReminders(processorCerts, {
+      asOfDate: nowDate,
+      windowDays: 90,
+      gracePeriodDays: 30,
+    });
+    for (const pr of procertReminders) {
+      const notificationRef = db.collection('tenants').doc(tenantId).collection('notifications').doc();
+      batch.set(notificationRef, {
+        id: notificationRef.id,
+        tenantId,
+        recipientId: pr.recipientUserId,
+        type: pr.reminderType,
+        title: pr.title,
+        body: pr.message,
+        actionUrl: `/processor-inventory?certId=${pr.certificationId}`,
+        sourceEntityType: 'processor_certification',
+        sourceEntityId: pr.certificationId,
         isRead: false,
         readAt: null,
         createdAt: now,

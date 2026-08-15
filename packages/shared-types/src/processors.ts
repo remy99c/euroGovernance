@@ -1,4 +1,4 @@
-import { BaseEntity } from './core.js';
+import { BaseEntity, UserRole } from './core.js';
 import { Evidence, EvidenceCategory, EvidenceStatus, ProcessorSystemRelationshipType, SystemAsset } from './grc.js';
 import { PersonalDataBreach, BreachReportingSource, BreachSeverity, BreachStatus } from './gdpr.js';
 import { NotificationType, NotificationPriority } from './audit.js';
@@ -1390,6 +1390,7 @@ export function evaluateProcessorCertificationRiskFlags(
 
 export interface ProcessorCertificationReminderCandidate {
   recipientUserId: string;
+  recipientRoles?: UserRole[];
   tenantId: string;
   processorProfileId: string;
   certificationId: string;
@@ -1400,107 +1401,198 @@ export interface ProcessorCertificationReminderCandidate {
   message: string;
   dueDate: string;
   severity: NotificationPriority;
+  dedupKey: string;
+  gracePeriodDaysRemaining?: number | null;
+  isStaleReport?: boolean;
+}
+
+export interface EvaluateProcessorCertificationRemindersOptions {
+  asOfDate?: Date;
+  windowDays?: number;
+  gracePeriodDays?: number; // Configurable grace period in days (default: 30)
+  maxReportAgeDays?: number; // Max allowed age for period-of-time reports (default: 365 days)
 }
 
 /**
- * Evaluates reminder candidates for upcoming expiries, overdue reviews, and missing evidence.
+ * Evaluates reminder candidates for processor certifications:
+ * - Upcoming expiries (60d, 30d, 14d)
+ * - Grace period consumption and expired assurance
+ * - Overdue compliance reviews
+ * - Stale period-of-time reports (e.g. SOC 2 / BSI C5 > 12 months)
+ * - Missing replacement documents for expired/superseded records
  */
 export function evaluateProcessorCertificationReminders(
   certs: ProcessorCertification[],
-  options: { asOfDate?: Date; windowDays?: number } = {}
+  options: EvaluateProcessorCertificationRemindersOptions = {}
 ): ProcessorCertificationReminderCandidate[] {
   const asOf = options.asOfDate || new Date();
-  const windowDays = options.windowDays || 90;
+  const gracePeriodDays = options.gracePeriodDays ?? 30;
+  const maxReportAgeDays = options.maxReportAgeDays ?? 365;
   const nowMillis = asOf.getTime();
-  const windowMillis = windowDays * 24 * 60 * 60 * 1000;
   const reminders: ProcessorCertificationReminderCandidate[] = [];
 
   for (const cert of certs) {
-    const recipient = cert.reviewOwnerUserId || cert.createdBy;
-    const expiryMillis = new Date(cert.validUntil).getTime();
-    const daysUntilExpiry = Math.ceil((expiryMillis - nowMillis) / (1000 * 60 * 60 * 24));
-
-    if (expiryMillis <= nowMillis) {
-      reminders.push({
-        recipientUserId: recipient,
-        tenantId: cert.tenantId,
-        processorProfileId: cert.processorProfileId,
-        certificationId: cert.id,
-        certificateOrReportNumber: cert.certificateOrReportNumber,
-        standardFamily: cert.standardFamily,
-        reminderType: 'certification_expired',
-        title: `Processor Assurance Expired: ${cert.certificateOrReportNumber}`,
-        message: `Third-party assurance (${cert.standardFamily.toUpperCase()}) for processor profile ${cert.processorProfileId} expired on ${cert.validUntil}.`,
-        dueDate: cert.validUntil,
-        severity: 'urgent',
-      });
-    } else if (daysUntilExpiry <= 30) {
-      reminders.push({
-        recipientUserId: recipient,
-        tenantId: cert.tenantId,
-        processorProfileId: cert.processorProfileId,
-        certificationId: cert.id,
-        certificateOrReportNumber: cert.certificateOrReportNumber,
-        standardFamily: cert.standardFamily,
-        reminderType: 'certification_expiry_warning_30d',
-        title: `Urgent Processor Assurance Expiry (30d): ${cert.certificateOrReportNumber}`,
-        message: `Assurance (${cert.standardFamily.toUpperCase()}) expires in ${daysUntilExpiry} days on ${cert.validUntil}.`,
-        dueDate: cert.validUntil,
-        severity: 'high',
-      });
-    } else if (daysUntilExpiry <= 90) {
-      reminders.push({
-        recipientUserId: recipient,
-        tenantId: cert.tenantId,
-        processorProfileId: cert.processorProfileId,
-        certificationId: cert.id,
-        certificateOrReportNumber: cert.certificateOrReportNumber,
-        standardFamily: cert.standardFamily,
-        reminderType: 'certification_expiry_warning_90d',
-        title: `Processor Assurance Renewal Window (90d): ${cert.certificateOrReportNumber}`,
-        message: `Assurance (${cert.standardFamily.toUpperCase()}) expires on ${cert.validUntil}. Request updated report/certificate.`,
-        dueDate: cert.validUntil,
-        severity: 'medium',
-      });
+    // Superseded historic records are archived and exempt from routine operational alarms
+    if (cert.isHistoricVersion || cert.reviewStatus === 'superseded') {
+      continue;
     }
 
-    // Review Due Date
-    if (cert.reviewDueDate) {
-      const reviewMillis = new Date(cert.reviewDueDate).getTime();
-      if (reviewMillis <= nowMillis + windowMillis && cert.status === 'active_valid') {
-        const isOverdue = reviewMillis < nowMillis;
+    const recipient = cert.reviewOwnerUserId || cert.ownerId || cert.createdBy;
+    const recipientRoles: UserRole[] = ['compliance_manager', 'privacy_manager', 'security_manager'];
+    const expiryMillis = new Date(cert.validUntil).getTime();
+    const daysUntilExpiry = Math.ceil((expiryMillis - nowMillis) / (1000 * 60 * 60 * 24));
+    const daysPastExpiry = Math.ceil((nowMillis - expiryMillis) / (1000 * 60 * 60 * 24));
+
+    // 1. Expiry & Grace Period Notifications
+    if (expiryMillis <= nowMillis) {
+      if (daysPastExpiry <= gracePeriodDays) {
+        const graceRemaining = Math.max(0, gracePeriodDays - daysPastExpiry);
         reminders.push({
           recipientUserId: recipient,
+          recipientRoles,
           tenantId: cert.tenantId,
           processorProfileId: cert.processorProfileId,
           certificationId: cert.id,
           certificateOrReportNumber: cert.certificateOrReportNumber,
           standardFamily: cert.standardFamily,
-          reminderType: 'processor_annual_review_due',
-          title: isOverdue
-            ? `Processor Assurance Review Overdue: ${cert.certificateOrReportNumber}`
-            : `Processor Assurance Review Due: ${cert.certificateOrReportNumber}`,
-          message: `Assurance review for ${cert.standardFamily.toUpperCase()} is scheduled for ${cert.reviewDueDate}.`,
-          dueDate: cert.reviewDueDate,
-          severity: isOverdue ? 'high' : 'medium',
+          reminderType: 'processor_cert_grace_period_expiring',
+          title: `Processor Assurance in Grace Period (${graceRemaining}d remaining): ${cert.certificateOrReportNumber}`,
+          message: `Assurance artifact (${cert.standardFamily.toUpperCase()}) expired on ${cert.validUntil}. Vendor is currently operating under a ${gracePeriodDays}-day grace period (${graceRemaining} days remaining). Request renewed certification immediately.`,
+          dueDate: cert.validUntil,
+          severity: 'urgent',
+          dedupKey: `${cert.tenantId}_${cert.id}_grace_${cert.validUntil}`,
+          gracePeriodDaysRemaining: graceRemaining,
+        });
+      } else {
+        reminders.push({
+          recipientUserId: recipient,
+          recipientRoles,
+          tenantId: cert.tenantId,
+          processorProfileId: cert.processorProfileId,
+          certificationId: cert.id,
+          certificateOrReportNumber: cert.certificateOrReportNumber,
+          standardFamily: cert.standardFamily,
+          reminderType: 'processor_cert_expired',
+          title: `Processor Assurance Grace Period Expired: ${cert.certificateOrReportNumber}`,
+          message: `Third-party assurance (${cert.standardFamily.toUpperCase()}) for processor profile ${cert.processorProfileId} expired on ${cert.validUntil} and has exceeded the ${gracePeriodDays}-day grace period. Vendor assurance is unverified.`,
+          dueDate: cert.validUntil,
+          severity: 'urgent',
+          dedupKey: `${cert.tenantId}_${cert.id}_expired_${cert.validUntil}`,
         });
       }
-    }
-
-    // Missing Evidence Follow-up
-    if ((!cert.linkedEvidenceIds || cert.linkedEvidenceIds.length === 0) && cert.status === 'active_valid') {
+    } else if (daysUntilExpiry <= 14) {
       reminders.push({
         recipientUserId: recipient,
+        recipientRoles,
         tenantId: cert.tenantId,
         processorProfileId: cert.processorProfileId,
         certificationId: cert.id,
         certificateOrReportNumber: cert.certificateOrReportNumber,
         standardFamily: cert.standardFamily,
-        reminderType: 'missing_evidence_follow_up',
-        title: `Missing Report/Certificate PDF: ${cert.certificateOrReportNumber}`,
-        message: `Attach formal certificate or attestation PDF to the Evidence repository for processor profile ${cert.processorProfileId}.`,
-        dueDate: cert.validFrom,
+        reminderType: 'processor_cert_expiry_warning_14d',
+        title: `Critical Processor Assurance Expiry (14d): ${cert.certificateOrReportNumber}`,
+        message: `Assurance (${cert.standardFamily.toUpperCase()}) expires in ${daysUntilExpiry} days on ${cert.validUntil}. Final renewal escalation required.`,
+        dueDate: cert.validUntil,
+        severity: 'urgent',
+        dedupKey: `${cert.tenantId}_${cert.id}_14d_${cert.validUntil}`,
+      });
+    } else if (daysUntilExpiry <= 30) {
+      reminders.push({
+        recipientUserId: recipient,
+        recipientRoles,
+        tenantId: cert.tenantId,
+        processorProfileId: cert.processorProfileId,
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardFamily: cert.standardFamily,
+        reminderType: 'processor_cert_expiry_warning_30d',
+        title: `Urgent Processor Assurance Expiry (30d): ${cert.certificateOrReportNumber}`,
+        message: `Assurance (${cert.standardFamily.toUpperCase()}) expires in ${daysUntilExpiry} days on ${cert.validUntil}. Initiate vendor renewal outreach.`,
+        dueDate: cert.validUntil,
+        severity: 'high',
+        dedupKey: `${cert.tenantId}_${cert.id}_30d_${cert.validUntil}`,
+      });
+    } else if (daysUntilExpiry <= 60) {
+      reminders.push({
+        recipientUserId: recipient,
+        recipientRoles,
+        tenantId: cert.tenantId,
+        processorProfileId: cert.processorProfileId,
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardFamily: cert.standardFamily,
+        reminderType: 'processor_cert_expiry_warning_60d',
+        title: `Processor Assurance Renewal Window (60d): ${cert.certificateOrReportNumber}`,
+        message: `Assurance (${cert.standardFamily.toUpperCase()}) expires in ${daysUntilExpiry} days on ${cert.validUntil}. Request updated report or bridge letter.`,
+        dueDate: cert.validUntil,
         severity: 'medium',
+        dedupKey: `${cert.tenantId}_${cert.id}_60d_${cert.validUntil}`,
+      });
+    }
+
+    // 2. Overdue Internal Review Reminders
+    if (cert.reviewDueDate) {
+      const reviewMillis = new Date(cert.reviewDueDate).getTime();
+      if (reviewMillis < nowMillis && (cert.reviewStatus === 'pending' || cert.reviewStatus === 'in_review')) {
+        reminders.push({
+          recipientUserId: recipient,
+          recipientRoles,
+          tenantId: cert.tenantId,
+          processorProfileId: cert.processorProfileId,
+          certificationId: cert.id,
+          certificateOrReportNumber: cert.certificateOrReportNumber,
+          standardFamily: cert.standardFamily,
+          reminderType: 'processor_cert_review_overdue',
+          title: `Processor Assurance Review Overdue: ${cert.certificateOrReportNumber}`,
+          message: `Periodic compliance review for assurance artifact (${cert.certificateOrReportNumber}) was due on ${cert.reviewDueDate} and remains in status "${cert.reviewStatus}".`,
+          dueDate: cert.reviewDueDate,
+          severity: 'high',
+          dedupKey: `${cert.tenantId}_${cert.id}_review_overdue_${cert.reviewDueDate}`,
+        });
+      }
+    }
+
+    // 3. Stale Period-of-Time Report Reminders (e.g. SOC 2 Type II / BSI C5)
+    if (cert.reportPeriodEnd) {
+      const reportEndMillis = new Date(cert.reportPeriodEnd).getTime();
+      const reportAgeDays = Math.floor((nowMillis - reportEndMillis) / (1000 * 60 * 60 * 24));
+
+      if (reportAgeDays > maxReportAgeDays && expiryMillis > nowMillis) {
+        reminders.push({
+          recipientUserId: recipient,
+          recipientRoles,
+          tenantId: cert.tenantId,
+          processorProfileId: cert.processorProfileId,
+          certificationId: cert.id,
+          certificateOrReportNumber: cert.certificateOrReportNumber,
+          standardFamily: cert.standardFamily,
+          reminderType: 'processor_cert_stale_report',
+          title: `Stale Audit Attestation Report (>12m): ${cert.certificateOrReportNumber}`,
+          message: `Audit testing period for ${cert.standardFamily.toUpperCase()} ended ${reportAgeDays} days ago on ${cert.reportPeriodEnd}. Request the latest annual SOC 2 / C5 report or Q4 Bridge Letter from vendor.`,
+          dueDate: cert.reportPeriodEnd,
+          severity: 'high',
+          dedupKey: `${cert.tenantId}_${cert.id}_stale_${cert.reportPeriodEnd}`,
+          isStaleReport: true,
+        });
+      }
+    }
+
+    // 4. Missing Replacement Document Reminders
+    if ((!cert.linkedEvidenceIds || cert.linkedEvidenceIds.length === 0) && cert.status === 'active_valid') {
+      reminders.push({
+        recipientUserId: recipient,
+        recipientRoles,
+        tenantId: cert.tenantId,
+        processorProfileId: cert.processorProfileId,
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardFamily: cert.standardFamily,
+        reminderType: 'processor_cert_missing_replacement_evidence',
+        title: `Missing Supporting Assurance File: ${cert.certificateOrReportNumber}`,
+        message: `No verified document file is attached to processor assurance record ${cert.certificateOrReportNumber}. Upload official audit report or certificate PDF.`,
+        dueDate: cert.validFrom,
+        severity: 'urgent',
+        dedupKey: `${cert.tenantId}_${cert.id}_missing_doc_${cert.validFrom}`,
       });
     }
   }

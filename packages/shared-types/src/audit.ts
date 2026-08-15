@@ -61,7 +61,15 @@ export type NotificationType =
   | 'certification_expiry_warning_30d'
   | 'certification_expired'
   | 'certification_surveillance_audit_due'
-  | 'certification_missing_evidence_follow_up';
+  | 'certification_missing_evidence_follow_up'
+  | 'processor_cert_expiry_warning_60d'
+  | 'processor_cert_expiry_warning_30d'
+  | 'processor_cert_expiry_warning_14d'
+  | 'processor_cert_expired'
+  | 'processor_cert_review_overdue'
+  | 'processor_cert_stale_report'
+  | 'processor_cert_missing_replacement_evidence'
+  | 'processor_cert_grace_period_expiring';
 
 /**
  * Immutable Audit Log Event (/tenants/{tenantId}/audit_logs/{logId})

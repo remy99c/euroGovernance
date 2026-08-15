@@ -427,13 +427,13 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
           issuingBodyOrAuditor: 'PwC',
           certificateOrReportNumber: 'SOC-EXP-2025',
           validFrom: '2024-11-01T00:00:00.000Z',
-          validUntil: '2025-11-15T00:00:00.000Z', // Expiring in 15 days relative to 2025-11-01
+          validUntil: '2025-11-25T00:00:00.000Z', // Expiring in 24 days relative to 2025-11-01
           status: 'active_valid',
           assuranceScopeSummary: 'Cloud Services',
           legalEntityOrRegionalScope: 'Global',
           systemsOrServicesCovered: ['Compute'],
           reviewOwnerUserId: 'usr_compliance_01',
-          reviewStatus: 'accepted',
+          reviewStatus: 'in_review',
           reviewDueDate: '2025-10-15T00:00:00.000Z', // Overdue review
           linkedEvidenceIds: [],
           unresolvedFindingsCount: 1,
@@ -453,8 +453,8 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       expect(flags.some((f) => f.ruleCode === 'PROCESSOR_CERT_MISSING_EVIDENCE')).toBe(true);
 
       const reminders = evaluateProcessorCertificationReminders(certs, { asOfDate: asOf, windowDays: 90 });
-      expect(reminders.some((r) => r.reminderType === 'certification_expiry_warning_30d')).toBe(true);
-      expect(reminders.some((r) => r.reminderType === 'processor_annual_review_due')).toBe(true);
+      expect(reminders.some((r) => r.reminderType === 'processor_cert_expiry_warning_30d')).toBe(true);
+      expect(reminders.some((r) => r.reminderType === 'processor_cert_review_overdue')).toBe(true);
     });
   });
 
@@ -1124,6 +1124,179 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       );
       expect(activeCompleteness.isComplete).toBe(true);
       expect(activeCompleteness.hasAttachedEvidence).toBe(true);
+    });
+  });
+
+  describe('7. Expiry Reminders, Grace-Period Logic, Stale Reports & Deduplication Suppression', () => {
+    const baseTestCert: ProcessorCertification = {
+      id: 'cert_reminders_test',
+      tenantId: 'tenant_eurocorp_de',
+      processorProfileId: 'prof_aws_hosting',
+      vendorId: 'vnd_aws_emea',
+      artifactKind: 'independent_attestation_report',
+      standardFamily: 'soc2_type2',
+      issuingBodyOrAuditor: 'PwC LLP',
+      certificateOrReportNumber: 'SOC2-REMINDER-01',
+      reportPeriodStart: '2024-01-01T00:00:00.000Z',
+      reportPeriodEnd: '2024-12-31T23:59:59.000Z',
+      validFrom: '2025-01-15T00:00:00.000Z',
+      validUntil: '2026-01-14T23:59:59.000Z',
+      status: 'active_valid',
+      assuranceScopeSummary: 'Cloud hosting infrastructure',
+      legalEntityOrRegionalScope: 'AWS EMEA',
+      systemsOrServicesCovered: ['Compute', 'Storage'],
+      reviewOwnerUserId: 'usr_compliance_lead',
+      reviewStatus: 'accepted',
+      reviewDueDate: '2025-11-01T00:00:00.000Z',
+      linkedEvidenceIds: ['ev_soc2_pdf'],
+      unresolvedFindingsCount: 0,
+      hasMajorDeficiencies: false,
+      ownerId: 'usr_compliance_lead',
+      createdBy: 'usr_compliance_lead',
+      updatedBy: 'usr_compliance_lead',
+      createdAt: '2025-01-15T00:00:00.000Z',
+      updatedAt: '2025-01-15T00:00:00.000Z',
+    };
+
+    it('triggers upcoming expiry warnings at 60d, 30d, and 14d thresholds', () => {
+      // 1. 50 days before expiry (within 60d window)
+      const date50dBefore = new Date('2025-11-25T00:00:00.000Z');
+      const reminders60d = evaluateProcessorCertificationReminders([baseTestCert], { asOfDate: date50dBefore });
+      expect(reminders60d.some((r) => r.reminderType === 'processor_cert_expiry_warning_60d')).toBe(true);
+
+      // 2. 25 days before expiry (within 30d window)
+      const date25dBefore = new Date('2025-12-20T00:00:00.000Z');
+      const reminders30d = evaluateProcessorCertificationReminders([baseTestCert], { asOfDate: date25dBefore });
+      expect(reminders30d.some((r) => r.reminderType === 'processor_cert_expiry_warning_30d')).toBe(true);
+
+      // 3. 10 days before expiry (within 14d critical window)
+      const date10dBefore = new Date('2026-01-04T00:00:00.000Z');
+      const reminders14d = evaluateProcessorCertificationReminders([baseTestCert], { asOfDate: date10dBefore });
+      expect(reminders14d.some((r) => r.reminderType === 'processor_cert_expiry_warning_14d')).toBe(true);
+    });
+
+    it('handles configurable grace-period logic (grace period active vs grace period expired)', () => {
+      // 1. 10 days PAST validUntil, with 30-day grace period -> grace period warning
+      const date10dAfter = new Date('2026-01-24T00:00:00.000Z');
+      const graceReminders = evaluateProcessorCertificationReminders([baseTestCert], {
+        asOfDate: date10dAfter,
+        gracePeriodDays: 30,
+      });
+
+      const graceAlert = graceReminders.find((r) => r.reminderType === 'processor_cert_grace_period_expiring');
+      expect(graceAlert).toBeDefined();
+      expect(graceAlert?.severity).toBe('urgent');
+      expect(graceAlert?.gracePeriodDaysRemaining).toBe(20); // 30 - 10 = 20 days remaining
+
+      // 2. 45 days PAST validUntil, with 30-day grace period -> expired
+      const date45dAfter = new Date('2026-02-28T00:00:00.000Z');
+      const expiredReminders = evaluateProcessorCertificationReminders([baseTestCert], {
+        asOfDate: date45dAfter,
+        gracePeriodDays: 30,
+      });
+
+      const expiredAlert = expiredReminders.find((r) => r.reminderType === 'processor_cert_expired');
+      expect(expiredAlert).toBeDefined();
+      expect(expiredAlert?.severity).toBe('urgent');
+      expect(expiredAlert?.message).toContain('exceeded the 30-day grace period');
+    });
+
+    it('triggers overdue review reminders when reviewDueDate has elapsed for pending or in-review certs', () => {
+      const certPendingReview: ProcessorCertification = {
+        ...baseTestCert,
+        reviewStatus: 'in_review',
+        reviewDueDate: '2025-06-01T00:00:00.000Z',
+      };
+
+      const asOf = new Date('2025-07-01T00:00:00.000Z'); // 1 month after due date
+      const reminders = evaluateProcessorCertificationReminders([certPendingReview], { asOfDate: asOf });
+
+      const overdueAlert = reminders.find((r) => r.reminderType === 'processor_cert_review_overdue');
+      expect(overdueAlert).toBeDefined();
+      expect(overdueAlert?.severity).toBe('high');
+      expect(overdueAlert?.dueDate).toBe('2025-06-01T00:00:00.000Z');
+    });
+
+    it('triggers stale report reminders when audit testing period is older than 12 months (365 days)', () => {
+      const certWithOldPeriod: ProcessorCertification = {
+        ...baseTestCert,
+        reportPeriodStart: '2023-10-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-09-30T23:59:59.000Z',
+        validFrom: '2024-11-01T00:00:00.000Z',
+        validUntil: '2026-11-01T00:00:00.000Z', // validUntil is far out, but report period is stale (>12m)
+      };
+
+      const asOf = new Date('2025-11-15T00:00:00.000Z'); // > 13.5 months after report period end
+      const reminders = evaluateProcessorCertificationReminders([certWithOldPeriod], {
+        asOfDate: asOf,
+        maxReportAgeDays: 365,
+      });
+
+      const staleAlert = reminders.find((r) => r.reminderType === 'processor_cert_stale_report');
+      expect(staleAlert).toBeDefined();
+      expect(staleAlert?.severity).toBe('high');
+      expect(staleAlert?.isStaleReport).toBe(true);
+      expect(staleAlert?.title).toContain('Stale Audit Attestation Report (>12m)');
+    });
+
+    it('triggers missing replacement document reminders when record has no attached evidence file', () => {
+      const certMissingDoc: ProcessorCertification = {
+        ...baseTestCert,
+        linkedEvidenceIds: [], // Empty evidence links
+      };
+
+      const reminders = evaluateProcessorCertificationReminders([certMissingDoc], {
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      const missingDocAlert = reminders.find((r) => r.reminderType === 'processor_cert_missing_replacement_evidence');
+      expect(missingDocAlert).toBeDefined();
+      expect(missingDocAlert?.severity).toBe('urgent');
+    });
+
+    it('enforces recipient correctness and deduplication key integrity', () => {
+      const certWithSpecificReviewer: ProcessorCertification = {
+        ...baseTestCert,
+        reviewOwnerUserId: 'usr_lead_dpo_berlin',
+        ownerId: 'usr_fallback_admin',
+      };
+
+      const reminders = evaluateProcessorCertificationReminders([certWithSpecificReviewer], {
+        asOfDate: new Date('2025-12-20T00:00:00.000Z'), // 30d window
+      });
+
+      expect(reminders.length).toBeGreaterThan(0);
+      const reminder = reminders[0]!;
+
+      // 1. Recipient is reviewOwnerUserId
+      expect(reminder.recipientUserId).toBe('usr_lead_dpo_berlin');
+
+      // 2. Role-based routing is provided
+      expect(reminder.recipientRoles).toEqual(
+        expect.arrayContaining(['compliance_manager', 'privacy_manager', 'security_manager'])
+      );
+
+      // 3. Deduplication key is deterministic
+      expect(reminder.dedupKey).toBeDefined();
+      expect(reminder.dedupKey).toContain(certWithSpecificReviewer.tenantId);
+      expect(reminder.dedupKey).toContain(certWithSpecificReviewer.id);
+    });
+
+    it('exempts superseded historic versions from generating active alarms', () => {
+      const supersededCert: ProcessorCertification = {
+        ...baseTestCert,
+        reviewStatus: 'superseded',
+        status: 'superseded',
+        isHistoricVersion: true,
+        validUntil: '2024-01-01T00:00:00.000Z', // Long expired
+        linkedEvidenceIds: [], // No evidence
+      };
+
+      const reminders = evaluateProcessorCertificationReminders([supersededCert], {
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      expect(reminders.length).toBe(0); // Zero active alerts generated
     });
   });
 });

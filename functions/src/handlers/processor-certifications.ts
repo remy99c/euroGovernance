@@ -2,11 +2,13 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
+import { createNotification } from '../lib/notifications.js';
 import {
   ProcessorCertification,
   ProcessorCertificationReviewStatus,
   validateProcessorCertification,
   validateProcessorCertificationReviewTransition,
+  evaluateProcessorCertificationReminders,
 } from '@eurogovernance/shared-types';
 
 export interface CreateProcessorCertificationInput {
@@ -439,5 +441,164 @@ export const replaceProcessorCertification = onCall<ReplaceProcessorCertificatio
     previousCertificationId,
     newCertificationId: newCertId,
     newCertification: newRecord,
+  };
+});
+
+export interface GetProcessorCertificationRemindersInput {
+  tenantId: string;
+  processorProfileId?: string;
+  windowDays?: number;
+  gracePeriodDays?: number;
+  maxReportAgeDays?: number;
+}
+
+/**
+ * Callable Function: getProcessorCertificationReminders
+ * Retrieves calculated reminder candidates for upcoming expiries, overdue reviews, and stale reports.
+ */
+export const getProcessorCertificationReminders = onCall<GetProcessorCertificationRemindersInput>(async (request) => {
+  const { tenantId, processorProfileId, windowDays, gracePeriodDays, maxReportAgeDays } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('processor_certifications');
+  if (processorProfileId) {
+    query = query.where('processorProfileId', '==', processorProfileId);
+  }
+
+  const snap = await query.get();
+  const certs = snap.docs.map((d) => d.data() as ProcessorCertification);
+
+  const reminders = evaluateProcessorCertificationReminders(certs, {
+    asOfDate: new Date(),
+    windowDays: windowDays ?? 90,
+    gracePeriodDays: gracePeriodDays ?? 30,
+    maxReportAgeDays: maxReportAgeDays ?? 365,
+  });
+
+  return {
+    success: true,
+    totalCandidates: reminders.length,
+    reminders,
+  };
+});
+
+export interface DispatchProcessorCertificationRemindersInput {
+  tenantId: string;
+  processorProfileId?: string;
+  windowDays?: number;
+  gracePeriodDays?: number;
+  dryRun?: boolean;
+}
+
+/**
+ * Callable Function: dispatchProcessorCertificationReminders
+ * Generates and dispatches notifications for processor certification lifecycles with deduplication suppression.
+ */
+export const dispatchProcessorCertificationReminders = onCall<DispatchProcessorCertificationRemindersInput>(async (request) => {
+  const { tenantId, processorProfileId, windowDays, gracePeriodDays, dryRun = false } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+  ]);
+
+  let query: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('processor_certifications');
+  if (processorProfileId) {
+    query = query.where('processorProfileId', '==', processorProfileId);
+  }
+
+  const snap = await query.get();
+  const certs = snap.docs.map((d) => d.data() as ProcessorCertification);
+
+  const candidateReminders = evaluateProcessorCertificationReminders(certs, {
+    asOfDate: new Date(),
+    windowDays: windowDays ?? 90,
+    gracePeriodDays: gracePeriodDays ?? 30,
+  });
+
+  // Fetch recent notifications for deduplication check (within 7 days)
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const existingNotifsSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('notifications')
+    .where('sourceEntityType', '==', 'processor_certification')
+    .get();
+
+  const existingNotifs = existingNotifsSnap.docs.map((d) => d.data());
+
+  const dispatchedNotifications: string[] = [];
+  let actualSuppressed = 0;
+
+  if (!dryRun) {
+    for (const candidate of candidateReminders) {
+      const targetUserId = candidate.recipientUserId || authContext.userId;
+
+      // Deduplication check: Has a notification of this exact type for this cert been sent recently?
+      const isDuplicate = existingNotifs.some(
+        (n) =>
+          n.recipientId === targetUserId &&
+          n.type === candidate.reminderType &&
+          n.sourceEntityId === candidate.certificationId &&
+          !n.isRead &&
+          new Date(n.createdAt).getTime() > sevenDaysAgo
+      );
+
+      if (isDuplicate) {
+        actualSuppressed++;
+        continue;
+      }
+
+      const notif = await createNotification({
+        tenantId,
+        recipientId: targetUserId,
+        title: candidate.title,
+        message: candidate.message,
+        type: candidate.reminderType,
+        priority: candidate.severity,
+        sourceEntityType: 'processor_certification',
+        sourceEntityId: candidate.certificationId,
+        linkUrl: `/processor-inventory?certId=${candidate.certificationId}`,
+      });
+
+      dispatchedNotifications.push(notif.id);
+    }
+
+    if (dispatchedNotifications.length > 0) {
+      await recordAuditLog({
+        tenantId,
+        actorId: authContext.userId,
+        actorEmail: authContext.email,
+        actorRole: authContext.role,
+        entityType: 'notification',
+        entityId: `batch_${Date.now()}`,
+        action: 'create',
+        afterSummary: {
+          totalDispatched: dispatchedNotifications.length,
+          totalSuppressed: actualSuppressed,
+          processorProfileId: processorProfileId || 'all',
+        },
+        source: 'cloud_function',
+        workflowContext: 'processor_certification_reminders_dispatch',
+      });
+    }
+  }
+
+  return {
+    success: true,
+    dryRun,
+    candidatesFound: candidateReminders.length,
+    dispatchedCount: dryRun ? candidateReminders.length : dispatchedNotifications.length,
+    suppressedCount: dryRun ? 0 : actualSuppressed,
+    notificationIds: dispatchedNotifications,
   };
 });
