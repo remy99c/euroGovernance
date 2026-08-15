@@ -15,6 +15,8 @@ import {
 import { UIPageHeader } from './components/ui-page-header';
 import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
 import { UIBadge } from './components/ui-badge';
+import { UIFilterBar } from './components/ui-filter-bar';
+import { UIDataTable, ColumnDefinition } from './components/ui-data-table';
 
 export interface ProcessorAssessmentWorkspaceProps {
   tenantId: string;
@@ -318,283 +320,218 @@ export function ProcessorAssessmentWorkspace({
         />
       </UIStatGrid>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', marginBottom: '20px' }}>
-        <button
-          onClick={() => setActiveTab('assessments')}
-          style={{
-            padding: '10px 16px',
-            fontSize: '14px',
-            fontWeight: activeTab === 'assessments' ? 600 : 500,
-            color: activeTab === 'assessments' ? '#0284c7' : '#64748b',
-            borderBottom: activeTab === 'assessments' ? '2px solid #0284c7' : 'none',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-          }}
-        >
-          Active Questionnaires ({assessments.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('templates')}
-          style={{
-            padding: '10px 16px',
-            fontSize: '14px',
-            fontWeight: activeTab === 'templates' ? 600 : 500,
-            color: activeTab === 'templates' ? '#0284c7' : '#64748b',
-            borderBottom: activeTab === 'templates' ? '2px solid #0284c7' : 'none',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-          }}
-        >
-          Master Questionnaire Templates ({CANONICAL_ASSESSMENT_TEMPLATES.length})
-        </button>
-      </div>
+      {/* 3. Standardized Filter Toolbar with Tabs */}
+      <UIFilterBar
+        tabs={[
+          { id: 'assessments', label: 'Active Questionnaires', count: assessments.length },
+          { id: 'templates', label: 'Master Questionnaire Templates', count: CANONICAL_ASSESSMENT_TEMPLATES.length },
+        ]}
+        activeTab={activeTab}
+        onTabChange={(tabId) => setActiveTab(tabId as 'assessments' | 'templates')}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search by vendor, title, or respondent email..."
+        filters={[
+          {
+            id: 'filter_type',
+            label: 'Type',
+            value: filterType,
+            options: [
+              { label: 'All Types', value: 'all' },
+              { label: 'Pre-Contract Due Diligence', value: 'pre_contract_due_diligence' },
+              { label: 'Periodic Assurance Review', value: 'periodic_assurance_review' },
+              { label: 'Security & TOMs Deep Dive', value: 'security_posture_deep_dive' },
+              { label: 'AI Supplier Governance', value: 'ai_supplier_governance' },
+              { label: 'Schrems II Transfer Diligence', value: 'cross_border_transfer_diligence' },
+            ],
+            onChange: setFilterType,
+          },
+          {
+            id: 'filter_status',
+            label: 'Status',
+            value: filterStatus,
+            options: [
+              { label: 'All Statuses', value: 'all' },
+              { label: 'Draft', value: 'draft' },
+              { label: 'Sent', value: 'sent' },
+              { label: 'In Progress', value: 'in_progress' },
+              { label: 'Submitted', value: 'submitted' },
+              { label: 'Under Review', value: 'under_review' },
+              { label: 'Revision Requested', value: 'revision_requested' },
+              { label: 'Accepted', value: 'accepted' },
+              { label: 'Rejected', value: 'rejected' },
+              { label: 'Superseded', value: 'superseded' },
+            ],
+            onChange: setFilterStatus,
+          },
+          {
+            id: 'filter_risk',
+            label: 'Risk Tier',
+            value: filterRisk,
+            options: [
+              { label: 'All Risk Tiers', value: 'all' },
+              { label: 'Low Risk', value: 'low' },
+              { label: 'Medium Risk', value: 'medium' },
+              { label: 'High Risk', value: 'high' },
+              { label: 'Critical Risk', value: 'critical' },
+            ],
+            onChange: setFilterRisk,
+          },
+        ]}
+        hasActiveFilters={filterType !== 'all' || filterStatus !== 'all' || filterRisk !== 'all' || searchQuery.trim() !== ''}
+        onResetFilters={() => {
+          setFilterType('all');
+          setFilterStatus('all');
+          setFilterRisk('all');
+          setSearchQuery('');
+        }}
+      />
 
       {activeTab === 'assessments' && (
-        <>
-          {/* Filter Bar */}
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              placeholder="Search vendor, title, or email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                padding: '8px 12px',
-                fontSize: '13px',
-                border: '1px solid #cbd5e1',
-                borderRadius: '6px',
-                minWidth: '260px',
-              }}
-            />
+        <UIDataTable
+          columns={[
+            { key: 'title', header: 'Vendor & Assessment Title', width: '26%' },
+            { key: 'type', header: 'Type & Cadence', width: '18%' },
+            { key: 'respondent', header: 'Respondent Contact', width: '16%' },
+            { key: 'status', header: 'Status', width: '12%' },
+            { key: 'score', header: 'Score & Risk', width: '12%' },
+            { key: 'dueDate', header: 'Due Date', width: '16%' },
+          ]}
+          isEmpty={filteredAssessments.length === 0}
+        >
+          {filteredAssessments.map((a) => {
+            const score = calculateProcessorAssessmentScore(a);
+            const riskFlags = evaluateProcessorAssessmentRiskFlags(a);
+            const isOverdue = new Date(a.dueDate).getTime() < Date.now() && ['sent', 'in_progress'].includes(a.status);
 
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-              style={{ padding: '8px 12px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-            >
-              <option value="all">All Assessment Types</option>
-              <option value="pre_contract_due_diligence">One-Time Pre-Contract Due Diligence</option>
-              <option value="periodic_assurance_review">Recurring Periodic Assurance Review</option>
-              <option value="security_posture_deep_dive">Security & TOMs Deep Dive</option>
-              <option value="ai_supplier_governance">AI Supplier Governance</option>
-              <option value="cross_border_transfer_diligence">Schrems II Transfer Diligence</option>
-            </select>
+            const getStatusVariant = (st: string) => {
+              if (st === 'accepted') return 'compliant';
+              if (st === 'rejected') return 'critical';
+              if (st === 'submitted' || st === 'under_review') return 'review';
+              if (st === 'revision_requested') return 'warning';
+              return 'neutral';
+            };
 
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              style={{ padding: '8px 12px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-            >
-              <option value="all">All Statuses</option>
-              <option value="draft">Draft</option>
-              <option value="sent">Sent (Awaiting Response)</option>
-              <option value="in_progress">In Progress</option>
-              <option value="submitted">Submitted (Ready for Review)</option>
-              <option value="under_review">Under Review</option>
-              <option value="revision_requested">Revision Requested</option>
-              <option value="accepted">Accepted / Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="superseded">Superseded</option>
-            </select>
-
-            <select
-              value={filterRisk}
-              onChange={(e) => setFilterRisk(e.target.value)}
-              style={{ padding: '8px 12px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-            >
-              <option value="all">All Risk Tiers</option>
-              <option value="low">Low Risk</option>
-              <option value="medium">Medium Risk</option>
-              <option value="high">High Risk</option>
-              <option value="critical">Critical Risk</option>
-            </select>
-          </div>
-
-          {/* Assessment Table */}
-          <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#475569' }}>
-                  <th style={{ padding: '12px 16px' }}>Vendor & Assessment Title</th>
-                  <th style={{ padding: '12px 16px' }}>Type & Cadence</th>
-                  <th style={{ padding: '12px 16px' }}>Respondent Contact</th>
-                  <th style={{ padding: '12px 16px' }}>Status</th>
-                  <th style={{ padding: '12px 16px' }}>Score & Risk</th>
-                  <th style={{ padding: '12px 16px' }}>Due Date</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAssessments.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>
-                      No assessments found matching the selected criteria.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAssessments.map((a) => {
-                    const score = calculateProcessorAssessmentScore(a);
-                    const riskFlags = evaluateProcessorAssessmentRiskFlags(a);
-                    const isOverdue = new Date(a.dueDate).getTime() < Date.now() && ['sent', 'in_progress'].includes(a.status);
-
-                    return (
-                      <tr key={a.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ fontWeight: 600, color: '#1e293b' }}>{a.title}</div>
-                          <div style={{ fontSize: '12px', color: '#64748b' }}>{a.vendorName}</div>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ fontSize: '12px', color: '#334155' }}>
-                            {a.assessmentType.replace(/_/g, ' ')}
-                          </div>
-                          {a.isRecurring && (
-                            <span style={{ fontSize: '11px', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', display: 'inline-block', marginTop: '2px' }}>
-                              🔄 {a.recurrenceCadence}
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ color: '#1e293b' }}>{a.respondent?.name}</div>
-                          <div style={{ fontSize: '12px', color: '#64748b' }}>{a.respondent?.email}</div>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '3px 8px',
-                              borderRadius: '12px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              textTransform: 'capitalize',
-                              backgroundColor:
-                                a.status === 'accepted' ? '#dcfce7' :
-                                a.status === 'rejected' ? '#fee2e2' :
-                                a.status === 'submitted' ? '#fef3c7' :
-                                a.status === 'revision_requested' ? '#ffedd5' : '#f1f5f9',
-                              color:
-                                a.status === 'accepted' ? '#15803d' :
-                                a.status === 'rejected' ? '#b91c1c' :
-                                a.status === 'submitted' ? '#b45309' :
-                                a.status === 'revision_requested' ? '#c2410c' : '#475569',
-                            }}
-                          >
-                            {a.status.replace(/_/g, ' ')}
-                          </span>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ fontWeight: 600 }}>
-                            {a.overallScorePercent !== null && a.overallScorePercent !== undefined
-                              ? `${a.overallScorePercent}%`
-                              : `${score.overallScore}%`}
-                          </div>
-                          {a.overallRiskRating && (
-                            <span
-                              style={{
-                                fontSize: '11px',
-                                fontWeight: 600,
-                                textTransform: 'uppercase',
-                                color:
-                                  a.overallRiskRating === 'critical' ? '#b91c1c' :
-                                  a.overallRiskRating === 'high' ? '#c2410c' :
-                                  a.overallRiskRating === 'medium' ? '#b45309' : '#15803d',
-                              }}
-                            >
-                              {a.overallRiskRating} Risk
-                            </span>
-                          )}
-                          {riskFlags.length > 0 && (
-                            <div style={{ fontSize: '11px', color: '#ef4444' }}>
-                              ⚠️ {riskFlags.length} open gap(s)
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ color: isOverdue ? '#dc2626' : '#334155', fontWeight: isOverdue ? 600 : 400 }}>
-                            {a.dueDate ? a.dueDate.slice(0, 10) : 'N/A'}
-                          </div>
-                          {isOverdue && <span style={{ fontSize: '11px', color: '#dc2626' }}>Overdue</span>}
-                        </td>
-                        <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
-                            {a.status === 'draft' && onSendAssessment && (
-                              <button
-                                onClick={() => onSendAssessment(a.id)}
-                                style={{
-                                  padding: '4px 8px',
-                                  fontSize: '12px',
-                                  backgroundColor: '#0284c7',
-                                  color: '#ffffff',
-                                  border: 'none',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                Send Link
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleCopyLink(a.id)}
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: '12px',
-                                backgroundColor: '#f1f5f9',
-                                color: '#334155',
-                                border: '1px solid #cbd5e1',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {copiedTokenAssessmentId === a.id ? 'Copied!' : '🔗 Copy Link'}
-                            </button>
-                            <button
-                              onClick={() => handleOpenReview(a)}
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: '12px',
-                                backgroundColor: '#f8fafc',
-                                color: '#0f172a',
-                                border: '1px solid #cbd5e1',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontWeight: 500,
-                              }}
-                            >
-                              🔍 Review
-                            </button>
-                            {a.isRecurring && a.status === 'accepted' && (
-                              <button
-                                onClick={() => {
-                                  setRenewingAssessment(a);
-                                  setRenewDueDate(
-                                    a.nextDueDate ? a.nextDueDate.slice(0, 10) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-                                  );
-                                }}
-                                style={{
-                                  padding: '4px 8px',
-                                  fontSize: '12px',
-                                  backgroundColor: '#f0fdf4',
-                                  color: '#16a34a',
-                                  border: '1px solid #bbf7d0',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                🔄 Renew
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </>
+            return (
+              <tr key={a.id}>
+                <td>
+                  <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{a.title}</div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '2px' }}>{a.vendorName}</div>
+                </td>
+                <td>
+                  <div style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                    {a.assessmentType.replace(/_/g, ' ')}
+                  </div>
+                  {a.isRecurring && (
+                    <span
+                      style={{
+                        fontSize: '10.5px',
+                        backgroundColor: 'var(--accent-primary-subtle)',
+                        color: 'var(--accent-primary)',
+                        padding: '1px 6px',
+                        borderRadius: '4px',
+                        display: 'inline-block',
+                        marginTop: '3px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      🔄 {a.recurrenceCadence}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <div style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{a.respondent?.name || 'Unassigned'}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{a.respondent?.email || 'N/A'}</div>
+                </td>
+                <td>
+                  <UIBadge variant={getStatusVariant(a.status)}>
+                    {a.status.replace(/_/g, ' ')}
+                  </UIBadge>
+                </td>
+                <td>
+                  <div className="font-tabular" style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {a.overallScorePercent !== null && a.overallScorePercent !== undefined
+                      ? `${a.overallScorePercent}%`
+                      : `${score.overallScore}%`}
+                  </div>
+                  {a.overallRiskRating && (
+                    <span
+                      style={{
+                        fontSize: '10.5px',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        color:
+                          a.overallRiskRating === 'critical'
+                            ? 'var(--status-critical-fg)'
+                            : a.overallRiskRating === 'high'
+                            ? 'var(--status-warning-fg)'
+                            : a.overallRiskRating === 'medium'
+                            ? 'var(--status-warning-fg)'
+                            : 'var(--status-compliant-fg)',
+                      }}
+                    >
+                      {a.overallRiskRating} Risk
+                    </span>
+                  )}
+                  {riskFlags.length > 0 && (
+                    <div style={{ fontSize: '10px', color: 'var(--status-critical-fg)' }}>
+                      ⚠️ {riskFlags.length} open gap(s)
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <div className="font-tabular" style={{ color: isOverdue ? 'var(--status-critical-fg)' : 'var(--text-secondary)', fontWeight: isOverdue ? 700 : 400 }}>
+                    {a.dueDate ? a.dueDate.slice(0, 10) : 'N/A'}
+                  </div>
+                  {isOverdue && (
+                    <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--status-critical-fg)' }}>
+                      Overdue
+                    </span>
+                  )}
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
+                    {a.status === 'draft' && onSendAssessment && (
+                      <button
+                        onClick={() => onSendAssessment(a.id)}
+                        className="btn-primary"
+                        style={{ padding: '3px 8px', fontSize: '11px' }}
+                      >
+                        Send Link
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleCopyLink(a.id)}
+                      className="btn-secondary"
+                      style={{ padding: '3px 8px', fontSize: '11px' }}
+                    >
+                      {copiedTokenAssessmentId === a.id ? 'Copied!' : '🔗 Copy'}
+                    </button>
+                    <button
+                      onClick={() => handleOpenReview(a)}
+                      className="btn-secondary"
+                      style={{ padding: '3px 8px', fontSize: '11px' }}
+                    >
+                      🔍 Review
+                    </button>
+                    {a.isRecurring && a.status === 'accepted' && (
+                      <button
+                        onClick={() => {
+                          setRenewingAssessment(a);
+                          setRenewDueDate(
+                            a.nextDueDate ? a.nextDueDate.slice(0, 10) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+                          );
+                        }}
+                        className="btn-success"
+                        style={{ padding: '3px 8px', fontSize: '11px' }}
+                      >
+                        🔄 Renew
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </UIDataTable>
       )}
 
       {activeTab === 'templates' && (
