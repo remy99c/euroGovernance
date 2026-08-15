@@ -1073,7 +1073,13 @@ export default function DashboardPage() {
                 >
                   <div className="card-modern" style={{ padding: '14px' }}>
                     {auditLogs.length === 0 ? (
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No audit events logged yet.</div>
+                      <UIEmptyState
+                        icon="📜"
+                        title="Audit Ledger Awaiting Events"
+                        description="Privileged actions, four-eyes sign-offs, and automated control validations will append here in real-time."
+                        type="audit"
+                        compact
+                      />
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '420px', overflowY: 'auto' }}>
                         {auditLogs.slice(0, 8).map((log) => (

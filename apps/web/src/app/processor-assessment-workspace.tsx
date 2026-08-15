@@ -17,6 +17,7 @@ import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
 import { UIBadge } from './components/ui-badge';
 import { UIFilterBar } from './components/ui-filter-bar';
 import { UIDataTable, ColumnDefinition } from './components/ui-data-table';
+import { UIEmptyState } from './components/ui-empty-state';
 
 export interface ProcessorAssessmentWorkspaceProps {
   tenantId: string;
@@ -398,6 +399,37 @@ export function ProcessorAssessmentWorkspace({
             { key: 'dueDate', header: 'Due Date', width: '16%' },
           ]}
           isEmpty={filteredAssessments.length === 0}
+          emptyState={
+            assessments.length === 0 ? (
+              <UIEmptyState
+                icon="📋"
+                title="No Processor Assessments Logged"
+                description="Article 28 due diligence questionnaires allow you to evaluate third-party security posture, Schrems II transfer mechanisms, and sub-processor TOMs."
+                type="setup"
+                actionText="+ Create First Assessment"
+                onAction={() => setIsCreateModalOpen(true)}
+                hints={[
+                  { label: 'Select a canonical template', sublabel: 'GDPR Art. 28, ISO 27001 Annex A, or Schrems II TIA' },
+                  { label: 'Generate vendor access link', sublabel: 'Tokenized supplier portal without password overhead' },
+                  { label: 'Review findings & lock assurance', sublabel: 'Deterministic scoring with four-eyes reviewer sign-off' },
+                ]}
+              />
+            ) : (
+              <UIEmptyState
+                icon="🔍"
+                title="No Matching Questionnaires"
+                description="No assessments match the active filters or search criteria."
+                type="filter"
+                actionText="Reset All Filters"
+                onAction={() => {
+                  setFilterType('all');
+                  setFilterStatus('all');
+                  setFilterRisk('all');
+                  setSearchQuery('');
+                }}
+              />
+            )
+          }
         >
           {filteredAssessments.map((a) => {
             const score = calculateProcessorAssessmentScore(a);
