@@ -17,6 +17,9 @@ import {
   getAssuranceArtifactKindLabel,
 } from '@eurogovernance/shared-types';
 import { ProcessorCertificationFormModal } from './processor-certification-form-modal';
+import { UIPageHeader } from './components/ui-page-header';
+import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
+import { UIBadge, UIStatusBadge, UIExpiryBadge } from './components/ui-badge';
 
 interface ProcessorAssuranceInventoryProps {
   tenantId: string;
@@ -257,215 +260,82 @@ export default function ProcessorAssuranceInventory({
 
   return (
     <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '16px 0' }}>
-      {/* Header Toolbar */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '12px',
-          marginBottom: '20px',
+      {/* Standardized Page Header */}
+      <UIPageHeader
+        title="Processor Assurance & Certification Inventory"
+        description="Multi-dimensional compliance registry of all external data processor certifications, SOC reports, and independent audits."
+        primaryAction={{
+          label: 'Record Assurance Artifact',
+          icon: '➕',
+          onClick: () => {
+            setSelectedCertForForm(null);
+            setSelectedProfileIdForForm('');
+            setCertFormMode('create');
+            setShowCertFormModal(true);
+          },
         }}
-      >
-        <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>🛡️</span> Processor Assurance & Certification Inventory
-          </h2>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-            Multi-dimensional compliance registry of all external data processor certifications, SOC reports, and independent audits.
-          </p>
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => fetchAssuranceInventory()}
-            style={{
-              padding: '8px 14px',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '6px',
-              fontSize: '13px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            🔄 Refresh
-          </button>
-
-          {/* Export Report Action Selector */}
-          <select
-            onChange={(e) => {
-              if (e.target.value) {
-                handleTriggerExport(e.target.value);
-                e.target.value = '';
-              }
-            }}
-            defaultValue=""
-            disabled={Boolean(exportingReport)}
-            style={{
-              padding: '8px 12px',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '6px',
-              fontSize: '13px',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              cursor: 'pointer',
-            }}
-          >
-            <option value="" disabled>
-              {exportingReport ? `⏳ Generating ${exportingReport}...` : '📦 Export Compliance Report ▾'}
-            </option>
-            <option value="processor_assurance_register">🛡️ 1. Processor Assurance Register</option>
-            <option value="processor_expiring_certifications_report">⏳ 2. Expiring Certifications Report</option>
-            <option value="processor_expired_insufficient_assurance_report">⚠️ 3. Expired / Insufficient Assurance</option>
-            <option value="processor_by_certification_type_matrix">📊 4. Processor-by-Certification Matrix</option>
-            <option value="processor_assurance_coverage_by_systems">💻 5. Assurance Coverage by Systems</option>
-            <option value="critical_processors_missing_assurance">🚨 6. Critical Processors Missing Assurance</option>
-          </select>
-
-          <button
-            onClick={() => {
-              setSelectedCertForForm(null);
-              setSelectedProfileIdForForm('');
-              setCertFormMode('create');
-              setShowCertFormModal(true);
-            }}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: 'var(--accent-blue)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              fontSize: '13px',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            ➕ Record Assurance Artifact
-          </button>
-        </div>
-      </div>
+        secondaryActions={[
+          {
+            label: 'Refresh',
+            icon: '🔄',
+            onClick: () => fetchAssuranceInventory(),
+            variant: 'secondary',
+          },
+          {
+            label: exportingReport ? `Generating ${exportingReport}...` : 'Export Assurance Register',
+            icon: '📦',
+            onClick: () => handleTriggerExport('processor_assurance_register'),
+            variant: 'secondary',
+            disabled: Boolean(exportingReport),
+          },
+        ]}
+      />
 
       {/* KPI Summary Cards */}
       {summary && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-            gap: '12px',
-            marginBottom: '20px',
-          }}
-        >
-          <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>TOTAL ASSURANCE</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '4px' }}>
-              {summary.totalAssuranceRecords}
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderLeft: '4px solid var(--status-success)',
-              borderRadius: '8px',
-              padding: '14px',
-              cursor: 'pointer',
-            }}
+        <UIStatGrid columns={6}>
+          <UIStatCard
+            label="Total Assurance"
+            value={summary.totalAssuranceRecords}
+            subtext="Tracked audit records"
+            valueColor="var(--accent-primary)"
+          />
+          <UIStatCard
+            label="Valid Now"
+            value={summary.activeValidCount}
+            subtext="Current active validity"
+            valueColor="var(--status-compliant-fg)"
             onClick={() => setValidityFilter(validityFilter === 'valid_now' ? 'all' : 'valid_now')}
-          >
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>VALID NOW</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--status-success)', marginTop: '4px' }}>
-              {summary.activeValidCount}
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderLeft: '4px solid var(--status-warning)',
-              borderRadius: '8px',
-              padding: '14px',
-              cursor: 'pointer',
-            }}
+          />
+          <UIStatCard
+            label="Expiring Soon"
+            value={summary.expiringSoonCount}
+            subtext="Expiring in ≤60 days"
+            valueColor={summary.expiringSoonCount > 0 ? 'var(--status-warning-fg)' : 'var(--text-muted)'}
             onClick={() => setValidityFilter(validityFilter === 'expiring_soon' ? 'all' : 'expiring_soon')}
-          >
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>EXPIRING SOON (&le;60d)</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--status-warning)', marginTop: '4px' }}>
-              {summary.expiringSoonCount}
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderLeft: '4px solid var(--status-danger)',
-              borderRadius: '8px',
-              padding: '14px',
-              cursor: 'pointer',
-            }}
+          />
+          <UIStatCard
+            label="Expired / Lapsed"
+            value={summary.expiredCount}
+            subtext="Requires re-attestation"
+            valueColor={summary.expiredCount > 0 ? 'var(--status-critical-fg)' : 'var(--text-muted)'}
             onClick={() => setValidityFilter(validityFilter === 'expired' ? 'all' : 'expired')}
-          >
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>EXPIRED / LAPSED</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--status-danger)', marginTop: '4px' }}>
-              {summary.expiredCount}
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '8px',
-              padding: '14px',
-              cursor: 'pointer',
-            }}
+          />
+          <UIStatCard
+            label="Critical Processors"
+            value={summary.criticalProcessorsCount}
+            subtext="High statutory impact"
             onClick={() => setCriticalProcessorOnly(!criticalProcessorOnly)}
-          >
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>CRITICAL PROCESSORS</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
-              {summary.criticalProcessorsCount}
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderLeft: '4px solid var(--status-danger)',
-              borderRadius: '8px',
-              padding: '14px',
-              cursor: 'pointer',
-            }}
+          />
+          <UIStatCard
+            label="Missing Evidence"
+            value={summary.missingEvidenceCount}
+            subtext="Artifact locker gaps"
+            valueColor={summary.missingEvidenceCount > 0 ? 'var(--status-critical-fg)' : 'var(--text-muted)'}
+            zeroStateText="Zero missing artifacts"
             onClick={() => setMissingEvidenceOnly(!missingEvidenceOnly)}
-          >
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>MISSING EVIDENCE</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: summary.missingEvidenceCount > 0 ? 'var(--status-danger)' : 'var(--text-primary)', marginTop: '4px' }}>
-              {summary.missingEvidenceCount}
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              borderLeft: '4px solid var(--status-danger)',
-              borderRadius: '8px',
-              padding: '14px',
-              cursor: 'pointer',
-            }}
-            onClick={() => setInsufficientOrRejectedOnly(!insufficientOrRejectedOnly)}
-          >
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>INSUFFICIENT / REJECTED</div>
-            <div style={{ fontSize: '22px', fontWeight: 700, color: summary.insufficientOrRejectedCount > 0 ? 'var(--status-danger)' : 'var(--text-primary)', marginTop: '4px' }}>
-              {summary.insufficientOrRejectedCount}
-            </div>
-          </div>
-        </div>
+          />
+        </UIStatGrid>
       )}
 
       {/* Filter Control Box */}
