@@ -148,3 +148,12 @@ tests/fixtures/
 - [x] **Zero Client Audit Mutations**: Security Rules reject 100% of client-side `create`, `update`, and `delete` requests to `/audit_logs`.
 - [x] **State Machine Integrity**: All workflow state transitions (`approveEvidence`, `transitionDPIAStatus`, `classifyAISystem`) execute exclusively through Cloud Functions with verified role authorization.
 - [x] **Monorepo Build**: `npm run build` and `npm run test` exit with code `0` across `@eurogovernance/shared-types`, `@eurogovernance/functions`, `@eurogovernance/rules-tests`, and `@eurogovernance/web`.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Testing & Verification**: [[testing|Testing Strategy]], [[runbooks|Operational Runbooks]]
+- **Security & Authorization**: [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[security-model|Security Model]], [[ROLES_AND_PERMISSIONS|Roles & Permissions]]
+- **Domain Verification**: [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Framework Scoping Tests]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certification E2E Tests]]

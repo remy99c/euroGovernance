@@ -193,3 +193,11 @@ To prevent spamming users when a scheduled sweep runs repeatedly:
 - [x] Hourly statutory sweeps monitor GDPR 72h breach clocks and EU AI Act incident clocks.
 - [x] Hash-based deduplication keys prevent notification spam.
 - [x] In-app notifications support real-time delivery and read state tracking in `/tenants/{tenantId}/notifications`.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Backend & Scheduling**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[backend-workflows|Backend Workflows]], [[runbooks|Operational Runbooks]]
+- **Domain Triggers**: [[GDPR_MODULE_DESIGN|GDPR 72h Breach Clocks]], [[EU_AI_ACT_MODULE_DESIGN|AI Act Incident Clocks]], [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Transfer Review Reminders]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Certification Expiry Reminders]], [[EVIDENCE_MODULE_DESIGN|Evidence Expiry]]

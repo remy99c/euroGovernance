@@ -362,3 +362,12 @@ A standardized, machine-readable PDF/JSON document certifying that the high-risk
 - [x] Incident reporting automatically computes 2-day vs 15-day market surveillance authority notification clocks under Article 73.
 - [x] Substantial change logging creates an immutable record and triggers re-classification.
 - [x] Export engine compiles a comprehensive Annex IV Technical Documentation dossier.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **AI & ISO Harmonization**: [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO 42001 (AIMS) Management]], [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping & Harmonization]]
+- **Governance & Controls**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[GDPR_MODULE_DESIGN|GDPR Subsystem (ROPA & Data Provenance)]]
+- **Backend & Incident Clocks**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & Incident Sweeps]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting & Annex IV Dossiers]]

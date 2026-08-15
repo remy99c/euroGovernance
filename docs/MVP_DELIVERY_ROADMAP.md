@@ -165,3 +165,13 @@ flowchart LR
 - [x] Clear technical sequencing prioritizes tenant-safe foundations and shared controls before regulatory specialization.
 - [x] Exact Security Rules prerequisites and emulator testing suites are formally identified.
 - [x] Defined exit criteria for Internal Alpha, Closed Pilot, and Commercial Beta milestones.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Architecture**: [[ARCHITECTURE|System Architecture]], [[MASTER_PROMPT_CONTEXT|Master System Context]]
+- **Security & Tenancy**: [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]], [[ROLES_AND_PERMISSIONS|Roles & Permissions]]
+- **Engines & Modules**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[GDPR_MODULE_DESIGN|GDPR]], [[EU_AI_ACT_MODULE_DESIGN|EU AI Act]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management]]
+- **Operations & Testing**: [[runbooks|Runbooks]], [[testing|Testing Strategy]], [[EMULATOR_AND_TEST_PLAN|Emulator & Test Plan]]

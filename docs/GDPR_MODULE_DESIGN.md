@@ -425,3 +425,13 @@ flowchart TB
 - [x] Personal data breach records enforce calculated 72-hour notification deadlines and are restricted to authorized privacy and security managers.
 - [x] DSR tracking enforces statutory 30-day deadlines with justification capture for complex extensions.
 - [x] Composite indexes enable sub-second queries across ROPA codes, DPIA risk levels, and urgent breach deadlines.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Processors & Transfers**: [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processor & Transfer Management]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications]], [[EVIDENCE_MODULE_DESIGN|Evidence Module]]
+- **Governance & Harmonization**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping & Harmonization]]
+- **Security & Authorization**: [[ROLES_AND_PERMISSIONS|Roles & Permissions]], [[AUDIT_LOG_DESIGN|Audit Logging]]
+- **Backend & Notifications**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & 72h Breach Clocks]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting Engine]]

@@ -205,3 +205,13 @@ All export artifacts are:
 1. **Client Status Mutation Restrictions**: Direct client writes to `status` fields on export jobs, evidence approvals, and system metrics are prohibited; transitions must occur through backend Cloud Functions.
 2. **Storage Isolation**: Export generation and evidence downloads require signed download URLs or Storage Emulator access in development environments.
 3. **Tenant Boundary**: TIA and Evidence linkage is strictly tenant-scoped; foreign entity references across tenant boundaries are rejected by Firestore Security Rules.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Processor Assurance & Evidence**: [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications & Third-Party Assurance]], [[EVIDENCE_MODULE_DESIGN|Evidence Module Locker]]
+- **Regulatory Requirements**: [[GDPR_MODULE_DESIGN|GDPR Article 28 & Chapter V]], [[EU_DATA_ACT_MODULE_DESIGN|EU Data Act Vendor Switching]]
+- **Controls & Governance**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[domain-modules|Domain Modules]]
+- **Backend & Exports**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & Renewal Sweeps]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting Engine]]

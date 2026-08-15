@@ -407,3 +407,12 @@
 8. **Audit Log Side Effects**: Logs readiness report generation event.
 9. **Failure Modes**: Framework not enabled (`failed-precondition`), unauthorized (`permission-denied`).
 10. **Security Notes**: Provides verifiable compliance snapshots for audit defense.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Architecture & Security**: [[ARCHITECTURE|System Architecture]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules & Functions]], [[security-model|Security Model]], [[AUDIT_LOG_DESIGN|Audit Log Design]]
+- **Workflows & Operations**: [[backend-workflows|Backend Workflows]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & Cron]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Dashboard & Reporting]], [[runbooks|Operational Runbooks]]
+- **Domain Handlers**: [[GDPR_MODULE_DESIGN|GDPR Engine]], [[EU_AI_ACT_MODULE_DESIGN|AI Act Engine]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management Engine]], [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processor & Transfer Handlers]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Assurance Handlers]], [[EVIDENCE_MODULE_DESIGN|Evidence Handlers]]

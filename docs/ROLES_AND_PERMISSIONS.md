@@ -162,3 +162,12 @@ Security Rules: get(/tenants/{tenantId}/memberships/{request.auth.uid}).data
 | **TC-08** | `privacy_manager` | `/tenants/{tenantA}/ai_systems/ai_01` | Classify AI System | **DENY** (Requires `ai_governance_manager`) |
 | **TC-09** | `tenant_admin` | `/tenants/{tenantA}/audit_logs/log_01` | Delete audit log | **DENY** (Immutable) |
 | **TC-10** | `tenant_admin` (Tenant A) | `/tenants/{tenantB}/controls/ctl_02` | Read or Write | **DENY** (Cross-tenant boundary) |
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Identity & Tenancy**: [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]], [[security-model|Security Model]]
+- **Security Enforcement**: [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[AUDIT_LOG_DESIGN|Audit Log Design]]
+- **Testing & Verification**: [[testing|Testing Strategy]], [[EMULATOR_AND_TEST_PLAN|Emulator & Test Plan]]

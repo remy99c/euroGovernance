@@ -236,3 +236,13 @@ stateDiagram-v2
 - [x] Approving evidence recalculates `reviewDueDate` based on `reviewFrequencyDays` and logs an append-only audit event.
 - [x] Daily scheduled cron flags expired evidence and generates notification records.
 - [x] Evidence supports multi-framework mapping via `controlIds` and `requirementIds` arrays.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Processors & Assurance**: [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications & Third-Party Assurance]], [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processor & Transfer Management]]
+- **Controls & Governance**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management Systems]], [[GDPR_MODULE_DESIGN|GDPR Subsystem]]
+- **Security & Authorization**: [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[ROLES_AND_PERMISSIONS|Four-Eyes Approval Rules]], [[AUDIT_LOG_DESIGN|Audit Log Design]]
+- **Backend & Scheduled Expiries**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & Expiry Sweeps]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting & Export Packages]]

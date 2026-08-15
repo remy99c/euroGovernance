@@ -155,3 +155,11 @@ flowchart TD
 - [x] Unbounded `.get()` queries are eliminated; all list screens enforce cursor pagination with a maximum batch size of 50.
 - [x] Version histories, reviews, and audit events reside in subcollections, eliminating 1MB document bloat risks.
 - [x] No centralized document counter bottlenecks exist; aggregation queries use Firestore `count()`.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Data & Schema**: [[data-model|Data Model]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema & Queries]], [[MIGRATION_SAFETY_REVIEW|Migration Safety]]
+- **Architecture & Platform**: [[ARCHITECTURE|System Architecture]], [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Dashboard & Reporting Architecture]]

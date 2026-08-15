@@ -119,3 +119,12 @@ npm run deploy:hosting
 ### 4.4 "Direct client modification of riskTier is forbidden"
 - **Root Cause**: Updating `riskTier` directly via client Firestore `update()`.
 - **Fix**: Invoke the Cloud Function `classifyAiSystemRisk(systemId, criteria)` to classify risk deterministically.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Testing & Verification**: [[testing|Testing Strategy]], [[EMULATOR_AND_TEST_PLAN|Emulator & Test Plan]]
+- **Architecture & Security**: [[ARCHITECTURE|System Architecture]], [[security-model|Security Model]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]]
+- **Operations & Backend**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & Cron]]

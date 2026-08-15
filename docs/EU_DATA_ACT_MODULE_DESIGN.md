@@ -248,3 +248,12 @@ sequenceDiagram
 - [x] Rejection workflows enforce explicit legal basis selection (trade secret damage, security breach, unauthorized requester).
 - [x] Cloud switching module assesses exportability, notice periods, and egress fee elimination under Chapter VI.
 - [x] Fulfillment actions link directly to verifiable evidence files in the `/evidence` module.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Regulatory Frameworks**: [[GDPR_MODULE_DESIGN|GDPR Subsystem]], [[EU_AI_ACT_MODULE_DESIGN|EU AI Act Subsystem]], [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping & Harmonization]]
+- **Vendors & Cloud Switching**: [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Vendor & Processor Management]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Assurance]]
+- **Evidence & Governance**: [[EVIDENCE_MODULE_DESIGN|Evidence Module]], [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]]

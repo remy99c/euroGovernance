@@ -441,3 +441,12 @@ This document specifies the screen-by-screen query requirements and final schema
 - **Required Fields**: `id`, `tenantId`, `actorId`, `actorEmail`, `actorRole`, `entityType`, `entityId`, `action`, `beforeSummary`, `afterSummary`, `timestamp`, `source`.
 - **Recommended Subcollections**: None.
 - **Duplicated Fields for Optimization**: `actorEmail` and `actorRole` are snapshotted at write time to ensure audit fidelity even if the user subsequently leaves the organization or changes roles.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Data & Performance**: [[data-model|Data Model]], [[INDEXES_AND_PERFORMANCE_REVIEW|Indexes & Performance Review]], [[MIGRATION_SAFETY_REVIEW|Migration Safety]]
+- **Security & Authorization**: [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]], [[AUDIT_LOG_DESIGN|Audit Log Design]]
+- **Subsystem Collections**: [[GDPR_MODULE_DESIGN|GDPR Subsystem]], [[EU_AI_ACT_MODULE_DESIGN|AI Act Subsystem]], [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processor & Transfer Collections]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications]], [[EVIDENCE_MODULE_DESIGN|Evidence Locker]]

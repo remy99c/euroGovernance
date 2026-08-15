@@ -334,3 +334,12 @@ npm run test --workspace=@eurogovernance/rules-tests -- governance-lifecycle-e2e
 # 3. Run Full 36-Suite Regression Matrix
 npm run test:rules
 ```
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Governance Engines**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[framework-scoping-harmonization-audit-2026-08-14|Harmonization Audit]], [[domain-modules|Domain Modules]]
+- **Regulatory Frameworks**: [[GDPR_MODULE_DESIGN|GDPR Requirements]], [[EU_AI_ACT_MODULE_DESIGN|EU AI Act Scoping]], [[EU_DATA_ACT_MODULE_DESIGN|EU Data Act Scoping]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Statement of Applicability (SoA)]]
+- **Verification**: [[testing|Testing Strategy]], [[EMULATOR_AND_TEST_PLAN|Emulator & Test Plan]]

@@ -53,3 +53,12 @@ Multi-tenant B2B GRC SaaS on Firebase covering:
 8. EU AI Act Module
 9. EU Data Act & ISO 27001/42001 Modules
 10. Reporting, Exports & Tests
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Architecture & Data**: [[ARCHITECTURE|System Architecture]], [[data-model|Data Model]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema & Queries]]
+- **Security & RBAC**: [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]], [[ROLES_AND_PERMISSIONS|Roles & Permissions]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]]
+- **Delivery Roadmap**: [[MVP_DELIVERY_ROADMAP|Delivery Roadmap]]

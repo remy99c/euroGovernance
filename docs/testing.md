@@ -89,3 +89,12 @@ In headless CI environments, run the complete suite using `emulators:exec`:
 ```bash
 firebase emulators:exec --only firestore,storage "npm run test:rules"
 ```
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Testing & Verification**: [[EMULATOR_AND_TEST_PLAN|Emulator & Test Plan]], [[runbooks|Runbooks & FAQ]]
+- **Security & Authorization**: [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[security-model|Security Model]], [[ROLES_AND_PERMISSIONS|Roles & Permissions]]
+- **Domain Verification**: [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping Verification]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certification E2E Tests]]

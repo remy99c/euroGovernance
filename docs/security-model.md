@@ -132,3 +132,12 @@ Audit logging is implemented with strict defense-in-depth:
 1. **Database Layer**: `firestore.rules` enforces `allow create, update, delete: if false` on `/tenants/{tenantId}/audit_logs/{logId}`.
 2. **Server Helper Layer**: [`functions/src/lib/audit.ts`](file:///Users/remon/Documents/euroGovernance/functions/src/lib/audit.ts) writes audit events directly via Admin SDK.
 3. **Actor Immutability**: Every audit event captures `actorId`, `actorEmail`, `action`, `resourceType`, `resourceId`, `details`, `ipAddress`, `userAgent`, and `timestamp`.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Security & Authorization**: [[ROLES_AND_PERMISSIONS|Roles & Permissions]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[AUDIT_LOG_DESIGN|Audit Log Design]]
+- **Identity & Tenancy**: [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]]
+- **Backend Infrastructure**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[backend-workflows|Backend Workflows]]

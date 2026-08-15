@@ -148,3 +148,11 @@ To ensure zero lock-in from Day 1:
 - [x] All lifecycle states use explicit TypeScript string enums rather than ambiguous boolean flags.
 - [x] Target PostgreSQL relational DDL schema is defined and validated against existing TypeScript interfaces.
 - [x] Complete JSON-ND / CSV export capability is integrated into the export engine for disaster recovery and migration portability.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Data & Architecture**: [[ARCHITECTURE|System Architecture]], [[data-model|Data Model]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema & Queries]], [[INDEXES_AND_PERFORMANCE_REVIEW|Indexes & Performance]]
+- **Security & Exports**: [[AUDIT_LOG_DESIGN|Audit Log Design]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting & Exports Subsystem]]

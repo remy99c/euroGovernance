@@ -192,3 +192,11 @@ flowchart LR
 2. **Backward Compatibility**: Existing tenant controls and evidence links must continue functioning without data migration regressions.
 3. **Audit Immutability**: All framework adoptions, scope updates, and applicability decisions must produce append-only audit log events via `recordAuditLog`.
 4. **Automated Testing**: Every phase must include security rules tests in `tests/rules/` and maintain 100% test pass rate across the full test matrix.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Governance & Harmonization**: [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping & Harmonization Architecture]], [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[domain-modules|Domain Modules]]
+- **Regulatory Frameworks**: [[GDPR_MODULE_DESIGN|GDPR Subsystem]], [[EU_AI_ACT_MODULE_DESIGN|EU AI Act Subsystem]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management System]]

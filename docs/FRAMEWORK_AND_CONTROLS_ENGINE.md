@@ -275,4 +275,13 @@ interface TenantComplianceSummary {
 ## 8. Detailed Architectural Guides
 
 For full operational specifications of scoping, dynamic applicability rules evaluation, statutory obligation registers, and canonical harmonization merges, see:
-- [`FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION.md`](./FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION.md)
+- [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Framework Adoption, Scoping & Harmonization]]
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Governance & Harmonization**: [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping & Harmonization]], [[framework-scoping-harmonization-audit-2026-08-14|Harmonization Audit]], [[domain-modules|Domain Modules]]
+- **Regulatory Frameworks**: [[GDPR_MODULE_DESIGN|GDPR Controls]], [[EU_AI_ACT_MODULE_DESIGN|AI Act Controls]], [[EU_DATA_ACT_MODULE_DESIGN|Data Act Controls]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management Controls]]
+- **Processors & Evidence**: [[EVIDENCE_MODULE_DESIGN|Evidence Module]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications]]

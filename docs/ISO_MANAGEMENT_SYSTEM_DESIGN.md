@@ -326,3 +326,13 @@ flowchart TB
 - [x] Statement of Applicability tracks applicability justification, implementation status, and links directly to verified evidence.
 - [x] Finding and Corrective Action (CAPA) workflow enforces root cause analysis, target dates, and effectiveness verification.
 - [x] Management review records evaluate all 7 mandatory Annex SL agenda inputs before executive approval.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **AI & ISO Harmonization**: [[EU_AI_ACT_MODULE_DESIGN|EU AI Act Subsystem]], [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping & Harmonization Architecture]]
+- **Controls & Governance**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[domain-modules|Domain Modules]]
+- **Processors & Evidence**: [[EVIDENCE_MODULE_DESIGN|Evidence Module]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications]]
+- **Audit & Reporting**: [[AUDIT_LOG_DESIGN|Audit Log Design]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting Engine]]

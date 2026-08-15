@@ -224,3 +224,13 @@ Six dedicated export jobs are compiled via `processExportJob` into tenant-scoped
 1. **Client Status Mutation Restrictions**: Direct client writes to `status`, `reviewStatus`, `isHistoricVersion`, and `export_jobs` are blocked by Firestore security rules. Mutations must be executed via backend Cloud Functions.
 2. **Tenant Boundary Enforcement**: Processor profiles, certifications, and evidence files cannot be shared across tenants; cross-tenant references are strictly rejected by security rules.
 3. **Evidence Validation Requirement**: A certification is only deemed complete if linked evidence documents carry `status: 'valid'`. Newly uploaded evidence with `status: 'under_review'` does not satisfy assurance completeness until approved.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Processor & Vendor Architecture**: [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processor & Transfer Management]], [[EVIDENCE_MODULE_DESIGN|Evidence Module Locker]]
+- **Governance & Controls**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management Systems]], [[GDPR_MODULE_DESIGN|GDPR Article 28]]
+- **Backend, Exports & Reminders**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & Expiry Reminders]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting & Export Subsystem]]
+- **Testing**: [[testing|Testing Strategy]], [[EMULATOR_AND_TEST_PLAN|Emulator & Rules Test Plan]]

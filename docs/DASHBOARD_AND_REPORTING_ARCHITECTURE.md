@@ -213,3 +213,12 @@ sequenceDiagram
 - [x] On-demand report compilation executes asynchronously via Cloud Functions into Cloud Storage with signed download URLs.
 - [x] All export jobs are tracked in `/tenants/{tenantId}/export_jobs/{jobId}` and logged in append-only audit trails.
 - [x] Dashboard load times maintain sub-second performance ($<500\text{ms}$) regardless of tenant document volume.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Backend & Exports**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[backend-workflows|Backend Workflows]], [[INDEXES_AND_PERFORMANCE_REVIEW|Performance & Cost Optimization]]
+- **Audit & Security**: [[AUDIT_LOG_DESIGN|Audit Logging]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]]
+- **Domain Reporting**: [[GDPR_MODULE_DESIGN|GDPR Reports]], [[EU_AI_ACT_MODULE_DESIGN|AI Act Reports]], [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Transfer Registers]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Assurance Exports]]

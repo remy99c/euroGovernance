@@ -151,3 +151,13 @@ Every tenant is isolated in its own sub-tree under `/tenants/{tenantId}`. Securi
 - **Primary Cloud Region**: `europe-west3` (Frankfurt, Germany, European Union).
 - **Data Residency**: All Firestore documents, Cloud Storage objects, and Cloud Function executions reside exclusively in Frankfurt.
 - **GDPR Article 28 / Chapter V**: No personal or compliance data leaves the Frankfurt region during standard processing.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Data & Storage**: [[data-model|Data Model]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema & Queries]], [[INDEXES_AND_PERFORMANCE_REVIEW|Indexes & Performance]]
+- **Security & Tenancy**: [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]], [[security-model|Security Model]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]]
+- **Backend & Platform**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[backend-workflows|Backend Workflows]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Dashboard & Reporting Architecture]]
+- **Governance**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[domain-modules|Domain Modules]]

@@ -184,3 +184,12 @@ This document provides a comprehensive breakdown of all regulatory and managemen
 - **Status**: **Partially Implemented**
 - **Current State**: Schema models defined in `packages/shared-types/src/data-act.ts`. Firestore security rules configured under `/data_act_assets` and `/data_sharing_requests`.
 - **Planned / Roadmap**: Automated B2B data access request validation and cloud switching friction tracking.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Domain Modules**: [[GDPR_MODULE_DESIGN|GDPR Subsystem]], [[EU_AI_ACT_MODULE_DESIGN|EU AI Act Subsystem]], [[EU_DATA_ACT_MODULE_DESIGN|EU Data Act Subsystem]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management System]]
+- **Governance & Controls**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Scoping & Harmonization]]
+- **Processors & Evidence**: [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processor & Transfer Management]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications]], [[EVIDENCE_MODULE_DESIGN|Evidence Module]]

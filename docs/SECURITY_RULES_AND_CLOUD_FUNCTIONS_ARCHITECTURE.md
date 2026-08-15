@@ -149,3 +149,13 @@ sequenceDiagram
 1. **Zero Client Elevation**: No user can elevate their role, alter another member's status, or delete audit trails from client code.
 2. **Deterministic Regulatory Integrity**: Classification and approval state transitions are executed by server-side deterministic logic.
 3. **Automated Continuous Auditability**: Every privileged action leaves a tamper-proof timestamped audit trail capturing the actor, action, and before/after state diff.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Security & Authorization**: [[security-model|Security Model]], [[ROLES_AND_PERMISSIONS|Roles & Permissions Matrix]], [[AUDIT_LOG_DESIGN|Audit Log Subsystem]]
+- **Backend & Workflows**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[backend-workflows|Backend Workflows]]
+- **Storage & Infrastructure**: [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema]]
+- **Verification**: [[testing|Testing Strategy]], [[EMULATOR_AND_TEST_PLAN|Emulator & Rules Test Plan]]

@@ -225,3 +225,12 @@ The repository maintains explicit composite indexes in [`firestore.indexes.json`
 13. `iso_soa_entries`: `applicable ASC, implementationStatus ASC`
 14. `iso_internal_audits`: `status ASC, startDate ASC`
 15. `export_jobs`: `requestedBy ASC, createdAt DESC`
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Architecture**: [[ARCHITECTURE|System Architecture]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema & Queries]], [[INDEXES_AND_PERFORMANCE_REVIEW|Indexes & Performance Review]], [[MIGRATION_SAFETY_REVIEW|Migration Safety]]
+- **Domain Entities**: [[GDPR_MODULE_DESIGN|GDPR Data Model]], [[EU_AI_ACT_MODULE_DESIGN|AI Act Model]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Model]], [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processor & Transfer Model]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications Model]], [[EVIDENCE_MODULE_DESIGN|Evidence Model]]
+- **Security & Tenancy**: [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant & Identity Flows]], [[ROLES_AND_PERMISSIONS|Roles & Permissions]]

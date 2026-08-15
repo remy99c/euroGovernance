@@ -133,3 +133,12 @@ sequenceDiagram
   1. `/tenants/{tenantId}/controls`: Checks `nextReviewDate < today`. Emits review notification if overdue.
   2. `/tenants/{tenantId}/evidence`: Checks `validUntil < today`. Transitions status to `deprecated` and dispatches notification to control owners.
   3. `/tenants/{tenantId}/tasks`: Checks `dueDate < today` and `status != 'completed'`. Dispatches reminder notification to assignee.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Backend & Functions**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|Notifications & Scheduled Jobs]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting Engine]]
+- **Security & Logging**: [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[AUDIT_LOG_DESIGN|Audit Logging]]
+- **Domain Workflows**: [[GDPR_MODULE_DESIGN|GDPR Workflows]], [[EU_AI_ACT_MODULE_DESIGN|AI Act Workflows]], [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Audits]], [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Transfer Workflows]], [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Assurance Reviews]]

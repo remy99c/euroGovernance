@@ -288,3 +288,12 @@ stateDiagram-v2
 - [x] Direct client creation or mutation of `/invitations` and `/memberships` is blocked by Firestore Security Rules.
 - [x] Role re-assignment emits a non-repudiable `permission_assigned` audit event capturing prior and new roles.
 - [x] Deletion policy complies with GDPR Article 17 with recursive batch purging and storage cleanup.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Security & Authorization**: [[ROLES_AND_PERMISSIONS|Roles & RBAC Specification]], [[security-model|Security Model]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[AUDIT_LOG_DESIGN|Audit Logging]]
+- **Architecture & Backend**: [[ARCHITECTURE|System Architecture]], [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[data-model|Data Model]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema & Queries]]
+- **Compliance Linkage**: [[GDPR_MODULE_DESIGN|GDPR Erasure & Access]], [[runbooks|Operational Runbooks]]

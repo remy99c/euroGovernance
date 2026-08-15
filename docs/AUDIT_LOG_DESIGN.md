@@ -232,3 +232,12 @@ match /tenants/{tenantId}/audit_logs/{logId} {
 - [x] Privileged Cloud Functions automatically emit structured audit records via the `recordAuditLog` Admin SDK helper.
 - [x] Monotonically sortable document IDs support sub-second time-range queries and audit trail exports.
 - [x] BigQuery and Cloud Storage WORM export readiness is architecturally integrated into the lifecycle plan.
+
+---
+
+## 🔗 Related Knowledge Graph Documents
+
+- **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Security & Authorization**: [[security-model|Security Model]], [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Security Rules Architecture]], [[ROLES_AND_PERMISSIONS|Roles & Permissions]]
+- **Backend & Workflows**: [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]], [[backend-workflows|Backend Workflows]], [[DASHBOARD_AND_REPORTING_ARCHITECTURE|Reporting & Export Subsystem]]
+- **Data & Migration**: [[data-model|Data Model]], [[FIRESTORE_SCHEMA_AND_QUERIES|Firestore Schema]], [[MIGRATION_SAFETY_REVIEW|Migration Safety]]
