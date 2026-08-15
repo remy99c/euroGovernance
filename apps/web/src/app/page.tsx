@@ -19,6 +19,7 @@ import FrameworkCoverageDashboardTab from './framework-coverage-dashboard';
 import ProcessorTransfersManager from './processor-transfers-manager';
 import ProcessorGovernanceHub from './processor-governance-hub';
 import ProcessorInventory from './processor-inventory';
+import ProcessorAssuranceInventory from './processor-assurance-inventory';
 import { CertificationsManager } from './certifications-manager';
 
 type TabType =
@@ -32,6 +33,7 @@ type TabType =
   | 'risks_tasks'
   | 'gdpr'
   | 'processor_inventory'
+  | 'processor_assurance_inventory'
   | 'processor_hub'
   | 'processor_transfers'
   | 'ai_systems'
@@ -498,6 +500,7 @@ export default function DashboardPage() {
               { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
               { id: 'gdpr', label: '🇪🇺 GDPR & Privacy' },
               { id: 'processor_inventory', label: '📋 Processor Inventory' },
+              { id: 'processor_assurance_inventory', label: '🛡️ Assurance Inventory' },
               { id: 'processor_hub', label: '🏢 Processor Hub' },
               { id: 'processor_transfers', label: '🌍 Processor Transfers' },
               { id: 'ai_systems', label: '🤖 EU AI Act Register' },
@@ -1145,6 +1148,18 @@ export default function DashboardPage() {
               setActiveTab('processor_hub');
             }}
             onNavigateToTransfers={() => setActiveTab('processor_transfers')}
+            onNotice={showNotice}
+          />
+        )}
+
+        {/* TAB 5B2: PROCESSOR ASSURANCE & CERTIFICATION INVENTORY */}
+        {activeTab === 'processor_assurance_inventory' && (
+          <ProcessorAssuranceInventory
+            tenantId={tenantId}
+            onSelectProcessorForHub={(profId) => {
+              setSelectedHubProcessorProfileId(profId);
+              setActiveTab('processor_hub');
+            }}
             onNotice={showNotice}
           />
         )}

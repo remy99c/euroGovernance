@@ -90,6 +90,7 @@ export {
   reviewProcessorCertification,
   replaceProcessorCertification,
   listTenantProcessorCertifications,
+  listTenantProcessorAssuranceInventory,
   getProcessorCertificationReminders,
   dispatchProcessorCertificationReminders,
   getProcessorCertificationRiskIndicators,

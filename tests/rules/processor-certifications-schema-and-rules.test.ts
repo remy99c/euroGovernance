@@ -21,9 +21,14 @@ import {
   VALID_ASSURANCE_STANDARD_FAMILIES,
   VALID_ASSURANCE_ARTIFACT_KINDS,
   VALID_EVIDENCE_CATEGORIES,
-  Evidence,
-  ProcessorProfile,
-  Control,
+  type Evidence,
+  type ProcessorProfile,
+  type Control,
+  type SystemAsset,
+  type Vendor,
+  synthesizeProcessorAssuranceInventory,
+  filterProcessorAssuranceInventory,
+  summarizeProcessorAssuranceInventory,
   findProcessorCertificationsForControl,
   findControlsForProcessorCertification,
   evaluateControlProcessorAssuranceSupport,
@@ -2442,6 +2447,701 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         const v2Validation = validateProcessorCertification(v2Cert);
         expect(v1Validation.valid).toBe(true);
         expect(v2Validation.valid).toBe(true);
+      });
+    });
+  });
+
+  describe('12. Processor Assurance Inventory Multi-Dimensional Filters & Tenant Isolation', () => {
+    const tenantA = 'tenant_inventory_alpha';
+    const tenantB = 'tenant_inventory_beta';
+
+    const userAdminA = { uid: 'usr_admin_a', email: 'admin@alpha.de' };
+    const userAdminB = { uid: 'usr_admin_b', email: 'admin@beta.fr' };
+
+    beforeEach(async () => {
+      await testEnv.clearFirestore();
+
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+
+        // Setup Tenant Alpha
+        await db.collection('tenants').doc(tenantA).set({
+          name: 'Alpha Corp',
+          subscriptionTier: 'enterprise',
+          primaryContactEmail: 'admin@alpha.de',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        await db.collection('tenants').doc(tenantA).collection('memberships').doc(userAdminA.uid).set({
+          id: userAdminA.uid,
+          tenantId: tenantA,
+          userId: userAdminA.uid,
+          email: userAdminA.email,
+          role: 'tenant_admin',
+          status: 'active',
+          joinedAt: new Date().toISOString(),
+        });
+
+        // Setup Tenant Beta
+        await db.collection('tenants').doc(tenantB).set({
+          id: tenantB,
+          name: 'Beta Corp',
+          status: 'active',
+          subscriptionTier: 'enterprise',
+          primaryContactEmail: 'admin@beta.fr',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        await db.collection('tenants').doc(tenantB).collection('memberships').doc(userAdminB.uid).set({
+          id: userAdminB.uid,
+          tenantId: tenantB,
+          userId: userAdminB.uid,
+          email: userAdminB.email,
+          role: 'tenant_admin',
+          status: 'active',
+          joinedAt: new Date().toISOString(),
+        });
+
+        // Seed Tenant Alpha Processor Certification
+        await db.collection('tenants').doc(tenantA).collection('processor_certifications').doc('cert_alpha_iso').set({
+          id: 'cert_alpha_iso',
+          tenantId: tenantA,
+          processorProfileId: 'prof_alpha_aws',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'EY CertifyPoint',
+          certificateOrReportNumber: 'ALPHA-EY-01',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2027-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Alpha Cloud Services Scope',
+          legalEntityOrRegionalScope: 'EU EMEA',
+          systemsOrServicesCovered: ['Cloud VPC'],
+          reviewOwnerUserId: userAdminA.uid,
+          reviewStatus: 'accepted',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: ['ev_alpha_doc1'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: userAdminA.uid,
+          createdBy: userAdminA.uid,
+          updatedBy: userAdminA.uid,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+
+        // Seed Tenant Beta Processor Certification
+        await db.collection('tenants').doc(tenantB).collection('processor_certifications').doc('cert_beta_soc2').set({
+          id: 'cert_beta_soc2',
+          tenantId: tenantB,
+          processorProfileId: 'prof_beta_gcp',
+          artifactKind: 'independent_attestation_report',
+          standardFamily: 'soc2_type2',
+          issuingBodyOrAuditor: 'PwC LLP',
+          certificateOrReportNumber: 'BETA-PWC-02',
+          reportPeriodStart: '2024-01-01T00:00:00.000Z',
+          reportPeriodEnd: '2024-12-31T00:00:00.000Z',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2025-06-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Beta Cloud Analytics Scope',
+          legalEntityOrRegionalScope: 'Global GCP',
+          systemsOrServicesCovered: ['BigQuery'],
+          reviewOwnerUserId: userAdminB.uid,
+          reviewStatus: 'accepted',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: ['ev_beta_doc1'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: userAdminB.uid,
+          createdBy: userAdminB.uid,
+          updatedBy: userAdminB.uid,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      });
+    });
+
+    describe('Multi-Tenant Security Rules Isolation', () => {
+      it('allows Tenant Alpha admin to read Tenant Alpha processor certifications', async () => {
+        const userAContext = testEnv.authenticatedContext(userAdminA.uid, { email: userAdminA.email });
+        const docRef = userAContext.firestore().collection('tenants').doc(tenantA).collection('processor_certifications').doc('cert_alpha_iso');
+        await assertSucceeds(docRef.get());
+      });
+
+      it('strictly forbids Tenant Beta user from reading Tenant Alpha processor certifications', async () => {
+        const userBContext = testEnv.authenticatedContext(userAdminB.uid, { email: userAdminB.email });
+        const docRef = userBContext.firestore().collection('tenants').doc(tenantA).collection('processor_certifications').doc('cert_alpha_iso');
+        await assertFails(docRef.get());
+      });
+
+      it('strictly forbids unauthenticated users from reading any processor certifications', async () => {
+        const unauthContext = testEnv.unauthenticatedContext();
+        const docRef = unauthContext.firestore().collection('tenants').doc(tenantA).collection('processor_certifications').doc('cert_alpha_iso');
+        await assertFails(docRef.get());
+      });
+    });
+
+    describe('Assurance Inventory Multi-Dimensional Filter Engine', () => {
+      const asOfDate = new Date('2025-01-01T00:00:00.000Z');
+
+      // Mock Dataset
+      const mockProfiles = [
+        {
+          id: 'prof_aws',
+          tenantId: 'tenant_test',
+          vendorId: 'vend_aws',
+          engagementName: 'AWS Cloud Infrastructure',
+          processorRole: 'data_processor',
+          serviceDescription: 'Core Cloud Hosting',
+          dataCategories: ['user_credentials', 'payment_records'],
+          dataSubjects: ['customers'],
+          isSpecialCategoryData: false,
+          jurisdictions: ['DE', 'IE', 'US'],
+          linkedSystemAssetIds: ['asset_core_bank', 'asset_data_lake'],
+          criticality: 'critical',
+          ownerUserId: 'usr_sec_lead',
+          reviewCadence: 'quarterly',
+          status: 'active',
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'prof_slack',
+          tenantId: 'tenant_test',
+          vendorId: 'vend_salesforce',
+          engagementName: 'Slack Enterprise Grid',
+          processorRole: 'data_processor',
+          serviceDescription: 'Internal Team Collaboration',
+          dataCategories: ['chat_messages'],
+          dataSubjects: ['employees'],
+          isSpecialCategoryData: false,
+          jurisdictions: ['US', 'DE'],
+          linkedSystemAssetIds: ['asset_crm_hub'],
+          criticality: 'medium',
+          ownerUserId: 'usr_dpo',
+          reviewCadence: 'annually',
+          status: 'active',
+          ownerId: 'usr_dpo',
+          createdBy: 'usr_dpo',
+          updatedBy: 'usr_dpo',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'prof_mongodb',
+          tenantId: 'tenant_test',
+          vendorId: 'vend_mongo',
+          engagementName: 'MongoDB Atlas Cloud',
+          processorRole: 'subprocessor',
+          serviceDescription: 'Managed Database Cluster',
+          dataCategories: ['analytics'],
+          dataSubjects: ['customers'],
+          isSpecialCategoryData: false,
+          jurisdictions: ['DE'],
+          linkedSystemAssetIds: ['asset_data_lake'],
+          criticality: 'high',
+          ownerUserId: 'usr_sec_lead',
+          reviewCadence: 'semi_annually',
+          status: 'active',
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      ] as unknown as ProcessorProfile[];
+
+      const mockVendors = [
+        {
+          id: 'vend_aws',
+          tenantId: 'tenant_test',
+          name: 'Amazon Web Services Inc.',
+          category: 'cloud_provider',
+          riskTier: 'critical',
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'vend_salesforce',
+          tenantId: 'tenant_test',
+          name: 'Salesforce EMEA Ltd (Slack)',
+          category: 'saas_service',
+          riskTier: 'medium',
+          ownerId: 'usr_dpo',
+          createdBy: 'usr_dpo',
+          updatedBy: 'usr_dpo',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'vend_mongo',
+          tenantId: 'tenant_test',
+          name: 'MongoDB Inc.',
+          category: 'subprocessor',
+          riskTier: 'critical',
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      ] as unknown as Vendor[];
+
+      const mockAssets = [
+        {
+          id: 'asset_core_bank',
+          tenantId: 'tenant_test',
+          name: 'Core Banking Engine',
+          assetType: 'cloud_infrastructure',
+          criticality: 'critical',
+          dataClassification: 'restricted_personal',
+          hostingLocation: 'DE',
+          vendorId: 'vend_aws',
+          containsPersonalData: true,
+          containsSpecialCategoryData: false,
+          containsTrainingData: false,
+          processorProfileIds: ['prof_aws'],
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'asset_data_lake',
+          tenantId: 'tenant_test',
+          name: 'Enterprise Data Lake',
+          assetType: 'database',
+          criticality: 'critical',
+          dataClassification: 'restricted_personal',
+          hostingLocation: 'DE',
+          vendorId: 'vend_aws',
+          containsPersonalData: true,
+          containsSpecialCategoryData: true,
+          containsTrainingData: false,
+          processorProfileIds: ['prof_aws', 'prof_mongodb'],
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'asset_crm_hub',
+          tenantId: 'tenant_test',
+          name: 'Employee CRM Hub',
+          assetType: 'internal_software',
+          criticality: 'medium',
+          dataClassification: 'internal',
+          hostingLocation: 'DE',
+          vendorId: 'vend_salesforce',
+          containsPersonalData: true,
+          containsSpecialCategoryData: false,
+          containsTrainingData: false,
+          processorProfileIds: ['prof_slack'],
+          ownerId: 'usr_dpo',
+          createdBy: 'usr_dpo',
+          updatedBy: 'usr_dpo',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      ] as unknown as SystemAsset[];
+
+      const mockEvidence = [
+        {
+          id: 'ev_aws_iso_doc',
+          tenantId: 'tenant_test',
+          title: 'AWS ISO 27001 Certificate 2024-2027.pdf',
+          category: 'iso_certificate',
+          status: 'valid',
+          fileHashSha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+          storagePath: 'tenants/tenant_test/evidence/ev_aws_iso.pdf',
+          processorCertificationIds: ['cert_aws_iso'],
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'ev_aws_soc2_doc',
+          tenantId: 'tenant_test',
+          title: 'AWS SOC 2 Type II Security Report.pdf',
+          category: 'soc_report',
+          status: 'valid',
+          fileHashSha256: 'a3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+          storagePath: 'tenants/tenant_test/evidence/ev_aws_soc2.pdf',
+          processorCertificationIds: ['cert_aws_soc2'],
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      ] as unknown as Evidence[];
+
+      const mockCerts: ProcessorCertification[] = [
+        // 1. AWS ISO 27001 (Active Valid, 2 years remaining, Evidence attached, covers Banking Engine)
+        {
+          id: 'cert_aws_iso',
+          tenantId: 'tenant_test',
+          processorProfileId: 'prof_aws',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'EY CertifyPoint',
+          leadAuditorName: 'Klaus Schmidt',
+          certificateOrReportNumber: 'EY-2024-AWS-ISMS',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2027-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Global AWS Infrastructure & Data Center Regions',
+          legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL',
+          systemsOrServicesCovered: ['Core Banking Engine', 'Compute', 'Storage'],
+          reviewOwnerUserId: 'usr_sec_lead',
+          reviewStatus: 'accepted',
+          reviewDueDate: '2025-06-01T00:00:00.000Z',
+          linkedEvidenceIds: ['ev_aws_iso_doc'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        // 2. AWS SOC 2 Type II (Expiring Soon: 2025-01-20 is 19 days from 2025-01-01)
+        {
+          id: 'cert_aws_soc2',
+          tenantId: 'tenant_test',
+          processorProfileId: 'prof_aws',
+          artifactKind: 'independent_attestation_report',
+          standardFamily: 'soc2_type2',
+          issuingBodyOrAuditor: 'PwC LLP',
+          leadAuditorName: 'Sarah Jenkins',
+          certificateOrReportNumber: 'PWC-2024-SOC2-AWS',
+          reportPeriodStart: '2024-01-01T00:00:00.000Z',
+          reportPeriodEnd: '2024-12-31T00:00:00.000Z',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2025-01-20T00:00:00.000Z', // <= 60d
+          status: 'active_valid',
+          assuranceScopeSummary: 'Security & Availability Trust Services Criteria',
+          legalEntityOrRegionalScope: 'AWS Global',
+          systemsOrServicesCovered: ['Enterprise Data Lake', 'S3'],
+          reviewOwnerUserId: 'usr_sec_lead',
+          reviewStatus: 'accepted',
+          reviewDueDate: '2025-01-10T00:00:00.000Z',
+          linkedEvidenceIds: ['ev_aws_soc2_doc'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        // 3. Slack ISO 27001 (Expired, Missing Evidence)
+        {
+          id: 'cert_slack_iso_expired',
+          tenantId: 'tenant_test',
+          processorProfileId: 'prof_slack',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'A-LIGN Compliance',
+          certificateOrReportNumber: 'ALIGN-SLACK-2023',
+          validFrom: '2021-01-01T00:00:00.000Z',
+          validUntil: '2024-12-31T00:00:00.000Z', // Lapsed as of 2025-01-01
+          status: 'expired',
+          assuranceScopeSummary: 'Slack Grid Services',
+          legalEntityOrRegionalScope: 'Salesforce US',
+          systemsOrServicesCovered: ['Employee CRM Hub'],
+          reviewOwnerUserId: 'usr_dpo',
+          reviewStatus: 'pending',
+          reviewDueDate: '2024-11-01T00:00:00.000Z',
+          linkedEvidenceIds: [], // Missing evidence!
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_dpo',
+          createdBy: 'usr_dpo',
+          updatedBy: 'usr_dpo',
+          createdAt: '2021-01-01T00:00:00.000Z',
+          updatedAt: '2024-12-31T00:00:00.000Z',
+        },
+        // 4. MongoDB CSA STAR (Rejected Review)
+        {
+          id: 'cert_mongo_csa_rejected',
+          tenantId: 'tenant_test',
+          processorProfileId: 'prof_mongodb',
+          artifactKind: 'industry_label',
+          standardFamily: 'csa_star',
+          issuingBodyOrAuditor: 'BSI Group',
+          certificateOrReportNumber: 'BSI-STAR-MONGO',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2026-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'MongoDB Serverless Tier Only',
+          legalEntityOrRegionalScope: 'US East',
+          systemsOrServicesCovered: ['Atlas Serverless'],
+          reviewOwnerUserId: 'usr_sec_lead',
+          reviewStatus: 'rejected',
+          rejectionReason: 'Scope limited to US East serverless tier; does not cover EU Dedicated Clusters.',
+          reviewDueDate: '2024-10-01T00:00:00.000Z',
+          linkedEvidenceIds: [],
+          unresolvedFindingsCount: 2,
+          hasMajorDeficiencies: true,
+          isInsufficient: false,
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+        // 5. AWS ISO 27001 v1 (Superseded Historic Version)
+        {
+          id: 'cert_aws_iso_v1_historic',
+          tenantId: 'tenant_test',
+          processorProfileId: 'prof_aws',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'EY CertifyPoint',
+          certificateOrReportNumber: 'EY-2021-AWS-V1',
+          validFrom: '2021-01-01T00:00:00.000Z',
+          validUntil: '2024-01-01T00:00:00.000Z',
+          status: 'superseded',
+          assuranceScopeSummary: 'Historic AWS Scope',
+          legalEntityOrRegionalScope: 'AWS EMEA',
+          systemsOrServicesCovered: ['Compute'],
+          reviewOwnerUserId: 'usr_sec_lead',
+          reviewStatus: 'superseded',
+          reviewDueDate: '2023-12-01T00:00:00.000Z',
+          replacedByCertificationId: 'cert_aws_iso',
+          versionNumber: 1,
+          isHistoricVersion: true,
+          linkedEvidenceIds: [],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_sec_lead',
+          createdBy: 'usr_sec_lead',
+          updatedBy: 'usr_sec_lead',
+          createdAt: '2021-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      ];
+
+      it('synthesizes correlated assurance inventory items with accurate health and linked assets', () => {
+        const items = synthesizeProcessorAssuranceInventory(
+          mockCerts,
+          mockProfiles,
+          mockVendors,
+          mockAssets,
+          mockEvidence,
+          asOfDate
+        );
+
+        expect(items).toHaveLength(5);
+
+        const awsIso = items.find((i) => i.certification.id === 'cert_aws_iso')!;
+        expect(awsIso.processorProfile.name).toBe('AWS Cloud Infrastructure');
+        expect(awsIso.vendor?.name).toBe('Amazon Web Services Inc.');
+        expect(awsIso.isCriticalProcessor).toBe(true);
+        expect(awsIso.validityStatus).toBe('valid_now');
+        expect(awsIso.hasAttachedEvidence).toBe(true);
+        expect(awsIso.attachedEvidenceCount).toBe(1);
+        expect(awsIso.linkedSystemNames).toContain('Core Banking Engine');
+        expect(awsIso.linkedSystemNames).toContain('Enterprise Data Lake');
+
+        const awsSoc2 = items.find((i) => i.certification.id === 'cert_aws_soc2')!;
+        expect(awsSoc2.validityStatus).toBe('expiring_soon');
+        expect(awsSoc2.isExpiringSoon).toBe(true);
+        expect(awsSoc2.daysUntilExpiry).toBe(19);
+
+        const slackIso = items.find((i) => i.certification.id === 'cert_slack_iso_expired')!;
+        expect(slackIso.validityStatus).toBe('expired');
+        expect(slackIso.isExpired).toBe(true);
+        expect(slackIso.hasAttachedEvidence).toBe(false);
+
+        const mongoCsa = items.find((i) => i.certification.id === 'cert_mongo_csa_rejected')!;
+        expect(mongoCsa.isInsufficientOrRejected).toBe(true);
+        expect(mongoCsa.gaps.some((g) => g.code === 'PROCESSOR_CERT_REJECTED')).toBe(true);
+
+        const historic = items.find((i) => i.certification.id === 'cert_aws_iso_v1_historic')!;
+        expect(historic.validityStatus).toBe('superseded');
+      });
+
+      it('filters inventory by standardFamily and artifactKind', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+
+        // Filter ISO 27001 (excludes historic by default)
+        const isoItems = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          standardFamily: 'iso_27001',
+        });
+        expect(isoItems).toHaveLength(2); // cert_aws_iso & cert_slack_iso_expired
+        expect(isoItems.map((i) => i.certification.id)).toContain('cert_aws_iso');
+        expect(isoItems.map((i) => i.certification.id)).toContain('cert_slack_iso_expired');
+
+        // Filter SOC 2 Type II
+        const soc2Items = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          standardFamily: 'soc2_type2',
+        });
+        expect(soc2Items).toHaveLength(1);
+        expect(soc2Items[0]!.certification.id).toBe('cert_aws_soc2');
+
+        // Filter artifactKind: accredited_certification
+        const certKindItems = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          artifactKind: 'accredited_certification',
+        });
+        expect(certKindItems).toHaveLength(2);
+      });
+
+      it('filters inventory by validityStatus (valid_now, expiring_soon, expired)', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+
+        const validNow = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          validityStatus: 'valid_now',
+        });
+        expect(validNow.map((i) => i.certification.id)).toEqual(['cert_aws_iso', 'cert_mongo_csa_rejected']);
+
+        const expiringSoon = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          validityStatus: 'expiring_soon',
+        });
+        expect(expiringSoon).toHaveLength(1);
+        expect(expiringSoon[0]!.certification.id).toBe('cert_aws_soc2');
+
+        const expired = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          validityStatus: 'expired',
+        });
+        expect(expired).toHaveLength(1);
+        expect(expired[0]!.certification.id).toBe('cert_slack_iso_expired');
+      });
+
+      it('filters inventory by criticalProcessorOnly', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+
+        const criticalOnly = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          criticalProcessorOnly: true,
+        });
+
+        // AWS is critical; Slack is medium; Mongo is high
+        expect(criticalOnly).toHaveLength(2);
+        expect(criticalOnly.every((i) => i.processorProfile.id === 'prof_aws')).toBe(true);
+      });
+
+      it('filters inventory by issuer and auditor search query', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+
+        const eyItems = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          issuerQuery: 'EY CertifyPoint',
+        });
+        expect(eyItems).toHaveLength(1);
+        expect(eyItems[0]!.certification.id).toBe('cert_aws_iso');
+
+        const pwcAuditor = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          issuerQuery: 'Sarah Jenkins',
+        });
+        expect(pwcAuditor).toHaveLength(1);
+        expect(pwcAuditor[0]!.certification.id).toBe('cert_aws_soc2');
+      });
+
+      it('filters inventory by linked system asset and covered services', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+
+        const bankingItems = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          linkedSystemAssetId: 'asset_core_bank',
+        });
+        expect(bankingItems).toHaveLength(2); // AWS certs
+
+        const crmCovered = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          coveredSystemOrService: 'Employee CRM Hub',
+        });
+        expect(crmCovered).toHaveLength(1);
+        expect(crmCovered[0]!.certification.id).toBe('cert_slack_iso_expired');
+      });
+
+      it('filters inventory by missingEvidenceOnly and insufficientOrRejectedOnly', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+
+        const missingEvidence = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          missingEvidenceOnly: true,
+        });
+        expect(missingEvidence.map((i) => i.certification.id)).toContain('cert_slack_iso_expired');
+        expect(missingEvidence.map((i) => i.certification.id)).toContain('cert_mongo_csa_rejected');
+
+        const rejectedOrInsufficient = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          insufficientOrRejectedOnly: true,
+        });
+        expect(rejectedOrInsufficient).toHaveLength(1);
+        expect(rejectedOrInsufficient[0]!.certification.id).toBe('cert_mongo_csa_rejected');
+      });
+
+      it('filters inventory using freeform multi-attribute search query', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+
+        // Search by Certificate Number
+        const searchByNum = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          searchQuery: 'PWC-2024',
+        });
+        expect(searchByNum).toHaveLength(1);
+        expect(searchByNum[0]!.certification.id).toBe('cert_aws_soc2');
+
+        // Search by Vendor Name
+        const searchByVendor = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          searchQuery: 'Salesforce',
+        });
+        expect(searchByVendor).toHaveLength(1);
+        expect(searchByVendor[0]!.certification.id).toBe('cert_slack_iso_expired');
+
+        // Search by Scope keyword
+        const searchByScope = filterProcessorAssuranceInventory(allItems, {
+          tenantId: 'tenant_test',
+          searchQuery: 'Serverless',
+        });
+        expect(searchByScope).toHaveLength(1);
+        expect(searchByScope[0]!.certification.id).toBe('cert_mongo_csa_rejected');
+      });
+
+      it('calculates inventory KPI summary accurately', () => {
+        const allItems = synthesizeProcessorAssuranceInventory(mockCerts, mockProfiles, mockVendors, mockAssets, mockEvidence, asOfDate);
+        const summary = summarizeProcessorAssuranceInventory(allItems);
+
+        expect(summary.totalAssuranceRecords).toBe(5);
+        expect(summary.activeValidCount).toBe(3); // cert_aws_iso (valid_now), cert_aws_soc2 (expiring_soon), cert_mongo (valid_now)
+        expect(summary.expiringSoonCount).toBe(1); // cert_aws_soc2
+        expect(summary.expiredCount).toBe(1);      // cert_slack_iso_expired
+        expect(summary.supersededCount).toBe(1);   // cert_aws_iso_v1_historic
+        expect(summary.criticalProcessorsCount).toBe(1); // prof_aws (distinct profile)
+        expect(summary.missingEvidenceCount).toBe(2);    // cert_slack_iso_expired, cert_mongo_csa_rejected
+        expect(summary.insufficientOrRejectedCount).toBe(1); // cert_mongo_csa_rejected
+        expect(summary.pendingReviewCount).toBe(1); // cert_slack_iso_expired
+        expect(summary.standardBreakdown['iso_27001']).toBe(3);
+        expect(summary.standardBreakdown['soc2_type2']).toBe(1);
+        expect(summary.standardBreakdown['csa_star']).toBe(1);
       });
     });
   });

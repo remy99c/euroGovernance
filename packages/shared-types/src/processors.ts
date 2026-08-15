@@ -1,5 +1,5 @@
 import { BaseEntity, UserRole } from './core.js';
-import { Evidence, EvidenceCategory, EvidenceStatus, ProcessorSystemRelationshipType, SystemAsset, Control } from './grc.js';
+import { Evidence, EvidenceCategory, EvidenceStatus, ProcessorSystemRelationshipType, SystemAsset, Control, Vendor } from './grc.js';
 import { PersonalDataBreach, BreachReportingSource, BreachSeverity, BreachStatus } from './gdpr.js';
 import { NotificationType, NotificationPriority } from './audit.js';
 
@@ -3430,4 +3430,400 @@ export function mapProcessorsToControlsAssuranceMatrix(
   }
 
   return matrix;
+}
+
+// -----------------------------------------------------------------------------
+// 9. PROCESSOR ASSURANCE INVENTORY & MULTI-DIMENSIONAL FILTERS
+// -----------------------------------------------------------------------------
+
+export interface ProcessorAssuranceInventoryItem {
+  certification: ProcessorCertification;
+  processorProfile: {
+    id: string;
+    name: string;
+    criticality: ProcessorCriticality;
+    processorRole: ProcessorRole;
+    serviceDescription: string;
+    status: ProcessorStatus;
+    ownerUserId?: string;
+    vendorId?: string | null;
+  };
+  vendor: {
+    id: string;
+    name: string;
+    riskTier?: string;
+  } | null;
+  validityStatus: 'valid_now' | 'expiring_soon' | 'expired' | 'superseded';
+  daysUntilExpiry: number;
+  isExpired: boolean;
+  isExpiringSoon: boolean;
+  isReviewOverdue: boolean;
+  daysUntilReviewDue: number | null;
+  isCriticalProcessor: boolean;
+  hasAttachedEvidence: boolean;
+  attachedEvidenceCount: number;
+  attachedEvidenceSummaries: Array<{
+    id: string;
+    title: string;
+    category: string;
+    status: string;
+    fileHashSha256?: string;
+  }>;
+  coveredSystemsCount: number;
+  coveredSystems: string[];
+  linkedSystemAssetIds: string[];
+  linkedSystemNames: string[];
+  isInsufficientOrRejected: boolean;
+  gaps: Array<{
+    code: string;
+    description: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    suggestedAction: string;
+  }>;
+  completeness: ProcessorCertificationEvidenceCompleteness;
+}
+
+export interface ListProcessorAssuranceInventoryInput {
+  tenantId: string;
+  processorProfileId?: string;
+  vendorId?: string;
+  artifactKind?: AssuranceArtifactKind;
+  standardFamily?: AssuranceStandardFamily;
+  status?: ProcessorCertificationStatus;
+  validityStatus?: 'valid_now' | 'expiring_soon' | 'expired' | 'all';
+  reviewStatus?: ProcessorCertificationReviewStatus;
+  criticalProcessorOnly?: boolean;
+  issuerQuery?: string;
+  issuingBodyOrAuditor?: string;
+  linkedSystemAssetId?: string;
+  coveredSystemOrService?: string;
+  missingEvidenceOnly?: boolean;
+  insufficientOrRejectedOnly?: boolean;
+  searchQuery?: string;
+  includeHistoric?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ProcessorAssuranceInventorySummary {
+  totalAssuranceRecords: number;
+  activeValidCount: number;
+  expiringSoonCount: number;
+  expiredCount: number;
+  supersededCount: number;
+  criticalProcessorsCount: number;
+  missingEvidenceCount: number;
+  insufficientOrRejectedCount: number;
+  pendingReviewCount: number;
+  standardBreakdown: Record<string, number>;
+}
+
+export interface ProcessorAssuranceInventoryResponse {
+  success: boolean;
+  total: number;
+  count: number;
+  summary: ProcessorAssuranceInventorySummary;
+  items: ProcessorAssuranceInventoryItem[];
+}
+
+/**
+ * Synthesizes cross-entity correlated assurance inventory items from raw Firestore collections.
+ */
+export function synthesizeProcessorAssuranceInventory(
+  certs: ProcessorCertification[],
+  profiles: ProcessorProfile[],
+  vendors: Vendor[] = [],
+  assets: SystemAsset[] = [],
+  evidenceList: Evidence[] = [],
+  asOfDate: Date = new Date()
+): ProcessorAssuranceInventoryItem[] {
+  const profilesMap = new Map<string, ProcessorProfile>();
+  profiles.forEach((p) => profilesMap.set(p.id, p));
+
+  const vendorsMap = new Map<string, Vendor>();
+  vendors.forEach((v) => vendorsMap.set(v.id, v));
+
+  const assetsMap = new Map<string, SystemAsset>();
+  assets.forEach((a) => assetsMap.set(a.id, a));
+
+  const nowMillis = asOfDate.getTime();
+
+  return certs.map((cert) => {
+    const profile = profilesMap.get(cert.processorProfileId) || ({
+      id: cert.processorProfileId,
+      engagementName: cert.processorProfileId,
+      criticality: 'medium' as ProcessorCriticality,
+      processorRole: 'data_processor' as ProcessorRole,
+      serviceDescription: '',
+      status: 'active' as ProcessorStatus,
+      vendorId: cert.vendorId || null,
+      linkedSystemAssetIds: [],
+    } as unknown as ProcessorProfile);
+
+    const vendor = profile.vendorId
+      ? vendorsMap.get(profile.vendorId) || null
+      : cert.vendorId
+      ? vendorsMap.get(cert.vendorId) || null
+      : null;
+
+    const completeness = evaluateProcessorCertificationCompleteness(cert, evidenceList, asOfDate);
+
+    const validUntilMillis = new Date(cert.validUntil).getTime();
+    const daysUntilExpiry = Math.ceil((validUntilMillis - nowMillis) / (1000 * 60 * 60 * 24));
+    const isExpired = daysUntilExpiry <= 0 || cert.status === 'expired' || cert.status === 'revoked' || cert.status === 'suspended';
+    const isExpiringSoon = !isExpired && daysUntilExpiry <= 60;
+    const isSuperseded = cert.isHistoricVersion || cert.reviewStatus === 'superseded';
+
+    let validityStatus: 'valid_now' | 'expiring_soon' | 'expired' | 'superseded' = 'valid_now';
+    if (isSuperseded) {
+      validityStatus = 'superseded';
+    } else if (isExpired) {
+      validityStatus = 'expired';
+    } else if (isExpiringSoon) {
+      validityStatus = 'expiring_soon';
+    }
+
+    const isReviewOverdue = completeness.isReviewOverdue;
+    const daysUntilReviewDue = completeness.daysUntilReviewDue;
+    const isCriticalProcessor = profile.criticality === 'critical';
+    const isInsufficientOrRejected = cert.isInsufficient || cert.reviewStatus === 'insufficient' || cert.reviewStatus === 'rejected';
+
+    // Linked system assets resolution
+    const linkedAssetIds = Array.from(
+      new Set([
+        ...(profile.linkedSystemAssetIds || []),
+        ...assets
+          .filter((a) => a.processorProfileIds?.includes(profile.id) || cert.systemsOrServicesCovered?.includes(a.name) || cert.systemsOrServicesCovered?.includes(a.id))
+          .map((a) => a.id),
+      ])
+    );
+
+    const linkedSystemNames = linkedAssetIds
+      .map((id) => assetsMap.get(id)?.name)
+      .filter((name): name is string => Boolean(name));
+
+    return {
+      certification: cert,
+      processorProfile: {
+        id: profile.id,
+        name: profile.engagementName || profile.id,
+        criticality: profile.criticality,
+        processorRole: profile.processorRole,
+        serviceDescription: profile.serviceDescription,
+        status: profile.status,
+        ownerUserId: profile.ownerUserId || profile.ownerId,
+        vendorId: profile.vendorId,
+      },
+      vendor: vendor
+        ? {
+            id: vendor.id,
+            name: vendor.name,
+            riskTier: vendor.riskTier,
+          }
+        : null,
+      validityStatus,
+      daysUntilExpiry,
+      isExpired,
+      isExpiringSoon,
+      isReviewOverdue,
+      daysUntilReviewDue,
+      isCriticalProcessor,
+      hasAttachedEvidence: completeness.hasAttachedEvidence,
+      attachedEvidenceCount: completeness.attachedEvidenceCount,
+      attachedEvidenceSummaries: completeness.attachedEvidences,
+      coveredSystemsCount: (cert.systemsOrServicesCovered || []).length,
+      coveredSystems: cert.systemsOrServicesCovered || [],
+      linkedSystemAssetIds: linkedAssetIds,
+      linkedSystemNames,
+      isInsufficientOrRejected,
+      gaps: completeness.gaps,
+      completeness,
+    };
+  });
+}
+
+/**
+ * Pure filter evaluator for processor assurance inventory items.
+ */
+export function filterProcessorAssuranceInventory(
+  items: ProcessorAssuranceInventoryItem[],
+  filters: ListProcessorAssuranceInventoryInput
+): ProcessorAssuranceInventoryItem[] {
+  return items.filter((item) => {
+    const { certification: cert, processorProfile: profile, vendor } = item;
+
+    // 1. Historic Filter
+    if (!filters.includeHistoric && (cert.isHistoricVersion || cert.reviewStatus === 'superseded')) {
+      return false;
+    }
+
+    // 2. Specific Processor or Vendor Filter
+    if (filters.processorProfileId && cert.processorProfileId !== filters.processorProfileId) {
+      return false;
+    }
+    if (filters.vendorId && profile.vendorId !== filters.vendorId && cert.vendorId !== filters.vendorId) {
+      return false;
+    }
+
+    // 3. Certification / Report Type
+    if (filters.artifactKind && cert.artifactKind !== filters.artifactKind) {
+      return false;
+    }
+    if (filters.standardFamily && cert.standardFamily !== filters.standardFamily) {
+      return false;
+    }
+
+    // 4. Status
+    if (filters.status && cert.status !== filters.status) {
+      return false;
+    }
+
+    // 5. Validity Status (valid_now, expiring_soon, expired, all)
+    if (filters.validityStatus && filters.validityStatus !== 'all') {
+      if (item.validityStatus !== filters.validityStatus) {
+        return false;
+      }
+    }
+
+    // 6. Review Status
+    if (filters.reviewStatus && cert.reviewStatus !== filters.reviewStatus) {
+      return false;
+    }
+
+    // 7. Critical Processor Only
+    if (filters.criticalProcessorOnly && !item.isCriticalProcessor) {
+      return false;
+    }
+
+    // 8. Issuer (Exact or Query)
+    if (filters.issuingBodyOrAuditor) {
+      if (cert.issuingBodyOrAuditor.toLowerCase() !== filters.issuingBodyOrAuditor.toLowerCase()) {
+        return false;
+      }
+    }
+    if (filters.issuerQuery) {
+      const q = filters.issuerQuery.toLowerCase().trim();
+      const matchIssuer = cert.issuingBodyOrAuditor?.toLowerCase().includes(q);
+      const matchAuditor = cert.leadAuditorName?.toLowerCase().includes(q);
+      if (!matchIssuer && !matchAuditor) {
+        return false;
+      }
+    }
+
+    // 9. Linked System / Service Covered
+    if (filters.linkedSystemAssetId) {
+      const hasAsset = item.linkedSystemAssetIds.includes(filters.linkedSystemAssetId);
+      if (!hasAsset) return false;
+    }
+    if (filters.coveredSystemOrService) {
+      const coveredQuery = filters.coveredSystemOrService.toLowerCase().trim();
+      const matchesCovered = (cert.systemsOrServicesCovered || []).some((s) => s.toLowerCase().includes(coveredQuery));
+      const matchesSystemName = item.linkedSystemNames.some((n) => n.toLowerCase().includes(coveredQuery));
+      if (!matchesCovered && !matchesSystemName) return false;
+    }
+
+    // 10. Missing Evidence Only
+    if (filters.missingEvidenceOnly && item.hasAttachedEvidence) {
+      return false;
+    }
+
+    // 11. Insufficient / Rejected Only
+    if (filters.insufficientOrRejectedOnly && !item.isInsufficientOrRejected) {
+      return false;
+    }
+
+    // 12. Freeform Search Query
+    if (filters.searchQuery && filters.searchQuery.trim()) {
+      const q = filters.searchQuery.toLowerCase().trim();
+      const matchNum = cert.certificateOrReportNumber?.toLowerCase().includes(q);
+      const matchIssuer = cert.issuingBodyOrAuditor?.toLowerCase().includes(q);
+      const matchAuditor = cert.leadAuditorName?.toLowerCase().includes(q);
+      const matchStandard = cert.standardFamily?.toLowerCase().includes(q) || cert.customStandardName?.toLowerCase().includes(q);
+      const matchScope = cert.assuranceScopeSummary?.toLowerCase().includes(q) || cert.legalEntityOrRegionalScope?.toLowerCase().includes(q);
+      const matchProfile = profile.name?.toLowerCase().includes(q);
+      const matchVendor = vendor?.name?.toLowerCase().includes(q);
+      const matchServices = (cert.systemsOrServicesCovered || []).some((s) => s.toLowerCase().includes(q));
+
+      if (
+        !matchNum &&
+        !matchIssuer &&
+        !matchAuditor &&
+        !matchStandard &&
+        !matchScope &&
+        !matchProfile &&
+        !matchVendor &&
+        !matchServices
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Calculates high-level summary KPIs for assurance inventory views.
+ */
+export function summarizeProcessorAssuranceInventory(
+  items: ProcessorAssuranceInventoryItem[]
+): ProcessorAssuranceInventorySummary {
+  let activeValidCount = 0;
+  let expiringSoonCount = 0;
+  let expiredCount = 0;
+  let supersededCount = 0;
+  let criticalProcessorsCount = 0;
+  let missingEvidenceCount = 0;
+  let insufficientOrRejectedCount = 0;
+  let pendingReviewCount = 0;
+  const standardBreakdown: Record<string, number> = {};
+
+  const criticalProfileIds = new Set<string>();
+
+  for (const item of items) {
+    if (item.validityStatus === 'superseded') {
+      supersededCount++;
+    } else if (item.validityStatus === 'expired') {
+      expiredCount++;
+    } else if (item.validityStatus === 'expiring_soon') {
+      expiringSoonCount++;
+      activeValidCount++;
+    } else {
+      activeValidCount++;
+    }
+
+    if (item.isCriticalProcessor) {
+      criticalProfileIds.add(item.processorProfile.id);
+    }
+
+    if (!item.hasAttachedEvidence && !item.certification.isHistoricVersion && item.certification.reviewStatus !== 'superseded') {
+      missingEvidenceCount++;
+    }
+
+    if (item.isInsufficientOrRejected) {
+      insufficientOrRejectedCount++;
+    }
+
+    if (item.certification.reviewStatus === 'pending' || item.certification.reviewStatus === 'in_review') {
+      pendingReviewCount++;
+    }
+
+    const std = item.certification.standardFamily;
+    standardBreakdown[std] = (standardBreakdown[std] || 0) + 1;
+  }
+
+  criticalProcessorsCount = criticalProfileIds.size;
+
+  return {
+    totalAssuranceRecords: items.length,
+    activeValidCount,
+    expiringSoonCount,
+    expiredCount,
+    supersededCount,
+    criticalProcessorsCount,
+    missingEvidenceCount,
+    insufficientOrRejectedCount,
+    pendingReviewCount,
+    standardBreakdown,
+  };
 }

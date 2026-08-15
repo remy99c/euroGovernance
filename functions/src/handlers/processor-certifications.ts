@@ -10,6 +10,12 @@ import {
   Evidence,
   Risk,
   Control,
+  SystemAsset,
+  Vendor,
+  ListProcessorAssuranceInventoryInput,
+  synthesizeProcessorAssuranceInventory,
+  filterProcessorAssuranceInventory,
+  summarizeProcessorAssuranceInventory,
   validateProcessorCertification,
   validateProcessorCertificationReviewTransition,
   evaluateProcessorCertificationReminders,
@@ -1228,5 +1234,117 @@ export const linkProcessorCertificationToControls = onCall<LinkProcessorCertific
     success: true,
     certificationId,
     linkedControlIds: updatedControlIds,
+  };
+});
+
+/**
+ * Callable Function: listTenantProcessorAssuranceInventory
+ * Correlates and filters processor assurance records, profiles, vendors, assets, and evidence across the tenant.
+ */
+export const listTenantProcessorAssuranceInventory = onCall<ListProcessorAssuranceInventoryInput>(async (request) => {
+  const {
+    tenantId,
+    processorProfileId,
+    vendorId,
+    artifactKind,
+    standardFamily,
+    status,
+    validityStatus,
+    reviewStatus,
+    criticalProcessorOnly,
+    issuerQuery,
+    issuingBodyOrAuditor,
+    linkedSystemAssetId,
+    coveredSystemOrService,
+    missingEvidenceOnly,
+    insufficientOrRejectedOnly,
+    searchQuery,
+    includeHistoric = false,
+    limit = 250,
+    offset = 0,
+  } = request.data;
+
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // 1. Query Firestore with primary indexed filters where possible
+  let certQuery: FirebaseFirestore.Query = db.collection('tenants').doc(tenantId).collection('processor_certifications');
+  if (processorProfileId) {
+    certQuery = certQuery.where('processorProfileId', '==', processorProfileId);
+  }
+  if (standardFamily) {
+    certQuery = certQuery.where('standardFamily', '==', standardFamily);
+  }
+  if (artifactKind) {
+    certQuery = certQuery.where('artifactKind', '==', artifactKind);
+  }
+  if (status) {
+    certQuery = certQuery.where('status', '==', status);
+  }
+  if (reviewStatus) {
+    certQuery = certQuery.where('reviewStatus', '==', reviewStatus);
+  }
+
+  // 2. Fetch correlated entities concurrently
+  const [certsSnap, profilesSnap, vendorsSnap, assetsSnap, evidenceSnap] = await Promise.all([
+    certQuery.get(),
+    db.collection('tenants').doc(tenantId).collection('processor_profiles').get(),
+    db.collection('tenants').doc(tenantId).collection('vendors').get(),
+    db.collection('tenants').doc(tenantId).collection('system_assets').get(),
+    db.collection('tenants').doc(tenantId).collection('evidence').get(),
+  ]);
+
+  const rawCerts = certsSnap.docs.map((d) => d.data() as ProcessorCertification);
+  const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+  const vendors = vendorsSnap.docs.map((d) => d.data() as Vendor);
+  const assets = assetsSnap.docs.map((d) => d.data() as SystemAsset);
+  const evidenceList = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+  // 3. Synthesize full cross-entity inventory items
+  const allInventoryItems = synthesizeProcessorAssuranceInventory(rawCerts, profiles, vendors, assets, evidenceList);
+
+  // 4. Apply multi-dimensional filters
+  const filteredItems = filterProcessorAssuranceInventory(allInventoryItems, {
+    tenantId,
+    processorProfileId,
+    vendorId,
+    artifactKind,
+    standardFamily,
+    status,
+    validityStatus,
+    reviewStatus,
+    criticalProcessorOnly,
+    issuerQuery,
+    issuingBodyOrAuditor,
+    linkedSystemAssetId,
+    coveredSystemOrService,
+    missingEvidenceOnly,
+    insufficientOrRejectedOnly,
+    searchQuery,
+    includeHistoric,
+  });
+
+  // Sort: active/valid first, then upcoming expiry asc, then superseded last
+  filteredItems.sort((a, b) => {
+    if (a.validityStatus === 'superseded' && b.validityStatus !== 'superseded') return 1;
+    if (b.validityStatus === 'superseded' && a.validityStatus !== 'superseded') return -1;
+    return new Date(a.certification.validUntil).getTime() - new Date(b.certification.validUntil).getTime();
+  });
+
+  // Calculate high-level summary KPIs
+  const summary = summarizeProcessorAssuranceInventory(filteredItems);
+
+  // Apply pagination
+  const paginatedItems = filteredItems.slice(offset, offset + limit);
+
+  return {
+    success: true,
+    total: filteredItems.length,
+    count: paginatedItems.length,
+    summary,
+    items: paginatedItems,
   };
 });
