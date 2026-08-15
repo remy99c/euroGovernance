@@ -27,6 +27,7 @@ import { UIModal } from './components/ui-modal';
 import { UIEmptyState } from './components/ui-empty-state';
 import { UIBadge } from './components/ui-badge';
 import { UIStatCard } from './components/ui-stat-card';
+import { UIPageHeader } from './components/ui-page-header';
 
 type TabType =
   | 'overview'
@@ -846,71 +847,80 @@ export default function DashboardPage() {
         {/* TAB 1: EXECUTIVE & ROLE-TAILORED OVERVIEW */}
         {activeTab === 'overview' && (
           <div>
-            {/* Dynamic Role Header */}
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-                    {userRole === 'auditor' && '🔍 Independent Auditor Assurance & Readiness Workspace'}
-                    {userRole === 'tenant_admin' && '👑 Enterprise Administration & Health Posture'}
-                    {(userRole === 'compliance_manager' || userRole === 'security_manager') && '🛡️ Continuous Compliance & Governance Operations'}
-                    {userRole === 'privacy_manager' && '🇪🇺 Data Protection & Privacy Governance Hub'}
-                    {userRole === 'ai_governance_manager' && '🤖 EU AI Act Compliance & Model Governance Hub'}
-                    {userRole === 'contributor' && '✍️ My Compliance Action Inbox & Assigned Tasks'}
-                    {!['auditor', 'tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'].includes(userRole) && '📊 Compliance & Governance Overview'}
-                  </h1>
-                  <UIBadge variant={userRole === 'auditor' ? 'review' : 'compliant'}>
-                    {userRole === 'auditor' ? 'Read-Only Assurance Mode' : `${userRole?.replace('_', ' ')} Mode`}
-                  </UIBadge>
-                </div>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  {userRole === 'auditor' && 'Inspect verified technical controls, four-eyes evidence lockers, deterministic scoping rationales, and generate compliance dossiers.'}
-                  {userRole === 'tenant_admin' && 'Manage organization identity, enforce four-eyes approval policies, monitor team memberships, and audit global activity.'}
-                  {(userRole === 'compliance_manager' || userRole === 'security_manager') && 'Track framework readiness, process four-eyes evidence reviews, dispatch supplier questionnaires, and synchronize risks.'}
-                  {userRole === 'privacy_manager' && 'Maintain GDPR Article 30 ROPA activities, evaluate Schrems II international transfers, and verify Article 28 DPA execution.'}
-                  {userRole === 'ai_governance_manager' && 'Classify AI model risk tiers (Annex III), enforce prohibited practice guardrails, and compile Annex IV technical documentation.'}
-                  {userRole === 'contributor' && 'Fulfill assigned evidence requests, answer control audit questions, and view feedback notes from compliance reviewers.'}
-                  {!['auditor', 'tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'].includes(userRole) && 'Materialized compliance health metrics verified across live regulatory registers.'}
-                </p>
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {userRole === 'auditor' ? (
-                  <>
-                    <button
-                      onClick={() => handleRequestExport('framework_soc2_dossier')}
-                      disabled={loadingAction === 'export_framework_soc2_dossier'}
-                      className="btn-success"
-                    >
-                      📦 1-Click Audit Dossier (ZIP)
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('applicability_review')}
-                      className="btn-secondary"
-                    >
-                      🔍 Inspect Scoping Rationale
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => setActiveTab('frameworks')}
-                      className="btn-success"
-                    >
-                      🚀 Framework Wizard
-                    </button>
-                    <button
-                      onClick={handleRecalculateMetrics}
-                      disabled={loadingAction === 'metrics'}
-                      className="btn-primary"
-                    >
-                      {loadingAction === 'metrics' ? 'Calculating...' : '🔄 Re-calculate Live Metrics'}
-                    </button>
-                  </>
-                )}
-              </div>
-            </header>
+            {/* Standardized Dynamic Role Header */}
+            <UIPageHeader
+              title={
+                userRole === 'auditor'
+                  ? 'Auditor Assurance & Readiness Workspace'
+                  : userRole === 'tenant_admin'
+                  ? 'Enterprise Administration & Health Posture'
+                  : userRole === 'compliance_manager' || userRole === 'security_manager'
+                  ? 'Continuous Compliance & Governance Operations'
+                  : userRole === 'privacy_manager'
+                  ? 'Data Protection & Privacy Governance Hub'
+                  : userRole === 'ai_governance_manager'
+                  ? 'EU AI Act Compliance & Model Governance Hub'
+                  : userRole === 'contributor'
+                  ? 'Compliance Action Inbox & Assigned Tasks'
+                  : 'Compliance & Governance Overview'
+              }
+              description={
+                userRole === 'auditor'
+                  ? 'Inspect verified technical controls, four-eyes evidence lockers, deterministic scoping rationales, and generate compliance dossiers.'
+                  : userRole === 'tenant_admin'
+                  ? 'Manage organization identity, enforce four-eyes approval policies, monitor team memberships, and audit global activity.'
+                  : userRole === 'compliance_manager' || userRole === 'security_manager'
+                  ? 'Track framework readiness, process four-eyes evidence reviews, dispatch supplier questionnaires, and synchronize risks.'
+                  : userRole === 'privacy_manager'
+                  ? 'Maintain GDPR Article 30 ROPA activities, evaluate Schrems II international transfers, and verify Article 28 DPA execution.'
+                  : userRole === 'ai_governance_manager'
+                  ? 'Classify AI model risk tiers (Annex III), enforce prohibited practice guardrails, and compile Annex IV technical documentation.'
+                  : userRole === 'contributor'
+                  ? 'Fulfill assigned evidence requests, answer control audit questions, and view feedback notes from compliance reviewers.'
+                  : 'Materialized compliance health metrics verified across live regulatory registers.'
+              }
+              badge={
+                <UIBadge variant={userRole === 'auditor' ? 'review' : 'compliant'}>
+                  {userRole === 'auditor' ? 'Read-Only Assurance Mode' : `${userRole?.replace('_', ' ')} Mode`}
+                </UIBadge>
+              }
+              primaryAction={
+                userRole === 'auditor'
+                  ? {
+                      label: '1-Click Audit Dossier (ZIP)',
+                      icon: '📦',
+                      onClick: () => handleRequestExport('framework_soc2_dossier'),
+                      loading: loadingAction === 'export_framework_soc2_dossier',
+                      variant: 'success',
+                    }
+                  : {
+                      label: 'Re-calculate Live Metrics',
+                      icon: '🔄',
+                      onClick: handleRecalculateMetrics,
+                      loading: loadingAction === 'metrics',
+                      variant: 'primary',
+                    }
+              }
+              secondaryActions={
+                userRole === 'auditor'
+                  ? [
+                      {
+                        label: 'Inspect Scoping Rationale',
+                        icon: '🔍',
+                        onClick: () => setActiveTab('applicability_review'),
+                        variant: 'secondary',
+                      },
+                    ]
+                  : [
+                      {
+                        label: 'Framework Wizard',
+                        icon: '🚀',
+                        onClick: () => setActiveTab('frameworks'),
+                        variant: 'secondary',
+                      },
+                    ]
+              }
+            />
 
             {/* 1. DRATA-STYLE COMPLIANCE OVERVIEW WIDGET */}
             <ComplianceOverviewCards
@@ -1090,19 +1100,16 @@ export default function DashboardPage() {
         {/* TAB 2: UNIFIED CONTROLS */}
         {activeTab === 'controls' && (
           <div>
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <div>
-                <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-                  Unified Controls Catalog
-                </h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Tenant-adopted technical, organizational, and AI governance controls.
-                </p>
-              </div>
-              <button onClick={() => setCreateControlModalOpen(true)} className="btn-success">
-                + Custom Control
-              </button>
-            </header>
+            <UIPageHeader
+              title="Unified Controls Catalog"
+              description="Tenant-adopted technical, organizational, and AI governance controls with deterministic framework mappings."
+              primaryAction={{
+                label: '+ Custom Control',
+                icon: '🛡️',
+                onClick: () => setCreateControlModalOpen(true),
+                variant: 'success',
+              }}
+            />
 
             {/* Framework Adoption & Instantiation Deck */}
             <div className="card-modern" style={{ marginBottom: '24px' }}>
@@ -1234,14 +1241,15 @@ export default function DashboardPage() {
         {/* TAB 3: EVIDENCE INBOX */}
         {activeTab === 'evidence' && (
           <div>
-            <header style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-                Evidence Review & Four-Eyes Queue
-              </h1>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Privileged approval workflows. Direct client status jumps are blocked by security rules.
-              </p>
-            </header>
+            <UIPageHeader
+              title="Evidence Review & Four-Eyes Queue"
+              description="Privileged verification workflows with SHA-256 integrity checks. Direct client status jumps are blocked by security rules."
+              badge={
+                <UIBadge variant={evidenceList.filter((e) => e.status === 'in_review').length > 0 ? 'warning' : 'compliant'}>
+                  {evidenceList.filter((e) => e.status === 'in_review').length} Awaiting Four-Eyes Review
+                </UIBadge>
+              }
+            />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {evidenceList.length === 0 ? (

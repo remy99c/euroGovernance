@@ -17,6 +17,9 @@ import {
 import { db, functions } from '../lib/firebase';
 import { collection, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { UIPageHeader } from './components/ui-page-header';
+import { UIStatCard } from './components/ui-stat-card';
+import { UIBadge } from './components/ui-badge';
 
 interface CertificationsManagerProps {
   tenantId: string;
@@ -265,90 +268,83 @@ export function CertificationsManager({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', color: '#f1f5f9' }}>
-      {/* Top Banner & Assurance KPI Matrix */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', color: 'var(--text-primary)' }}>
+      {/* 1. Reusable Standardized Page Header */}
+      <UIPageHeader
+        title="Vendor Certifications & Continuous Assurance"
+        description="Track accredited certifications, SOC 2 Type II reports, surveillance audit calendars, and processor compliance standing."
+        badge={
+          <UIBadge
+            variant={
+              riskSummary.overallAssuranceRiskLevel === 'critical'
+                ? 'critical'
+                : riskSummary.overallAssuranceRiskLevel === 'high'
+                ? 'warning'
+                : 'compliant'
+            }
+          >
+            {riskSummary.overallAssuranceRiskLevel.toUpperCase()} RISK
+          </UIBadge>
+        }
+        primaryAction={
+          canMutate
+            ? {
+                label: '+ Register Certification',
+                icon: '📜',
+                onClick: () => {
+                  setSelectedCert(null);
+                  setIsCreating(true);
+                },
+                variant: 'primary',
+              }
+            : undefined
+        }
+        secondaryActions={[
+          {
+            label: 'Export Master Register',
+            icon: '📦',
+            onClick: handleTriggerExport,
+            variant: 'secondary',
+          },
+        ]}
+      />
+
+      {/* 2. Standardized KPI Stat Grid */}
       <div
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '1rem',
+          gap: '14px',
         }}
       >
-        <div style={{ background: '#1e293b', padding: '1.25rem', borderRadius: '0.5rem', border: '1px solid #334155' }}>
-          <div style={{ fontSize: '0.85rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Total Certifications
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#38bdf8', marginTop: '0.25rem' }}>
-            {certifications.length}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.25rem' }}>
-            Accredited standards & audit reports
-          </div>
-        </div>
+        <UIStatCard
+          label="Total Certifications"
+          value={certifications.length}
+          subtext="Accredited standards & audit reports"
+          valueColor="var(--accent-primary)"
+        />
 
-        <div style={{ background: '#1e293b', padding: '1.25rem', borderRadius: '0.5rem', border: '1px solid #334155' }}>
-          <div style={{ fontSize: '0.85rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Active Valid
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#4ade80', marginTop: '0.25rem' }}>
-            {certifications.filter((c) => c.status === 'active_valid').length}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.25rem' }}>
-            In good standing & compliant
-          </div>
-        </div>
+        <UIStatCard
+          label="Active Valid"
+          value={certifications.filter((c) => c.status === 'active_valid').length}
+          subtext="In good standing & compliant"
+          valueColor="var(--status-compliant-fg)"
+          progressPercentage={certifications.length > 0 ? (certifications.filter((c) => c.status === 'active_valid').length / certifications.length) * 100 : 100}
+        />
 
-        <div style={{ background: '#1e293b', padding: '1.25rem', borderRadius: '0.5rem', border: '1px solid #334155' }}>
-          <div style={{ fontSize: '0.85rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Expiring / Overdue
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#f87171', marginTop: '0.25rem' }}>
-            {riskSummary.expiredCount + riskSummary.expiringSoonCount}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.25rem' }}>
-            {riskSummary.expiredCount} expired · {riskSummary.expiringSoonCount} due &lt;60d
-          </div>
-        </div>
+        <UIStatCard
+          label="Expiring / Overdue"
+          value={riskSummary.expiredCount + riskSummary.expiringSoonCount}
+          subtext={`${riskSummary.expiredCount} expired · ${riskSummary.expiringSoonCount} due <60d`}
+          valueColor={riskSummary.expiredCount > 0 ? 'var(--status-critical-fg)' : 'var(--status-warning-fg)'}
+        />
 
-        <div style={{ background: '#1e293b', padding: '1.25rem', borderRadius: '0.5rem', border: '1px solid #334155' }}>
-          <div style={{ fontSize: '0.85rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Assurance Risk Level
-          </div>
-          <div
-            style={{
-              display: 'inline-block',
-              fontSize: '1.1rem',
-              fontWeight: 'bold',
-              marginTop: '0.5rem',
-              padding: '0.25rem 0.75rem',
-              borderRadius: '0.375rem',
-              background:
-                riskSummary.overallAssuranceRiskLevel === 'critical'
-                  ? 'rgba(239, 68, 68, 0.2)'
-                  : riskSummary.overallAssuranceRiskLevel === 'high'
-                  ? 'rgba(249, 115, 22, 0.2)'
-                  : 'rgba(34, 197, 94, 0.2)',
-              color:
-                riskSummary.overallAssuranceRiskLevel === 'critical'
-                  ? '#ef4444'
-                  : riskSummary.overallAssuranceRiskLevel === 'high'
-                  ? '#f97316'
-                  : '#22c55e',
-              border: `1px solid ${
-                riskSummary.overallAssuranceRiskLevel === 'critical'
-                  ? '#ef4444'
-                  : riskSummary.overallAssuranceRiskLevel === 'high'
-                  ? '#f97316'
-                  : '#22c55e'
-              }`,
-            }}
-          >
-            {riskSummary.overallAssuranceRiskLevel.toUpperCase()}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.25rem' }}>
-            {riskSummary.flags.length} derived governance flags
-          </div>
-        </div>
+        <UIStatCard
+          label="Governance Flags"
+          value={riskSummary.flags.length}
+          subtext="Audit non-conformities & gaps"
+          valueColor={riskSummary.flags.length > 0 ? 'var(--status-warning-fg)' : 'var(--text-muted)'}
+        />
       </div>
 
       {/* Action Header & Notice */}
