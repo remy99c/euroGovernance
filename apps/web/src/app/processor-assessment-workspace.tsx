@@ -12,6 +12,9 @@ import {
   evaluateProcessorAssessmentRiskFlags,
   ExportType,
 } from '@eurogovernance/shared-types';
+import { UIPageHeader } from './components/ui-page-header';
+import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
+import { UIBadge } from './components/ui-badge';
 
 export interface ProcessorAssessmentWorkspaceProps {
   tenantId: string;
@@ -251,89 +254,69 @@ export function ProcessorAssessmentWorkspace({
   };
 
   return (
-    <div style={{ padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#0f172a' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 700, margin: '0 0 6px 0', color: '#1e293b' }}>
-            Processor & Vendor Assessment Questionnaires
-          </h1>
-          <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
-            Statutory Article 28 pre-contractual due diligence, periodic recurring assurance reviews, and external security evaluations.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            onClick={() => onRequestExport && onRequestExport('processor_assessment_report')}
-            style={{
-              padding: '8px 14px',
-              fontSize: '13px',
-              fontWeight: 600,
-              backgroundColor: '#f1f5f9',
-              color: '#334155',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              cursor: 'pointer',
-            }}
-          >
-            📊 Export Assessment Report
-          </button>
-          <button
-            onClick={() => onRequestExport && onRequestExport('processor_assessment_summary_matrix')}
-            style={{
-              padding: '8px 14px',
-              fontSize: '13px',
-              fontWeight: 600,
-              backgroundColor: '#f1f5f9',
-              color: '#334155',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              cursor: 'pointer',
-            }}
-          >
-            📑 Export Due Diligence Matrix
-          </button>
-          <button
-            onClick={() => setIsCreateModalOpen(true)}
-            style={{
-              padding: '8px 16px',
-              fontSize: '13px',
-              fontWeight: 600,
-              backgroundColor: '#0284c7',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-            }}
-          >
-            + New Assessment Questionnaire
-          </button>
-        </div>
-      </div>
+    <div style={{ color: 'var(--text-primary)' }}>
+      {/* 1. Standardized Page Header */}
+      <UIPageHeader
+        title="Processor Assessment Questionnaires"
+        description="Statutory Article 28 pre-contractual due diligence, periodic recurring assurance reviews, and external vendor risk evaluations."
+        primaryAction={{
+          label: '+ New Assessment',
+          icon: '📋',
+          onClick: () => setIsCreateModalOpen(true),
+          variant: 'primary',
+        }}
+        secondaryActions={[
+          {
+            label: 'Export Assessment Report',
+            icon: '📊',
+            onClick: () => onRequestExport && onRequestExport('processor_assessment_report'),
+            variant: 'secondary',
+          },
+          {
+            label: 'Due Diligence Matrix',
+            icon: '📑',
+            onClick: () => onRequestExport && onRequestExport('processor_assessment_summary_matrix'),
+            variant: 'secondary',
+          },
+        ]}
+      />
 
-      {/* Metric Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
-        <div style={{ padding: '16px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Total Assessments</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '4px', color: '#0f172a' }}>{metrics.total}</div>
-        </div>
-        <div style={{ padding: '16px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: '#16a34a', textTransform: 'uppercase' }}>Completed & Accepted</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '4px', color: '#16a34a' }}>{metrics.completed}</div>
-        </div>
-        <div style={{ padding: '16px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: '#d97706', textTransform: 'uppercase' }}>Under Review</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '4px', color: '#d97706' }}>{metrics.underReview}</div>
-        </div>
-        <div style={{ padding: '16px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: '#dc2626', textTransform: 'uppercase' }}>Overdue / High Risk Gaps</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '4px', color: '#dc2626' }}>{metrics.overdueOrHighRisk}</div>
-        </div>
-        <div style={{ padding: '16px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: '#0284c7', textTransform: 'uppercase' }}>Avg Compliance Score</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '4px', color: '#0284c7' }}>{metrics.avgScore}%</div>
-        </div>
-      </div>
+      {/* 2. Standardized KPI Metric Grid */}
+      <UIStatGrid columns={5}>
+        <UIStatCard
+          label="Total Assessments"
+          value={metrics.total}
+          subtext="Questionnaires dispatched & logged"
+          valueColor="var(--accent-primary)"
+        />
+        <UIStatCard
+          label="Completed & Accepted"
+          value={metrics.completed}
+          subtext="Art. 28 assurance verified"
+          valueColor="var(--status-compliant-fg)"
+          progressPercentage={metrics.total > 0 ? (metrics.completed / metrics.total) * 100 : 100}
+        />
+        <UIStatCard
+          label="Under Review"
+          value={metrics.underReview}
+          subtext="Awaiting reviewer determination"
+          valueColor="var(--status-warning-fg)"
+        />
+        <UIStatCard
+          label="High Risk / Overdue"
+          value={metrics.overdueOrHighRisk}
+          subtext="Expiring or critical findings"
+          valueColor={metrics.overdueOrHighRisk > 0 ? 'var(--status-critical-fg)' : 'var(--text-muted)'}
+          zeroStateText="Zero overdue assessments"
+        />
+        <UIStatCard
+          label="Avg Compliance Score"
+          value={`${metrics.avgScore}%`}
+          subtext="Weighted vendor adherence"
+          valueColor="var(--text-primary)"
+          progressPercentage={metrics.avgScore}
+        />
+      </UIStatGrid>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', marginBottom: '20px' }}>
