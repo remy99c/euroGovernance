@@ -526,15 +526,65 @@ export default function DashboardPage() {
     { id: 'tenant_cloud_paris', name: 'Paris Cloud Solutions SAS' },
   ];
 
+  // Map activeTab to Top-Level Area
+  const getTopLevelArea = (tab: TabType): string => {
+    if (tab === 'overview') return 'home';
+    if (tab === 'coverage_dashboard') return 'executive';
+    if (['frameworks', 'applicability_review', 'controls'].includes(tab)) return 'frameworks';
+    if (['processor_hub', 'processor_assessments', 'processor_transfers', 'certifications', 'processor_assurance_inventory', 'processor_inventory'].includes(tab)) return 'third_parties';
+    if (tab === 'gdpr') return 'privacy';
+    if (tab === 'ai_systems') return 'ai_governance';
+    if (['evidence', 'risks_tasks'].includes(tab)) return 'operations';
+    if (tab === 'exports') return 'reports';
+    if (tab === 'members') return 'settings';
+    return 'home';
+  };
+
+  const activeTopArea = getTopLevelArea(activeTab);
+
+  // Top-Level Nav Definitions
+  const topNavAreas = [
+    { id: 'home', label: 'Home', icon: '🏠', defaultTab: 'overview' as TabType },
+    { id: 'executive', label: 'Executive', icon: '📊', defaultTab: 'coverage_dashboard' as TabType },
+    { id: 'frameworks', label: 'Frameworks', icon: '📐', defaultTab: 'frameworks' as TabType },
+    { id: 'third_parties', label: 'Third Parties', icon: '🛡️', defaultTab: 'processor_hub' as TabType },
+    { id: 'privacy', label: 'Privacy', icon: '⚖️', defaultTab: 'gdpr' as TabType },
+    { id: 'ai_governance', label: 'AI Governance', icon: '🤖', defaultTab: 'ai_systems' as TabType },
+    { id: 'operations', label: 'Operations', icon: '⚙️', defaultTab: 'evidence' as TabType },
+    { id: 'reports', label: 'Reports', icon: '📦', defaultTab: 'exports' as TabType },
+    { id: 'settings', label: 'Settings', icon: '👥', defaultTab: 'members' as TabType },
+  ];
+
+  // Local Subnavigation Mappings
+  const subNavMap: Record<string, { id: TabType; label: string }[]> = {
+    frameworks: [
+      { id: 'frameworks', label: 'Framework Wizard' },
+      { id: 'applicability_review', label: 'Scoping & Applicability' },
+      { id: 'controls', label: 'Unified Controls Catalog' },
+    ],
+    third_parties: [
+      { id: 'processor_hub', label: 'Processor Hub' },
+      { id: 'processor_assessments', label: 'Due Diligence Questionnaires' },
+      { id: 'processor_transfers', label: 'Transfer Impact (TIAs)' },
+      { id: 'certifications', label: 'Certifications & Assurance' },
+      { id: 'processor_assurance_inventory', label: 'Assurance Inventory' },
+      { id: 'processor_inventory', label: 'Processor Roster' },
+    ],
+    operations: [
+      { id: 'evidence', label: 'Evidence Repository' },
+      { id: 'risks_tasks', label: 'Risks & Tasks' },
+    ],
+  };
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-canvas)' }}>
-      {/* Sidebar Navigation */}
+    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--surface-l1-canvas)' }}>
+      {/* 1. SIMPLIFIED LIGHTWEIGHT SIDEBAR */}
       <aside
         style={{
-          width: '270px',
-          backgroundColor: 'var(--bg-surface)',
-          borderRight: '1px solid var(--border-subtle)',
-          padding: '24px 16px',
+          width: '240px',
+          backgroundColor: 'var(--surface-l2-card)',
+          borderRight: '1px solid var(--border-default)',
+          padding: '20px 14px',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
@@ -543,11 +593,11 @@ export default function DashboardPage() {
       >
         <div>
           {/* Logo & Brand Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', padding: '0 8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', padding: '0 6px' }}>
             <div
               style={{
-                width: '36px',
-                height: '36px',
+                width: '32px',
+                height: '32px',
                 borderRadius: '8px',
                 backgroundColor: 'var(--accent-primary)',
                 display: 'flex',
@@ -555,34 +605,39 @@ export default function DashboardPage() {
                 justifyContent: 'center',
                 fontWeight: 800,
                 color: '#ffffff',
-                fontSize: '15px',
-                boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
+                fontSize: '13px',
+                boxShadow: '0 0 12px var(--accent-primary-glow)',
               }}
             >
               EG
             </div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '15px', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
+              <div style={{ fontWeight: 700, fontSize: '14px', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
                 euroGovernance
               </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Sovereign GRC Operating System</div>
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Sovereign GRC Operating System</div>
             </div>
           </div>
 
           {/* Tenant Context Selector */}
-          <div style={{ marginBottom: '20px', padding: '0 6px' }}>
-            <label style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Active Tenant Context
-            </label>
+          <div style={{ marginBottom: '20px', padding: '0 4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Tenant Context
+              </span>
+              <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '4px', backgroundColor: 'var(--surface-subtle)', color: 'var(--text-muted)' }}>
+                FRA-WEST3
+              </span>
+            </div>
             <select
               value={tenantId}
               onChange={(e) => setTenantId(e.target.value)}
               className="input-modern"
               style={{
                 width: '100%',
-                marginTop: '6px',
-                fontSize: '12px',
+                fontSize: '11.5px',
                 fontWeight: 600,
+                padding: '6px 8px',
               }}
             >
               {availableTenants.map((t: { id: string; name: string }) => (
@@ -593,121 +648,61 @@ export default function DashboardPage() {
             </select>
           </div>
 
-          {/* Grouped 5-Hub Navigation */}
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {[
-              {
-                category: '📊 EXECUTIVE & POSTURE',
-                items: [
-                  { id: 'overview', label: 'Executive Overview' },
-                  { id: 'coverage_dashboard', label: 'Framework Coverage' },
-                ],
-              },
-              {
-                category: '📐 FRAMEWORKS & CONTROLS',
-                items: [
-                  { id: 'frameworks', label: 'Framework Wizard' },
-                  { id: 'applicability_review', label: 'Scoping & Applicability' },
-                  { id: 'controls', label: 'Unified Controls Catalog' },
-                ],
-              },
-              {
-                category: '🛡️ VENDORS & THIRD PARTIES',
-                items: [
-                  { id: 'processor_hub', label: 'Processor Hub' },
-                  { id: 'processor_assessments', label: 'Due Diligence Questionnaires' },
-                  { id: 'processor_transfers', label: 'Transfer Impact (TIAs)' },
-                  { id: 'certifications', label: 'Certifications & Assurance' },
-                  { id: 'processor_assurance_inventory', label: 'Assurance Inventory' },
-                  { id: 'processor_inventory', label: 'Processor Roster' },
-                ],
-              },
-              {
-                category: '⚖️ STATUTORY REGISTERS',
-                items: [
-                  { id: 'gdpr', label: 'GDPR & Privacy (ROPA)' },
-                  { id: 'ai_systems', label: 'EU AI Act Register' },
-                ],
-              },
-              {
-                category: '⚙️ OPERATIONS & AUDIT',
-                items: [
-                  { id: 'evidence', label: 'Evidence Repository' },
-                  { id: 'risks_tasks', label: 'Risks & Tasks' },
-                  { id: 'exports', label: 'Compliance Exports' },
-                  { id: 'members', label: 'Team & RBAC' },
-                ],
-              },
-            ].map((section) => (
-              <div key={section.category}>
-                <div
+          {/* 9 Scannable Top-Level Navigation Links */}
+          <nav style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            {topNavAreas.map((area) => {
+              const isSelected = activeTopArea === area.id;
+              return (
+                <button
+                  key={area.id}
+                  onClick={() => setActiveTab(area.defaultTab)}
                   style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    color: 'var(--text-muted)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                    padding: '0 8px 6px 8px',
+                    textAlign: 'left',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: isSelected ? 700 : 500,
+                    backgroundColor: isSelected ? 'var(--accent-primary-subtle)' : 'transparent',
+                    color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    border: isSelected ? '1px solid var(--accent-primary)' : '1px solid transparent',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    transition: 'background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--surface-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
                   }}
                 >
-                  {section.category}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {section.items.map((tab) => {
-                    const isSelected = activeTab === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id as TabType)}
-                        style={{
-                          textAlign: 'left',
-                          padding: '7px 12px',
-                          borderRadius: '6px',
-                          fontSize: '12.5px',
-                          fontWeight: isSelected ? 600 : 400,
-                          backgroundColor: isSelected ? 'var(--accent-primary)' : 'transparent',
-                          color: isSelected ? '#ffffff' : 'var(--text-secondary)',
-                          border: 'none',
-                          cursor: 'pointer',
-                          transition: 'background-color 0.15s ease, color 0.15s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
-                        }}
-                      >
-                        <span>{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+                  <span style={{ fontSize: '15px' }}>{area.icon}</span>
+                  <span>{area.label}</span>
+                </button>
+              );
+            })}
           </nav>
         </div>
 
-        {/* RBAC Persona Switcher (Dev Mode) */}
-        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '14px', paddingLeft: '4px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+        {/* Role Context & Dev Persona Switcher */}
+        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', paddingLeft: '2px' }}>
+          <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Role Context:</span>
-            <span style={{ fontWeight: 700, color: 'var(--accent-primary)', textTransform: 'capitalize' }}>
+            <span style={{ fontWeight: 700, color: 'var(--accent-primary)', textTransform: 'capitalize', fontSize: '11px' }}>
               {userRole?.replace('_', ' ')}
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '3px' }}>
             {[
               { id: 'tenant_admin', label: 'Admin' },
               { id: 'compliance_manager', label: 'Compliance' },
               { id: 'security_manager', label: 'Security' },
-              { id: 'privacy_manager', label: 'Privacy/DPO' },
+              { id: 'privacy_manager', label: 'Privacy' },
               { id: 'ai_governance_manager', label: 'AI Lead' },
               { id: 'auditor', label: 'Auditor' },
-              { id: 'contributor', label: 'Contributor' },
+              { id: 'contributor', label: 'Contrib' },
             ].map((r) => (
               <button
                 key={r.id}
@@ -715,11 +710,11 @@ export default function DashboardPage() {
                 style={{
                   fontSize: '9.5px',
                   fontWeight: userRole === r.id ? 700 : 500,
-                  padding: '5px 2px',
+                  padding: '4px 2px',
                   textAlign: 'center',
                   borderRadius: '4px',
-                  border: '1px solid var(--border-subtle)',
-                  backgroundColor: userRole === r.id ? 'var(--accent-primary)' : 'var(--bg-canvas-subtle)',
+                  border: '1px solid var(--border-default)',
+                  backgroundColor: userRole === r.id ? 'var(--accent-primary)' : 'var(--surface-subtle)',
                   color: userRole === r.id ? '#ffffff' : 'var(--text-secondary)',
                   cursor: 'pointer',
                   transition: 'background-color 0.15s ease',
@@ -732,31 +727,121 @@ export default function DashboardPage() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <main style={{ flex: 1, padding: '32px 40px', overflowY: 'auto' }}>
-        {/* Action Notice Banner */}
-        {actionNotice && (
-          <div
-            style={{
-              padding: '12px 18px',
-              backgroundColor: 'var(--bg-surface-elevated)',
-              border: '1px solid var(--border-focus)',
-              borderRadius: '8px',
-              marginBottom: '24px',
-              fontSize: '13px',
-              fontWeight: 500,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
-            }}
-          >
-            <span>{actionNotice}</span>
-            <button onClick={() => setActionNotice(null)} style={{ color: 'var(--text-muted)', fontSize: '16px' }}>
-              ✕
+      {/* 2. MAIN APPLICATION CONTENT AREA */}
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+        {/* TOPBAR / LOCAL SUBNAVIGATION HEADER */}
+        <div
+          style={{
+            padding: '16px 36px',
+            backgroundColor: 'var(--surface-l2-card)',
+            borderBottom: '1px solid var(--border-default)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            position: 'sticky',
+            top: 0,
+            zIndex: 20,
+          }}
+        >
+          {/* Breadcrumb Path & Subnavigation */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              <span>{topNavAreas.find((a) => a.id === activeTopArea)?.icon}</span>
+              <span>{topNavAreas.find((a) => a.id === activeTopArea)?.label}</span>
+              {subNavMap[activeTopArea] && (
+                <>
+                  <span style={{ color: 'var(--text-muted)' }}>/</span>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
+                    {subNavMap[activeTopArea]?.find((s) => s.id === activeTab)?.label || ''}
+                  </span>
+                </>
+              )}
+            </div>
+
+            {/* Local Subnavigation Pills */}
+            {subNavMap[activeTopArea] && (
+              <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--surface-subtle)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                {subNavMap[activeTopArea].map((subItem) => {
+                  const isSubActive = activeTab === subItem.id;
+                  return (
+                    <button
+                      key={subItem.id}
+                      onClick={() => setActiveTab(subItem.id)}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '5px',
+                        fontSize: '11.5px',
+                        fontWeight: isSubActive ? 700 : 500,
+                        backgroundColor: isSubActive ? 'var(--surface-l3-elevated)' : 'transparent',
+                        color: isSubActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                        border: isSubActive ? '1px solid var(--border-default)' : '1px solid transparent',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {subItem.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Topbar Fast Actions */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                backgroundColor: 'var(--surface-subtle)',
+                border: '1px solid var(--border-default)',
+                borderRadius: '6px',
+                fontSize: '12px',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <span>🔍 Search</span>
+              <kbd style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '3px', backgroundColor: 'var(--surface-l2-card)', border: '1px solid var(--border-subtle)' }}>
+                ⌘K
+              </kbd>
+            </div>
+
+            <button
+              onClick={() => handleRequestExport('tenant_evidence_package_zip')}
+              className="btn-secondary"
+              style={{ fontSize: '12px', padding: '6px 12px' }}
+            >
+              📦 Quick Export
             </button>
           </div>
-        )}
+        </div>
+
+        {/* Viewport Content */}
+        <div style={{ padding: '28px 36px', flex: 1 }}>
+          {/* Action Notice Banner */}
+          {actionNotice && (
+            <div
+              style={{
+                padding: '12px 18px',
+                backgroundColor: 'var(--surface-l3-elevated)',
+                border: '1px solid var(--border-focus)',
+                borderRadius: '8px',
+                marginBottom: '24px',
+                fontSize: '13px',
+                fontWeight: 500,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                boxShadow: 'var(--shadow-md)',
+              }}
+            >
+              <span>{actionNotice}</span>
+              <button onClick={() => setActionNotice(null)} style={{ color: 'var(--text-muted)', fontSize: '16px' }}>
+                ✕
+              </button>
+            </div>
+          )}
 
         {/* TAB 1: EXECUTIVE & ROLE-TAILORED OVERVIEW */}
         {activeTab === 'overview' && (
@@ -1640,6 +1725,7 @@ export default function DashboardPage() {
         {activeTab === 'applicability_review' && (
           <ApplicabilityReviewTab tenantId={tenantId} userRole={userRole} />
         )}
+        </div>
       </main>
 
       {/* =========================================================================
