@@ -319,4 +319,5 @@ export {
   linkAssessmentToVendorOrProcessor,
   syncAssessmentRisksToRegister,
   linkAssessmentToControls,
+  checkThirdPartyAssessmentDeadlines,
 } from './handlers/third-party-assessments.js';

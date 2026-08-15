@@ -84,7 +84,16 @@ export type NotificationType =
   | 'processor_assessment_revision_requested'
   | 'processor_assessment_accepted'
   | 'processor_assessment_rejected'
-  | 'processor_assessment_recurring_due';
+  | 'processor_assessment_recurring_due'
+  | 'assessment_request_sent'
+  | 'assessment_request_opened'
+  | 'assessment_nearing_due_date'
+  | 'assessment_response_overdue'
+  | 'assessment_submitted_awaiting_review'
+  | 'assessment_review_accepted'
+  | 'assessment_review_rejected'
+  | 'assessment_revision_requested'
+  | 'assessment_recurring_cycle_approaching';
 
 /**
  * Immutable Audit Log Event (/tenants/{tenantId}/audit_logs/{logId})
@@ -142,6 +151,7 @@ export interface Notification {
   linkUrl?: string | null;
   sourceEntityType?: string | null;
   sourceEntityId?: string | null;
+  deduplicationKey?: string | null;
   isRead: boolean;
   readAt: string | null;
   createdAt: string;

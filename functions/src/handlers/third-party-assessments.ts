@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
+import { createNotification } from '../lib/notifications.js';
 import {
   ThirdPartyAssessmentRequest,
   AssessmentTargetType,
@@ -20,6 +21,7 @@ import {
   Risk,
   RecurringAssessmentSchedule,
   DynamicQuestionnaireSection,
+  NotificationType,
   analyzeSubmissionRiskPosture,
   validateThirdPartyAssessmentRequest,
   isValidRequestStateTransition,
@@ -455,6 +457,20 @@ export const sendThirdPartyAssessmentRequest = onCall<SendThirdPartyAssessmentRe
       workflowContext: 'third_party_assessment_dispatch',
     });
 
+    const notifRecipient = reqData.ownerUserId || authContext.userId;
+    await createNotification({
+      tenantId,
+      recipientId: notifRecipient,
+      title: `Assessment Dispatched: ${reqData.thirdPartyName}`,
+      message: `Questionnaire invitation dispatched to ${reqData.respondent.name} (${reqData.respondent.email}).`,
+      type: 'assessment_request_sent',
+      priority: 'low',
+      linkUrl: `/assessments`,
+      sourceEntityType: 'processor_assessment',
+      sourceEntityId: requestId,
+      deduplicationKey: `notif_sent_${requestId}`,
+    });
+
     const accessUrl = `https://app.eurogovernance.eu/portal/assessments/${requestId}?tokenId=${tokenId}&token=${rawToken}`;
 
     return {
@@ -802,6 +818,27 @@ export const reviewThirdPartyAssessmentSubmission = onCall<ReviewThirdPartyAsses
       },
       source: 'cloud_function',
       workflowContext: 'third_party_assessment_review',
+    });
+
+    const notifRecipient = reqData.ownerUserId || authContext.userId;
+    const reviewNotifType: NotificationType =
+      decision === 'accept'
+        ? 'assessment_review_accepted'
+        : decision === 'reject'
+        ? 'assessment_review_rejected'
+        : 'assessment_revision_requested';
+
+    await createNotification({
+      tenantId,
+      recipientId: notifRecipient,
+      title: `Assessment Review ${decision.toUpperCase()}: ${reqData.thirdPartyName}`,
+      message: `Review decision '${decision}' recorded by ${authContext.email}. Risk tier: ${determinedRiskTier.toUpperCase()}.`,
+      type: reviewNotifType,
+      priority: decision === 'accept' ? 'medium' : 'high',
+      linkUrl: `/assessments`,
+      sourceEntityType: 'processor_assessment',
+      sourceEntityId: requestId,
+      deduplicationKey: `notif_review_${reviewId}`,
     });
 
     return {
@@ -1331,6 +1368,139 @@ export const linkAssessmentToControls = onCall<LinkAssessmentToControlsInput>(
       requestId,
       scheduleId,
       linkedControlIds: resultingControlIds,
+    };
+  }
+);
+
+// -----------------------------------------------------------------------------
+// 8. ASSESSMENT DEADLINES & RECURRING REMINDERS CHECK JOB (Scheduled / OnCall)
+// -----------------------------------------------------------------------------
+
+export interface CheckThirdPartyAssessmentDeadlinesInput {
+  tenantId: string;
+  simulatedNowIso?: string;
+}
+
+export const checkThirdPartyAssessmentDeadlines = onCall<CheckThirdPartyAssessmentDeadlinesInput>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const { tenantId, simulatedNowIso } = data;
+    if (!tenantId) {
+      throw new HttpsError('invalid-argument', 'tenantId is required.');
+    }
+
+    await requireTenantMember(request, tenantId, [
+      'tenant_admin',
+      'compliance_manager',
+      'privacy_manager',
+      'security_manager',
+      'approver',
+    ]);
+
+    const now = simulatedNowIso ? new Date(simulatedNowIso) : new Date();
+    const nowTime = now.getTime();
+    const nowIso = now.toISOString();
+
+    let nearingDueDateCount = 0;
+    let overdueCount = 0;
+    let recurringCycleApproachingCount = 0;
+
+    // 1. Check Active Assessment Requests
+    const activeStatuses: string[] = ['sent', 'opened', 'in_progress'];
+    const reqsSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('assessment_requests')
+      .where('status', 'in', activeStatuses)
+      .get();
+
+    for (const doc of reqsSnap.docs) {
+      const req = doc.data() as ThirdPartyAssessmentRequest;
+      if (!req.dueDate) continue;
+
+      const dueTime = new Date(req.dueDate).getTime();
+      const diffDays = Math.ceil((dueTime - nowTime) / (1000 * 60 * 60 * 24));
+      const recipientId = req.ownerUserId || auth.uid;
+
+      if (nowTime > dueTime) {
+        // Overdue Response
+        overdueCount++;
+        await createNotification({
+          tenantId,
+          recipientId,
+          title: `Overdue Assessment Response: ${req.thirdPartyName}`,
+          message: `Assessment '${req.title}' for ${req.thirdPartyName} was due on ${req.dueDate.substring(0, 10)} and is overdue.`,
+          type: 'assessment_response_overdue',
+          priority: 'urgent',
+          linkUrl: `/assessments`,
+          sourceEntityType: 'processor_assessment',
+          sourceEntityId: req.id,
+          deduplicationKey: `notif_overdue_${req.id}_${req.dueDate.substring(0, 10)}`,
+        });
+      } else if (diffDays <= 3 && diffDays >= 0) {
+        // Nearing Due Date (within 3 days)
+        nearingDueDateCount++;
+        await createNotification({
+          tenantId,
+          recipientId,
+          title: `Assessment Due Soon: ${req.thirdPartyName}`,
+          message: `Assessment '${req.title}' for ${req.thirdPartyName} is due in ${diffDays} day(s) (${req.dueDate.substring(0, 10)}).`,
+          type: 'assessment_nearing_due_date',
+          priority: 'high',
+          linkUrl: `/assessments`,
+          sourceEntityType: 'processor_assessment',
+          sourceEntityId: req.id,
+          deduplicationKey: `notif_due_soon_${req.id}_${req.dueDate.substring(0, 10)}`,
+        });
+      }
+    }
+
+    // 2. Check Recurring Assessment Schedules
+    const schedsSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('recurring_schedules')
+      .where('status', '==', 'active')
+      .get();
+
+    for (const doc of schedsSnap.docs) {
+      const sched = doc.data() as RecurringAssessmentSchedule;
+      if (!sched.nextAssessmentDueDate) continue;
+
+      const dueTime = new Date(sched.nextAssessmentDueDate).getTime();
+      const leadDays = sched.leadTimeDays || 30;
+      const diffDays = Math.ceil((dueTime - nowTime) / (1000 * 60 * 60 * 24));
+      const recipientId = sched.ownerUserId || auth.uid;
+
+      if (diffDays <= leadDays && diffDays >= 0) {
+        recurringCycleApproachingCount++;
+        await createNotification({
+          tenantId,
+          recipientId,
+          title: `Recurring Assessment Approaching: ${sched.thirdPartyName}`,
+          message: `Recurring ${sched.cadence} assessment for ${sched.thirdPartyName} is approaching (due on ${sched.nextAssessmentDueDate.substring(0, 10)}).`,
+          type: 'assessment_recurring_cycle_approaching',
+          priority: 'medium',
+          linkUrl: `/assessments`,
+          sourceEntityType: 'recurring_schedule',
+          sourceEntityId: sched.id,
+          deduplicationKey: `notif_recur_${sched.id}_${sched.nextAssessmentDueDate.substring(0, 10)}`,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      timestamp: nowIso,
+      checkedRequestsCount: reqsSnap.docs.length,
+      checkedSchedulesCount: schedsSnap.docs.length,
+      nearingDueDateCount,
+      overdueCount,
+      recurringCycleApproachingCount,
     };
   }
 );

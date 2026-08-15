@@ -273,7 +273,29 @@ export const validateAssessmentAccessToken = onCall<ValidateAssessmentAccessToke
     recipientName = reqData.respondent?.name || recipientName;
     recipientEmail = reqData.respondent?.email || recipientEmail;
     dueDate = reqData.dueDate || dueDate;
-    status = reqData.status;
+    if (reqData.status === 'sent') {
+      status = 'opened';
+      await reqRef.update({
+        status: 'opened',
+        openedAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      if (reqData.ownerUserId) {
+        await createNotification({
+          tenantId,
+          recipientId: reqData.ownerUserId,
+          title: `Assessment Questionnaire Opened: ${reqData.thirdPartyName}`,
+          message: `${tokenData.recipientName} (${tokenData.recipientEmail}) has opened the assessment questionnaire '${templateTitle}'.`,
+          type: 'assessment_request_opened',
+          priority: 'low',
+          linkUrl: `/assessments`,
+          sourceEntityType: 'processor_assessment',
+          sourceEntityId: requestId,
+          deduplicationKey: `notif_opened_${requestId}`,
+        });
+      }
+    }
 
     if (reqData.templateSnapshot?.sections) {
       sections = reqData.templateSnapshot.sections as unknown as DynamicQuestionnaireSection[];
