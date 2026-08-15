@@ -23,11 +23,11 @@
 
 ## 🧭 1. Executive Summary & Macro Cost Model
 
-`euroGovernance` is engineered entirely on a **serverless, event-driven, scale-to-zero** foundation. Unlike traditional enterprise GRC platforms that require permanently provisioned relational database instances (e.g. AWS RDS Aurora @ \$150–\$400/mo) and multi-node Kubernetes clusters (EKS/GKE @ \$200–\$600/mo baseline), `euroGovernance` incurs **zero idle cost**.
+`euroGovernance` is engineered entirely on a **serverless, event-driven, scale-to-zero** foundation. Unlike traditional enterprise GRC platforms that require permanently provisioned relational database instances (e.g. AWS RDS Aurora @ $150–$400/mo) and multi-node Kubernetes clusters (EKS/GKE @ $200–$600/mo baseline), `euroGovernance` incurs **zero idle cost**.
 
 ### Baseline Economics:
-- **Total Running Cost per Big Enterprise Tenant**: **\$5.00 – \$8.00 / month** (all features active).
-- **Marginal Cost per Additional Tenant at Scale**: **\$2.20 – \$3.50 / month** (due to shared container instances and CDN caching).
+- **Total Running Cost per Big Enterprise Tenant**: **$5.00 – $8.00 / month** (all features active).
+- **Marginal Cost per Additional Tenant at Scale**: **$2.20 – $3.50 / month** (due to shared container instances and CDN caching).
 - **Gross Margin on SaaS Pricing**: $>98\%$ at standard enterprise GRC seat pricing.
 
 ```mermaid
@@ -73,7 +73,7 @@ Understanding the precise mechanism of each charge is essential for maintaining 
 Firestore Cost = (Reads × Rate) + (Writes × Rate) + (Stored GiB × Rate) + (Index GiB × Rate)
 ```
 
-*Pricing in `europe-west3`: \$0.06 per 100k reads; \$0.18 per 100k writes; \$0.18 per GiB/mo storage.*
+*Pricing in `europe-west3`: $0.06 per 100k reads; $0.18 per 100k writes; $0.18 per GiB/mo storage.*
 
 #### Reads (The Primary Variable Driver)
 - **What triggers reads**:
@@ -84,7 +84,7 @@ Firestore Cost = (Reads × Rate) + (Writes × Rate) + (Stored GiB × Rate) + (In
 - **Why it is optimized in euroGovernance**:
   - Executive dashboards **do not** scan collection documents. Instead, they read **server-side materialized summary metrics** (`/summary_metrics/third_party_assessments`, `/summary_metrics/processors`, etc.), reducing a potential 5,000-read dashboard load to **1–3 document reads** ($O(1)$).
 - **Monthly Volume & Cost**:
-  - ~2,000,000 reads/mo $\to$ $(2,000,000 / 100,000) \times \$0.06 = \mathbf{\$1.20}$
+  - ~2,000,000 reads/mo $\to (2{,}000{,}000 / 100{,}000) \times 0.06 =$ **$1.20**
 
 #### Writes
 - **What triggers writes**:
@@ -93,14 +93,14 @@ Firestore Cost = (Reads × Rate) + (Writes × Rate) + (Stored GiB × Rate) + (In
   - Updating vendor and processor records upon review completion.
   - Incrementing materialized summary metrics and dispatching notification records.
 - **Monthly Volume & Cost**:
-  - ~25,000 writes/mo $\to$ $(25,000 / 100,000) \times \$0.18 = \mathbf{\$0.05}$
+  - ~25,000 writes/mo $\to (25{,}000 / 100{,}000) \times 0.18 =$ **$0.05**
 
 #### Stored Data & Indexes
 - **What triggers storage cost**:
   - Document JSON payloads plus composite indexes defined in `firestore.indexes.json`.
   - ~100,000 total documents $\times$ ~2 KB average size $\approx$ 200 MB + 50 MB index overhead = **0.25 GiB**.
 - **Monthly Volume & Cost**:
-  - $0.25\text{ GiB} \times \$0.18/\text{GiB} = \mathbf{\$0.05}$
+  - $0.25 \times 0.18 =$ **$0.05**
 
 ---
 
@@ -110,7 +110,7 @@ Firestore Cost = (Reads × Rate) + (Writes × Rate) + (Stored GiB × Rate) + (In
 Functions Cost = Invocations + (vCPU-seconds × vCPU-Rate) + (GiB-seconds × RAM-Rate)
 ```
 
-*Pricing in `europe-west3`: \$0.40 per 1M invocations; \$0.00002400 per vCPU-second; \$0.00000250 per GiB-second.*
+*Pricing in `europe-west3`: $0.40 per 1M invocations; $0.00002400 per vCPU-second; $0.00000250 per GiB-second.*
 
 #### Invocations & Execution Duration
 - **What triggers compute**:
@@ -121,10 +121,10 @@ Functions Cost = Invocations + (vCPU-seconds × vCPU-Rate) + (GiB-seconds × RAM
   - Standard RPC Handlers: 256 MB RAM / 0.25 vCPU (average duration: 150–250 ms).
   - Heavy Export Handlers: 512 MB RAM / 0.50 vCPU (average duration: 2,000–4,000 ms).
 - **Monthly Volume & Cost**:
-  - ~60,000 invocations/mo $\to \mathbf{\$0.02}$
-  - ~15,000 execution seconds $\times$ 0.25 vCPU $\approx$ 3,750 vCPU-seconds $\to \mathbf{\$0.09}$
-  - Daily cron sweeps (30 runs $\times$ 2s) $\to \mathbf{\$0.01}$
-  - **Subtotal**: $\mathbf{\$0.12 / \text{mo}}$
+  - ~60,000 invocations/mo $\to$ **$0.02**
+  - ~15,000 execution seconds $\times 0.25\text{ vCPU} \approx 3{,}750\text{ vCPU-seconds} \to$ **$0.09**
+  - Daily cron sweeps (30 runs $\times 2\text{s}$) $\to$ **$0.01**
+  - **Subtotal**: **$0.12 / mo**
 
 ---
 
@@ -134,17 +134,17 @@ Functions Cost = Invocations + (vCPU-seconds × vCPU-Rate) + (GiB-seconds × RAM
 Storage Cost = (Stored GiB × Rate) + (Class A Ops × Rate) + (Class B Ops × Rate) + (Egress GiB × Rate)
 ```
 
-*Pricing in `europe-west3`: \$0.023 per GiB/mo; \$0.05 per 10k Class A (writes); \$0.004 per 10k Class B (reads); \$0.12 per GiB egress.*
+*Pricing in `europe-west3`: $0.023 per GiB/mo; $0.05 per 10k Class A (writes); $0.004 per 10k Class B (reads); $0.12 per GiB egress.*
 
 #### Evidence & Artifact Storage
 - **What triggers storage**:
   - Vendor ISO 27001 certificates, SOC 2 Type II reports, TOMs specifications, penetration testing reports.
   - Compiled compliance audit packages and export ZIPs.
 - **Monthly Volume & Cost**:
-  - ~5 GiB active storage $\to 5 \times \$0.023 = \mathbf{\$0.12}$
-  - ~150 Class A upload operations + ~1,000 Class B download operations $\to \mathbf{\$0.01}$
-  - ~2 GiB downloaded evidence bandwidth $\to 2 \times \$0.12 = \mathbf{\$0.24}$
-  - **Subtotal**: $\mathbf{\$0.37 / \text{mo}}$
+  - ~5 GiB active storage $\to 5 \times 0.023 =$ **$0.12**
+  - ~150 Class A upload operations + ~1,000 Class B download operations $\to$ **$0.01**
+  - ~2 GiB downloaded evidence bandwidth $\to 2 \times 0.12 =$ **$0.24**
+  - **Subtotal**: **$0.37 / mo**
 
 ---
 
@@ -158,15 +158,15 @@ Storage Cost = (Stored GiB × Rate) + (Class A Ops × Rate) + (Class B Ops × Ra
 - **Resource Allocation**:
   - Single container instance auto-scaling on demand (average active compute: ~40–50 hours/month during peak European business hours 8:00–18:00 CET).
 - **Monthly Volume & Cost**:
-  - **Subtotal**: $\mathbf{\$3.50 / \text{mo}}$
+  - **Subtotal**: **$3.50 / mo**
 
 ---
 
 ### 3.5 Firebase Authentication & External Access
 
 - **Internal Seat Holders**: Standard Firebase Authentication email/password and custom claims are **100% Free** (unlimited users).
-- **External Respondents**: Tokenized magic access links execute via stateless Cloud Functions using 256-bit SHA-256 tokens, **incurring \$0.00 in Identity Platform licensing fees**.
-- **Enterprise SSO / SAML (Optional Future Add-on)**: Google Cloud Identity Platform charges \$0.00 for the first 50,000 Monthly Active Users (MAUs), then \$0.0055/MAU.
+- **External Respondents**: Tokenized magic access links execute via stateless Cloud Functions using 256-bit SHA-256 tokens, **incurring $0.00 in Identity Platform licensing fees**.
+- **Enterprise SSO / SAML (Optional Future Add-on)**: Google Cloud Identity Platform charges $0.00 for the first 50,000 Monthly Active Users (MAUs), then $0.0055/MAU.
 
 ---
 
@@ -179,7 +179,7 @@ Storage Cost = (Stored GiB × Rate) + (Class A Ops × Rate) + (Class B Ops × Ra
   - 30-day, 14-day, and 7-day upcoming deadline warnings.
   - Notification alerts to internal compliance reviewers upon new submissions.
 - **Monthly Volume & Cost**:
-  - ~1,000 outbound transactional emails/mo $\to \mathbf{\$0.00 – \$1.00 / \text{mo}}$ (within free tiers of 100/day, or \$1.00 on paid volume plans).
+  - ~1,000 outbound transactional emails/mo $\to$ **$0.00 – $1.00 / mo** (within free tiers of 100/day, or $1.00 on paid volume plans).
 
 ---
 
@@ -187,12 +187,12 @@ Storage Cost = (Stored GiB × Rate) + (Class A Ops × Rate) + (Class B Ops × Ra
 
 | Infrastructure Component | Monthly Cost (USD) | Primary Cost Factor |
 |---|:---:|---|
-| **Cloud Firestore** | **\$1.30** | UI list queries & audit log writes |
-| **Cloud Functions v2** | **\$0.12** | Callable API executions & cron sweepers |
-| **Cloud Storage** | **\$0.37** | Evidence file storage & download egress |
-| **Next.js Frontend (Cloud Run)** | **\$3.50** | SSR container execution during business hours |
-| **Transactional Email Delivery** | **\$1.00** | Magic link & notification delivery |
-| **TOTAL MONTHLY RUN RATE** | **~ \$6.29 / mo** | *(Realistic buffer range: \$5.00 – \$8.00 / mo)* |
+| **Cloud Firestore** | **$1.30** | UI list queries & audit log writes |
+| **Cloud Functions v2** | **$0.12** | Callable API executions & cron sweepers |
+| **Cloud Storage** | **$0.37** | Evidence file storage & download egress |
+| **Next.js Frontend (Cloud Run)** | **$3.50** | SSR container execution during business hours |
+| **Transactional Email Delivery** | **$1.00** | Magic link & notification delivery |
+| **TOTAL MONTHLY RUN RATE** | **~ $6.29 / mo** | *(Realistic buffer range: $5.00 – $8.00 / mo)* |
 
 ---
 
@@ -230,7 +230,7 @@ Use this checklist whenever reviewing system efficiency or optimizing high-volum
 
 ### B. Cloud Storage Optimization Strategies
 1. **Object Lifecycle Management (Nearline / Coldline Tiering)**:
-   - *Rule*: Configure GCP Storage lifecycle rules to transition evidence files older than 180 days to **Nearline** (\$0.010/GiB) or **Coldline** (\$0.004/GiB), cutting storage costs by $>50–80\%$.
+   - *Rule*: Configure GCP Storage lifecycle rules to transition evidence files older than 180 days to **Nearline** ($0.010/GiB) or **Coldline** ($0.004/GiB), cutting storage costs by $>50–80\%$.
 2. **Automatic Purge of Export Artifacts**:
    - *Rule*: Set a 7-day automatic deletion lifecycle on `/tenants/{tenantId}/exports/**`. Generated compliance ZIPs should be downloaded by the user immediately and not stored indefinitely in expensive Standard regional storage.
 3. **Client-Side Document Compression**:
@@ -254,7 +254,7 @@ Use this checklist whenever reviewing system efficiency or optimizing high-volum
 
 | Anti-Pattern | Why It Causes Cost Spikes | Correct Architectural Pattern |
 |---|---|---|
-| **Client-Side Collection Counting** | Reading 10,000 docs to display a badge count costs \$0.06 per pageview. | Read the single pre-computed metric document in `/summary_metrics/...` ($O(1)$ read). |
+| **Client-Side Collection Counting** | Reading 10,000 docs to display a badge count costs $0.06 per pageview. | Read the single pre-computed metric document in `/summary_metrics/...` ($O(1)$ read). |
 | **Realtime Listeners on Large Collections** | `onSnapshot()` on an entire collection re-downloads all changed documents for every connected user. | Use scoped listeners with `.limit()` or use manual fetch with SWR/TanStack Query. |
 | **Permanent Storage of Export ZIPs** | Accumulating hundreds of 50 MB compliance export archives inflates standard storage. | Set automated 7-day GCS bucket lifecycle expiration rules on `exports/`. |
 | **Uncompressed Audit Log Retention** | Storing millions of small JSON documents indefinitely in Firestore increases database storage costs. | Export closed-year audit logs to compressed Coldline GCS JSONL archives. |
