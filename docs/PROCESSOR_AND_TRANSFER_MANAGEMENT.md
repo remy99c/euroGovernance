@@ -211,6 +211,7 @@ All export artifacts are:
 ## 🔗 Related Knowledge Graph Documents
 
 - **Hub**: [[INDEX|Knowledge Vault Index]]
+- **Assessments & Questionnaires**: [[THIRD_PARTY_ASSESSMENT_AND_QUESTIONNAIRE_MODULE|Third-Party Questionnaire Assessment & Vendor Due Diligence]]
 - **Processor Assurance & Evidence**: [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications & Third-Party Assurance]], [[EVIDENCE_MODULE_DESIGN|Evidence Module Locker]]
 - **Regulatory Requirements**: [[GDPR_MODULE_DESIGN|GDPR Article 28 & Chapter V]], [[EU_DATA_ACT_MODULE_DESIGN|EU Data Act Vendor Switching]]
 - **Controls & Governance**: [[FRAMEWORK_AND_CONTROLS_ENGINE|Framework & Controls Engine]], [[domain-modules|Domain Modules]]

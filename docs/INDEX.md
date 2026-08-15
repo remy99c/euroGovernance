@@ -60,6 +60,7 @@ graph TD
     %% Third-Party Processors, Transfers & Evidence
     subgraph Processors ["🛡️ Processors, Assurance & Evidence"]
         PROC_TRANS["[[PROCESSOR_AND_TRANSFER_MANAGEMENT|Processors & Cross-Border Transfers]]"]
+        PROC_ASSESS["[[THIRD_PARTY_ASSESSMENT_AND_QUESTIONNAIRE_MODULE|Third-Party Assessments]]"]
         PROC_CERT["[[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications & Assurance]]"]
         EVID["[[EVIDENCE_MODULE_DESIGN|Evidence Repository Locker]]"]
     end
@@ -80,7 +81,8 @@ graph TD
     FAS --- DATAACT
     FAS --- ISO
     GDPR --- PROC_TRANS
-    PROC_TRANS --- PROC_CERT
+    PROC_TRANS --- PROC_ASSESS
+    PROC_ASSESS --- PROC_CERT
     PROC_CERT --- EVID
     CF_PLAN --- DASH
     CF_PLAN --- NOTIF
@@ -130,5 +132,6 @@ graph TD
 
 ### 6. Processors, Cross-Border Transfers, Evidence & Assurance
 - [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Data Processor & Cross-Border Transfer Governance (GDPR Art. 28 & Chapter V)]] — Vendor vs Processor distinction, DPAs, SCCs, and TIAs.
+- [[THIRD_PARTY_ASSESSMENT_AND_QUESTIONNAIRE_MODULE|Third-Party Questionnaire Assessment & Vendor Due Diligence]] — Dynamic templates, secure magic links, internal reviews, risk scoring, recurring schedules, and control evidence.
 - [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications & Third-Party Assurance]] — SOC reports, ISO certs, evidence linkage, reminders, and export matrix.
 - [[EVIDENCE_MODULE_DESIGN|Evidence Repository Locker & Integrity Verification]] — Multi-tenant evidence collection, hashing, and versioning.
