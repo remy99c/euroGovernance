@@ -103,6 +103,7 @@ graph TD
 - [[MASTER_PROMPT_CONTEXT|Master System Context & Engineering Baseline]] — Core design principles and tech stack invariants.
 - [[ai Guide 2026-08-15|AI Agent Platform & Engineering Guide (2026-08-15)]] — Architectural briefing, capabilities, level of polish, and agent operating instructions.
 - [[RUNNING_COSTS_AND_FINANCIAL_OPTIMIZATION_GUIDE|Running Costs & Financial Optimization Guide]] — Complete GCP/Firebase cost breakdown per tenant, unit cost drivers, and optimization playbook.
+- [[UI_UX_AUDIT_AND_ONBOARDING_REDESIGN_REPORT|UI/UX Audit, Information Architecture & Onboarding Blueprint]] — UI redesign plan, navigation consolidation (17 tabs to 5 hubs), and persona-based onboarding flows.
 
 ### 2. Multi-Tenancy, Security & Access Control
 - [[TENANT_MODEL_AND_IDENTITY_FLOWS|Tenant Model & Identity Provisioning Flows]] — Multi-tenant partitioning, membership lifecycle, and domain isolation.
