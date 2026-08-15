@@ -82,6 +82,13 @@ export {
   dispatchProcessorReviewReminders,
 } from './handlers/vendors-and-assets.js';
 
+// Processor Assurance & Certification Review Handlers
+export {
+  createTenantProcessorCertification,
+  reviewProcessorCertification,
+  replaceProcessorCertification,
+} from './handlers/processor-certifications.js';
+
 // GDPR Phase 1 Module Handlers
 export {
   createTenantROPA,

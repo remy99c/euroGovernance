@@ -871,18 +871,22 @@ export const VALID_PROCESSOR_CERTIFICATION_STATUSES: readonly ProcessorCertifica
 ] as const;
 
 export type ProcessorCertificationReviewStatus =
-  | 'compliant_verified'
-  | 'under_assessment'
-  | 'minor_gaps_identified'
-  | 'major_deficiencies_identified'
-  | 'renewal_requested';
+  | 'pending'
+  | 'in_review'
+  | 'accepted'
+  | 'rejected'
+  | 'insufficient'
+  | 'expired'
+  | 'superseded';
 
 export const VALID_PROCESSOR_CERTIFICATION_REVIEW_STATUSES: readonly ProcessorCertificationReviewStatus[] = [
-  'compliant_verified',
-  'under_assessment',
-  'minor_gaps_identified',
-  'major_deficiencies_identified',
-  'renewal_requested',
+  'pending',
+  'in_review',
+  'accepted',
+  'rejected',
+  'insufficient',
+  'expired',
+  'superseded',
 ] as const;
 
 /**
@@ -911,6 +915,17 @@ export interface ProcessorCertification extends BaseEntity {
   notes?: string | null;
   reviewOwnerUserId: string; // UID of assigned internal risk/compliance reviewer
   reviewStatus: ProcessorCertificationReviewStatus;
+  reviewNotes?: string | null; // Reviewer rationale / review observations
+  rejectionReason?: string | null; // Reason if rejected
+  reviewedBy?: string | null; // User UID of reviewer
+  reviewerEmail?: string | null; // Email of reviewer
+  reviewedAt?: string | null; // ISO timestamp of review action
+  isInsufficient?: boolean; // True if marked insufficient despite active validity dates
+  insufficientRationale?: string | null; // Compliance rationale explaining why artifact is deemed insufficient
+  replacedByCertificationId?: string | null; // Forward pointer to newer replacing certification
+  replacesCertificationId?: string | null; // Backward pointer to superseded historic certification
+  versionNumber?: number; // Sequential assurance version (1, 2, 3...)
+  isHistoricVersion?: boolean; // True if superseded or archived
   reviewDueDate: string | null; // ISO 8601 UTC date
   lastReviewedAt?: string | null;
   lastReviewedBy?: string | null;
@@ -924,6 +939,51 @@ export interface ProcessorCertification extends BaseEntity {
   updatedBy: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ReviewStateTransitionResult {
+  allowed: boolean;
+  reason?: string;
+}
+
+/**
+ * Validates processor certification review state transitions to enforce auditability and state integrity.
+ */
+export function validateProcessorCertificationReviewTransition(
+  currentStatus: ProcessorCertificationReviewStatus,
+  nextStatus: ProcessorCertificationReviewStatus
+): ReviewStateTransitionResult {
+  if (currentStatus === nextStatus) {
+    return { allowed: true };
+  }
+
+  // Superseded is a preserved historic state
+  if (currentStatus === 'superseded') {
+    return {
+      allowed: false,
+      reason: 'A superseded certification is a preserved historic audit record and cannot transition to an active review status.',
+    };
+  }
+
+  const validTransitions: Record<ProcessorCertificationReviewStatus, ProcessorCertificationReviewStatus[]> = {
+    pending: ['in_review', 'accepted', 'rejected', 'insufficient', 'expired', 'superseded'],
+    in_review: ['accepted', 'rejected', 'insufficient', 'pending', 'expired', 'superseded'],
+    accepted: ['in_review', 'insufficient', 'expired', 'superseded'],
+    rejected: ['in_review', 'pending', 'superseded'],
+    insufficient: ['in_review', 'accepted', 'expired', 'superseded'],
+    expired: ['in_review', 'superseded'],
+    superseded: [],
+  };
+
+  const allowedNext = validTransitions[currentStatus] || [];
+  if (!allowedNext.includes(nextStatus)) {
+    return {
+      allowed: false,
+      reason: `Invalid review status transition from "${currentStatus}" to "${nextStatus}".`,
+    };
+  }
+
+  return { allowed: true };
 }
 
 export interface ValidateProcessorCertificationResult {
@@ -1029,7 +1089,7 @@ export function validateProcessorCertification(input: unknown): ValidateProcesso
     errors.push('systemsOrServicesCovered must be an array of covered systems or services.');
   }
 
-  // 6. Review Governance
+  // 6. Review Governance & Attribution
   if (!c.reviewOwnerUserId || typeof c.reviewOwnerUserId !== 'string' || c.reviewOwnerUserId.trim() === '') {
     errors.push('reviewOwnerUserId is required and must specify the internal review owner.');
   }
@@ -1040,6 +1100,26 @@ export function validateProcessorCertification(input: unknown): ValidateProcesso
 
   if (c.reviewDueDate !== null && c.reviewDueDate !== undefined && (typeof c.reviewDueDate !== 'string' || isNaN(new Date(c.reviewDueDate).getTime()))) {
     errors.push('reviewDueDate must be a valid ISO date string or null.');
+  }
+
+  if (c.reviewedAt !== null && c.reviewedAt !== undefined && (typeof c.reviewedAt !== 'string' || isNaN(new Date(c.reviewedAt).getTime()))) {
+    errors.push('reviewedAt must be a valid ISO date string when review is executed.');
+  }
+
+  if (c.reviewStatus === 'rejected' && (!c.rejectionReason || typeof c.rejectionReason !== 'string' || c.rejectionReason.trim() === '')) {
+    errors.push('rejectionReason is required when reviewStatus is "rejected".');
+  }
+
+  if ((c.isInsufficient === true || c.reviewStatus === 'insufficient') && (!c.insufficientRationale || typeof c.insufficientRationale !== 'string' || c.insufficientRationale.trim() === '')) {
+    errors.push('insufficientRationale is required when certification is marked insufficient.');
+  }
+
+  if (c.versionNumber !== undefined && (typeof c.versionNumber !== 'number' || c.versionNumber < 1)) {
+    errors.push('versionNumber must be an integer >= 1.');
+  }
+
+  if (c.isHistoricVersion !== undefined && typeof c.isHistoricVersion !== 'boolean') {
+    errors.push('isHistoricVersion must be a boolean flag.');
   }
 
   // 7. Evidence Links
@@ -1154,6 +1234,29 @@ export function evaluateProcessorCertificationCompleteness(
     suggestedAction: string;
   }> = [];
 
+  // Superseded historic records are preserved for audit and exempt from active gaps
+  if (cert.isHistoricVersion || cert.reviewStatus === 'superseded') {
+    return {
+      certificationId: cert.id,
+      isComplete: true,
+      hasAttachedEvidence,
+      attachedEvidenceCount: linkedEvidences.length,
+      attachedEvidences: linkedEvidences.map((e) => ({
+        id: e.id,
+        title: e.title,
+        category: e.category,
+        status: e.status,
+        fileHashSha256: e.fileHashSha256,
+      })),
+      isExpired,
+      isExpiringSoon,
+      daysUntilExpiry,
+      isReviewOverdue: false,
+      daysUntilReviewDue,
+      gaps: [],
+    };
+  }
+
   if (isExpired) {
     gaps.push({
       code: 'PROCESSOR_CERT_EXPIRED',
@@ -1188,7 +1291,25 @@ export function evaluateProcessorCertificationCompleteness(
     });
   }
 
-  if (cert.hasMajorDeficiencies || cert.reviewStatus === 'major_deficiencies_identified') {
+  if (cert.isInsufficient || cert.reviewStatus === 'insufficient') {
+    gaps.push({
+      code: 'PROCESSOR_CERT_INSUFFICIENT',
+      description: cert.insufficientRationale || `Assurance artifact (${cert.certificateOrReportNumber}) was marked insufficient during compliance review.`,
+      severity: 'high',
+      suggestedAction: 'Request compensating controls, Bridge Letter, or management corrective action plan.',
+    });
+  }
+
+  if (cert.reviewStatus === 'rejected') {
+    gaps.push({
+      code: 'PROCESSOR_CERT_REJECTED',
+      description: cert.rejectionReason || `Assurance artifact (${cert.certificateOrReportNumber}) was formally rejected.`,
+      severity: 'critical',
+      suggestedAction: 'Vendor must provide valid in-scope certificate/report meeting required standards.',
+    });
+  }
+
+  if (cert.hasMajorDeficiencies || cert.unresolvedFindingsCount > 0) {
     gaps.push({
       code: 'PROCESSOR_CERT_MAJOR_DEFICIENCIES',
       description: `Assurance report has recorded major audit exceptions or qualified opinion.`,

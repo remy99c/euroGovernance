@@ -16,6 +16,8 @@ import {
   getAssuranceDisplayName,
   getAssuranceArtifactKindLabel,
   validateAssuranceMetadataRules,
+  validateProcessorCertificationReviewTransition,
+  VALID_PROCESSOR_CERTIFICATION_REVIEW_STATUSES,
   VALID_ASSURANCE_STANDARD_FAMILIES,
   VALID_ASSURANCE_ARTIFACT_KINDS,
   VALID_EVIDENCE_CATEGORIES,
@@ -137,7 +139,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL (Frankfurt, Dublin)',
         systemsOrServicesCovered: ['Compute', 'Storage', 'Networking', 'Security'],
         reviewOwnerUserId: 'usr_privacy_01',
-        reviewStatus: 'compliant_verified',
+        reviewStatus: 'accepted',
         reviewDueDate: '2026-06-01T00:00:00.000Z',
         linkedEvidenceIds: ['ev_aws_iso_cert'],
         unresolvedFindingsCount: 0,
@@ -167,7 +169,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         legalEntityOrRegionalScope: 'Global Cloud Infrastructure',
         systemsOrServicesCovered: ['Core Cloud Compute & Storage Services'],
         reviewOwnerUserId: 'usr_compliance_01',
-        reviewStatus: 'compliant_verified',
+        reviewStatus: 'accepted',
         reviewDueDate: '2026-08-01T00:00:00.000Z',
         linkedEvidenceIds: ['ev_aws_soc2_report'],
         unresolvedFindingsCount: 0,
@@ -224,7 +226,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
           legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL',
           systemsOrServicesCovered: ['Compute', 'Storage'],
           reviewOwnerUserId: 'usr_privacy_01',
-          reviewStatus: 'compliant_verified',
+          reviewStatus: 'accepted',
           reviewDueDate: '2026-06-01T00:00:00.000Z',
           linkedEvidenceIds: [],
           unresolvedFindingsCount: 0,
@@ -244,7 +246,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
           id: 'cert_aws_soc2',
           tenantId: 'tenant_eurocorp_de',
           processorProfileId: 'prof_aws_hosting',
-          reviewStatus: 'under_assessment',
+          reviewStatus: 'in_review',
           status: 'active_valid',
         });
       });
@@ -255,7 +257,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
 
       await assertSucceeds(
         certRef.update({
-          reviewStatus: 'compliant_verified',
+          reviewStatus: 'accepted',
           notes: 'SOC 2 Type II report reviewed and verified with clean opinion.',
           updatedBy: 'usr_compliance_01',
           updatedAt: new Date().toISOString(),
@@ -329,7 +331,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         legalEntityOrRegionalScope: 'Datadog Inc. (US)',
         systemsOrServicesCovered: ['Logging', 'APM'],
         reviewOwnerUserId: 'usr_privacy_01',
-        reviewStatus: 'compliant_verified',
+        reviewStatus: 'accepted',
         reviewDueDate: '2025-11-01T00:00:00.000Z',
         linkedEvidenceIds: ['ev_dd_soc2_file'],
         unresolvedFindingsCount: 0,
@@ -394,7 +396,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         legalEntityOrRegionalScope: 'EMEA',
         systemsOrServicesCovered: ['SaaS'],
         reviewOwnerUserId: 'usr_privacy_01',
-        reviewStatus: 'under_assessment',
+        reviewStatus: 'in_review',
         reviewDueDate: '2025-01-01T00:00:00.000Z', // Overdue relative to 2025-06-01
         linkedEvidenceIds: [], // Missing evidence
         unresolvedFindingsCount: 0,
@@ -431,7 +433,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
           legalEntityOrRegionalScope: 'Global',
           systemsOrServicesCovered: ['Compute'],
           reviewOwnerUserId: 'usr_compliance_01',
-          reviewStatus: 'compliant_verified',
+          reviewStatus: 'accepted',
           reviewDueDate: '2025-10-15T00:00:00.000Z', // Overdue review
           linkedEvidenceIds: [],
           unresolvedFindingsCount: 1,
@@ -572,7 +574,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         legalEntityOrRegionalScope: 'EU',
         systemsOrServicesCovered: ['Compute'],
         reviewOwnerUserId: 'usr_privacy_01',
-        reviewStatus: 'compliant_verified',
+        reviewStatus: 'accepted',
         linkedEvidenceIds: [],
         unresolvedFindingsCount: 0,
         hasMajorDeficiencies: false,
@@ -634,7 +636,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         legalEntityOrRegionalScope: 'AWS Global',
         systemsOrServicesCovered: ['Compute', 'Storage'],
         reviewOwnerUserId: 'usr_compliance_01',
-        reviewStatus: 'compliant_verified',
+        reviewStatus: 'accepted',
         reviewDueDate: '2026-08-01T00:00:00.000Z',
         linkedEvidenceIds: ['ev_soc2_pdf', 'ev_bridge_letter', 'ev_mgmt_assertion'],
         unresolvedFindingsCount: 0,
@@ -798,7 +800,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
           legalEntityOrRegionalScope: 'EMEA',
           systemsOrServicesCovered: ['Compute'],
           reviewOwnerUserId: 'usr_privacy_01',
-          reviewStatus: 'compliant_verified',
+          reviewStatus: 'accepted',
           reviewDueDate: '2026-01-01T00:00:00.000Z',
           linkedEvidenceIds: ['ev_shared_iso_cert'],
           unresolvedFindingsCount: 0,
@@ -824,7 +826,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
           legalEntityOrRegionalScope: 'EMEA',
           systemsOrServicesCovered: ['Storage'],
           reviewOwnerUserId: 'usr_privacy_01',
-          reviewStatus: 'compliant_verified',
+          reviewStatus: 'accepted',
           reviewDueDate: '2026-01-01T00:00:00.000Z',
           linkedEvidenceIds: ['ev_shared_iso_cert'],
           unresolvedFindingsCount: 0,
@@ -860,7 +862,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         legalEntityOrRegionalScope: 'Global',
         systemsOrServicesCovered: ['SaaS'],
         reviewOwnerUserId: 'usr_privacy_01',
-        reviewStatus: 'under_assessment',
+        reviewStatus: 'in_review',
         reviewDueDate: '2025-06-01T00:00:00.000Z',
         linkedEvidenceIds: [], // NO FILE ATTACHED
         unresolvedFindingsCount: 0,
@@ -883,6 +885,245 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
 
       const riskFlags = evaluateProcessorCertificationRiskFlags([structuralCertOnly], [], new Date('2025-03-01'));
       expect(riskFlags.some((f) => f.ruleCode === 'PROCESSOR_CERT_MISSING_EVIDENCE')).toBe(true);
+    });
+  });
+
+  describe('6. Review Workflow, State Transitions, Insufficiency & History Preservation', () => {
+    it('validates supported review statuses and strict state transitions', () => {
+      const allStatuses = ['pending', 'in_review', 'accepted', 'rejected', 'insufficient', 'expired', 'superseded'];
+      for (const st of allStatuses) {
+        expect(VALID_PROCESSOR_CERTIFICATION_REVIEW_STATUSES.includes(st as any)).toBe(true);
+      }
+
+      // Valid transitions
+      expect(validateProcessorCertificationReviewTransition('pending', 'in_review').allowed).toBe(true);
+      expect(validateProcessorCertificationReviewTransition('in_review', 'accepted').allowed).toBe(true);
+      expect(validateProcessorCertificationReviewTransition('in_review', 'rejected').allowed).toBe(true);
+      expect(validateProcessorCertificationReviewTransition('in_review', 'insufficient').allowed).toBe(true);
+      expect(validateProcessorCertificationReviewTransition('accepted', 'insufficient').allowed).toBe(true);
+      expect(validateProcessorCertificationReviewTransition('insufficient', 'accepted').allowed).toBe(true);
+      expect(validateProcessorCertificationReviewTransition('accepted', 'superseded').allowed).toBe(true);
+
+      // Terminal historic state cannot transition back to active
+      const supersededTransition = validateProcessorCertificationReviewTransition('superseded', 'in_review');
+      expect(supersededTransition.allowed).toBe(false);
+      expect(supersededTransition.reason).toContain('A superseded certification is a preserved historic audit record');
+
+      const invalidRejectedTransition = validateProcessorCertificationReviewTransition('rejected', 'accepted');
+      expect(invalidRejectedTransition.allowed).toBe(false);
+    });
+
+    it('requires rationale when rejecting or marking an assurance record as insufficient', () => {
+      const basePayload: ProcessorCertification = {
+        id: 'cert_test_review',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_hosting',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'PwC',
+        certificateOrReportNumber: 'SOC2-TEST-2025',
+        reportPeriodStart: '2024-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-12-31T23:59:59.000Z',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2026-01-01T00:00:00.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'Scope test',
+        legalEntityOrRegionalScope: 'EU',
+        systemsOrServicesCovered: ['Compute'],
+        reviewOwnerUserId: 'usr_privacy_01',
+        reviewStatus: 'rejected',
+        rejectionReason: '', // Empty rejection reason should fail validation
+        reviewDueDate: '2025-06-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_soc2_report'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_privacy_01',
+        createdBy: 'usr_privacy_01',
+        updatedBy: 'usr_privacy_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      };
+
+      const rejectionResult = validateProcessorCertification(basePayload);
+      expect(rejectionResult.valid).toBe(false);
+      expect(rejectionResult.errors.some((e) => e.includes('rejectionReason is required'))).toBe(true);
+
+      const insufficientPayload: ProcessorCertification = {
+        ...basePayload,
+        reviewStatus: 'insufficient',
+        rejectionReason: null,
+        isInsufficient: true,
+        insufficientRationale: '', // Empty rationale should fail validation
+      };
+
+      const insufficientResult = validateProcessorCertification(insufficientPayload);
+      expect(insufficientResult.valid).toBe(false);
+      expect(insufficientResult.errors.some((e) => e.includes('insufficientRationale is required'))).toBe(true);
+    });
+
+    it('marks formally valid reports as insufficient when qualitative or scope gaps exist and generates risk flag', () => {
+      const validDatesButInsufficientCert: ProcessorCertification = {
+        id: 'cert_soc2_qualified_opinion',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_fintech_gateway',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'KPMG LLP',
+        certificateOrReportNumber: 'KPMG-SOC2-2025-QUALIFIED',
+        reportPeriodStart: '2024-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-12-31T23:59:59.000Z',
+        validFrom: '2025-01-15T00:00:00.000Z',
+        validUntil: '2026-01-14T23:59:59.000Z', // Formally valid for another 10 months
+        status: 'active_valid',
+        assuranceScopeSummary: 'Payment processing platform and HSM cluster',
+        legalEntityOrRegionalScope: 'FinTech Gateway Ltd (UK/EU)',
+        systemsOrServicesCovered: ['Transaction Processing', 'Tokenization'],
+        reviewOwnerUserId: 'usr_privacy_01',
+        reviewStatus: 'insufficient',
+        reviewNotes: 'Qualified auditor opinion: CC6.1 Logical access controls had recurring testing exceptions without compensating bridge letter.',
+        reviewedBy: 'usr_compliance_01',
+        reviewerEmail: 'compliance@eurocorp.de',
+        reviewedAt: '2025-02-01T10:00:00.000Z',
+        isInsufficient: true,
+        insufficientRationale: 'Material exceptions in access revocation and key rotation; vendor has not yet supplied remediated Q1 bridge letter.',
+        reviewDueDate: '2025-05-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_soc2_report'],
+        unresolvedFindingsCount: 3,
+        hasMajorDeficiencies: true,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2025-01-15T00:00:00.000Z',
+        updatedAt: '2025-02-01T10:00:00.000Z',
+      };
+
+      const completeness = evaluateProcessorCertificationCompleteness(
+        validDatesButInsufficientCert,
+        [{ id: 'ev_soc2_report', status: 'valid' } as any],
+        new Date('2025-02-15')
+      );
+
+      expect(completeness.isComplete).toBe(false);
+      expect(completeness.isExpired).toBe(false);
+      expect(completeness.hasAttachedEvidence).toBe(true);
+
+      const insufficientGap = completeness.gaps.find((g) => g.code === 'PROCESSOR_CERT_INSUFFICIENT');
+      expect(insufficientGap).toBeDefined();
+      expect(insufficientGap?.severity).toBe('high');
+      expect(insufficientGap?.description).toContain('Material exceptions in access revocation');
+
+      const riskFlags = evaluateProcessorCertificationRiskFlags(
+        [validDatesButInsufficientCert],
+        [{ id: 'ev_soc2_report', status: 'valid' } as any],
+        new Date('2025-02-15')
+      );
+      expect(riskFlags.some((f) => f.ruleCode === 'PROCESSOR_CERT_INSUFFICIENT')).toBe(true);
+    });
+
+    it('preserves history when replacing an old certification with a newer one without destructive overwrite', () => {
+      // Historical 2024 SOC 2 Type II report
+      const historicV1Cert: ProcessorCertification = {
+        id: 'cert_aws_soc2_2024',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_hosting',
+        vendorId: 'vnd_aws_emea',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'PwC LLP',
+        certificateOrReportNumber: 'PWC-SOC2-2024-AWS',
+        reportPeriodStart: '2023-10-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-09-30T23:59:59.000Z',
+        validFrom: '2024-10-15T00:00:00.000Z',
+        validUntil: '2025-10-14T23:59:59.000Z',
+        status: 'superseded',
+        assuranceScopeSummary: 'AWS Global Infrastructure 2024',
+        legalEntityOrRegionalScope: 'AWS EMEA SARL',
+        systemsOrServicesCovered: ['Compute', 'Storage'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'superseded',
+        reviewedBy: 'usr_compliance_01',
+        reviewedAt: '2024-10-20T00:00:00.000Z',
+        replacedByCertificationId: 'cert_aws_soc2_2025',
+        replacesCertificationId: null,
+        versionNumber: 1,
+        isHistoricVersion: true,
+        reviewDueDate: null,
+        linkedEvidenceIds: ['ev_soc2_2024_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-10-15T00:00:00.000Z',
+        updatedAt: '2025-10-15T00:00:00.000Z',
+      };
+
+      // Replacing 2025 SOC 2 Type II report
+      const replacingV2Cert: ProcessorCertification = {
+        id: 'cert_aws_soc2_2025',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_hosting',
+        vendorId: 'vnd_aws_emea',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'PwC LLP',
+        certificateOrReportNumber: 'PWC-SOC2-2025-AWS',
+        reportPeriodStart: '2024-10-01T00:00:00.000Z',
+        reportPeriodEnd: '2025-09-30T23:59:59.000Z',
+        validFrom: '2025-10-15T00:00:00.000Z',
+        validUntil: '2026-10-14T23:59:59.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'AWS Global Infrastructure 2025 (Expanded AI & Bedrock scope)',
+        legalEntityOrRegionalScope: 'AWS EMEA SARL',
+        systemsOrServicesCovered: ['Compute', 'Storage', 'Bedrock AI'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewNotes: 'Superseded previous 2024 version with 2025 annual report covering new GenAI services.',
+        reviewedBy: 'usr_compliance_01',
+        reviewerEmail: 'compliance@eurocorp.de',
+        reviewedAt: '2025-10-16T10:00:00.000Z',
+        replacedByCertificationId: null,
+        replacesCertificationId: 'cert_aws_soc2_2024',
+        versionNumber: 2,
+        isHistoricVersion: false,
+        reviewDueDate: '2026-08-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_soc2_2025_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2025-10-15T00:00:00.000Z',
+        updatedAt: '2025-10-16T10:00:00.000Z',
+      };
+
+      // 1. Both versions pass validation
+      expect(validateProcessorCertification(historicV1Cert).valid).toBe(true);
+      expect(validateProcessorCertification(replacingV2Cert).valid).toBe(true);
+
+      // 2. Lineage chain is intact
+      expect(historicV1Cert.replacedByCertificationId).toBe(replacingV2Cert.id);
+      expect(replacingV2Cert.replacesCertificationId).toBe(historicV1Cert.id);
+      expect(historicV1Cert.versionNumber).toBe(1);
+      expect(replacingV2Cert.versionNumber).toBe(2);
+
+      // 3. Superseded historic version is exempt from active gaps/reminders
+      const historicCompleteness = evaluateProcessorCertificationCompleteness(
+        historicV1Cert,
+        [],
+        new Date('2025-11-01')
+      );
+      expect(historicCompleteness.isComplete).toBe(true);
+      expect(historicCompleteness.gaps.length).toBe(0);
+
+      // 4. Replacing version is active and evaluated
+      const activeCompleteness = evaluateProcessorCertificationCompleteness(
+        replacingV2Cert,
+        [{ id: 'ev_soc2_2025_pdf', status: 'valid' } as any],
+        new Date('2025-11-01')
+      );
+      expect(activeCompleteness.isComplete).toBe(true);
+      expect(activeCompleteness.hasAttachedEvidence).toBe(true);
     });
   });
 });
