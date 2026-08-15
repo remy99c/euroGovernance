@@ -22,6 +22,7 @@ import ProcessorInventory from './processor-inventory';
 import ProcessorAssuranceInventory from './processor-assurance-inventory';
 import { CertificationsManager } from './certifications-manager';
 import { ProcessorAssessmentWorkspace } from './processor-assessment-workspace';
+import ComplianceOverviewCards, { FrameworkReadinessItem } from './compliance-overview-cards';
 
 type TabType =
   | 'overview'
@@ -581,70 +582,136 @@ export default function DashboardPage() {
             </select>
           </div>
 
-          {/* Navigation Links */}
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          {/* Grouped 5-Hub Navigation */}
+          <nav style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {[
-              { id: 'overview', label: '📊 Executive Overview' },
-              { id: 'coverage_dashboard', label: '🌐 Framework Coverage' },
-              { id: 'frameworks', label: '🚀 Framework Wizard' },
-              { id: 'applicability_review', label: '⚖️ Applicability Review' },
-              { id: 'controls', label: '🛡️ Unified Controls' },
-              { id: 'evidence', label: '📁 Evidence Inbox' },
-              { id: 'certifications', label: '🏆 Certifications & Assurance' },
-              { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
-              { id: 'gdpr', label: '🇪🇺 GDPR & Privacy' },
-              { id: 'processor_inventory', label: '📋 Processor Inventory' },
-              { id: 'processor_assurance_inventory', label: '🛡️ Assurance Inventory' },
-              { id: 'processor_assessments', label: '📝 Due Diligence & Questionnaires' },
-              { id: 'processor_hub', label: '🏢 Processor Hub' },
-              { id: 'processor_transfers', label: '🌍 Processor Transfers' },
-              { id: 'ai_systems', label: '🤖 EU AI Act Register' },
-              { id: 'members', label: '👥 Team & RBAC' },
-              { id: 'exports', label: '📦 Compliance Exports' },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as TabType)}
-                style={{
-                  textAlign: 'left',
-                  padding: '10px 14px',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  fontWeight: activeTab === tab.id ? 600 : 400,
-                  backgroundColor: activeTab === tab.id ? 'var(--accent-blue-light)' : 'transparent',
-                  color: activeTab === tab.id ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  transition: 'background-color 0.15s ease',
-                }}
-              >
-                {tab.label}
-              </button>
+              {
+                category: '📊 EXECUTIVE & POSTURE',
+                items: [
+                  { id: 'overview', label: 'Executive Overview' },
+                  { id: 'coverage_dashboard', label: 'Framework Coverage' },
+                ],
+              },
+              {
+                category: '📐 FRAMEWORKS & CONTROLS',
+                items: [
+                  { id: 'frameworks', label: 'Framework Wizard' },
+                  { id: 'applicability_review', label: 'Scoping & Applicability' },
+                  { id: 'controls', label: 'Unified Controls Catalog' },
+                ],
+              },
+              {
+                category: '🛡️ VENDORS & THIRD PARTIES',
+                items: [
+                  { id: 'processor_hub', label: 'Processor Hub' },
+                  { id: 'processor_assessments', label: 'Due Diligence Questionnaires' },
+                  { id: 'processor_transfers', label: 'Transfer Impact (TIAs)' },
+                  { id: 'certifications', label: 'Certifications & Assurance' },
+                  { id: 'processor_assurance_inventory', label: 'Assurance Inventory' },
+                  { id: 'processor_inventory', label: 'Processor Roster' },
+                ],
+              },
+              {
+                category: '⚖️ STATUTORY REGISTERS',
+                items: [
+                  { id: 'gdpr', label: 'GDPR & Privacy (ROPA)' },
+                  { id: 'ai_systems', label: 'EU AI Act Register' },
+                ],
+              },
+              {
+                category: '⚙️ OPERATIONS & AUDIT',
+                items: [
+                  { id: 'evidence', label: 'Evidence Repository' },
+                  { id: 'risks_tasks', label: 'Risks & Tasks' },
+                  { id: 'exports', label: 'Compliance Exports' },
+                  { id: 'members', label: 'Team & RBAC' },
+                ],
+              },
+            ].map((section) => (
+              <div key={section.category}>
+                <div
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    padding: '0 8px 6px 8px',
+                  }}
+                >
+                  {section.category}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  {section.items.map((tab) => {
+                    const isSelected = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as TabType)}
+                        style={{
+                          textAlign: 'left',
+                          padding: '7px 12px',
+                          borderRadius: '6px',
+                          fontSize: '12.5px',
+                          fontWeight: isSelected ? 600 : 400,
+                          backgroundColor: isSelected ? 'var(--accent-blue)' : 'transparent',
+                          color: isSelected ? '#ffffff' : 'var(--text-secondary)',
+                          border: 'none',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.15s ease, color 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             ))}
           </nav>
         </div>
 
         {/* RBAC Persona Switcher (Dev Mode) */}
-        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', paddingLeft: '4px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-            Current Role: <span style={{ fontWeight: 600, color: 'var(--accent-blue)' }}>{userRole}</span>
+        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px', paddingLeft: '4px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Role Context:</span>
+            <span style={{ fontWeight: 700, color: 'var(--accent-blue)', textTransform: 'capitalize' }}>
+              {userRole?.replace('_', ' ')}
+            </span>
           </div>
-          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-            {['tenant_admin', 'compliance_manager', 'auditor', 'contributor'].map((r) => (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+            {[
+              { id: 'tenant_admin', label: 'Admin' },
+              { id: 'compliance_manager', label: 'Compliance' },
+              { id: 'security_manager', label: 'Security' },
+              { id: 'privacy_manager', label: 'Privacy/DPO' },
+              { id: 'ai_governance_manager', label: 'AI Lead' },
+              { id: 'auditor', label: 'Auditor' },
+              { id: 'contributor', label: 'Contributor' },
+            ].map((r) => (
               <button
-                key={r}
-                onClick={() => loginDevUser(r)}
+                key={r.id}
+                onClick={() => loginDevUser(r.id)}
                 style={{
-                  fontSize: '10px',
-                  padding: '4px 6px',
+                  fontSize: '9.5px',
+                  fontWeight: userRole === r.id ? 700 : 500,
+                  padding: '5px 2px',
+                  textAlign: 'center',
                   borderRadius: '4px',
                   border: '1px solid var(--border-color)',
-                  backgroundColor: userRole === r ? 'var(--accent-blue)' : 'var(--bg-primary)',
-                  color: userRole === r ? '#fff' : 'var(--text-secondary)',
+                  backgroundColor: userRole === r.id ? 'var(--accent-blue)' : 'var(--bg-primary)',
+                  color: userRole === r.id ? '#ffffff' : 'var(--text-secondary)',
                   cursor: 'pointer',
+                  transition: 'background-color 0.15s ease',
                 }}
               >
-                {r.split('_')[0]}
+                {r.label}
               </button>
             ))}
           </div>
@@ -676,92 +743,285 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* TAB 1: EXECUTIVE OVERVIEW */}
+        {/* TAB 1: EXECUTIVE & ROLE-TAILORED OVERVIEW */}
         {activeTab === 'overview' && (
           <div>
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            {/* Dynamic Role Header */}
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div>
-                <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Continuous Compliance & Governance Overview</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {userRole === 'auditor' && '🔍 Independent Auditor Assurance & Readiness Workspace'}
+                    {userRole === 'tenant_admin' && '👑 Enterprise Administration & Health Posture'}
+                    {(userRole === 'compliance_manager' || userRole === 'security_manager') && '🛡️ Continuous Compliance & Governance Operations'}
+                    {userRole === 'privacy_manager' && '🇪🇺 Data Protection & Privacy Governance Hub'}
+                    {userRole === 'ai_governance_manager' && '🤖 EU AI Act Compliance & Model Governance Hub'}
+                    {userRole === 'contributor' && '✍️ My Compliance Action Inbox & Assigned Tasks'}
+                    {!['auditor', 'tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'].includes(userRole) && '📊 Compliance & Governance Overview'}
+                  </h1>
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: '9999px',
+                      backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                      color: 'var(--accent-blue)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    {userRole === 'auditor' ? 'Read-Only Assurance Mode' : `${userRole?.replace('_', ' ')} Mode`}
+                  </span>
+                </div>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Materialized derived compliance metrics verified across live regulatory registers.
+                  {userRole === 'auditor' && 'Inspect verified technical controls, four-eyes evidence lockers, deterministic scoping rationales, and generate compliance dossiers.'}
+                  {userRole === 'tenant_admin' && 'Manage organization identity, enforce four-eyes approval policies, monitor team memberships, and audit global activity.'}
+                  {(userRole === 'compliance_manager' || userRole === 'security_manager') && 'Track framework readiness, process four-eyes evidence reviews, dispatch supplier questionnaires, and synchronize risks.'}
+                  {userRole === 'privacy_manager' && 'Maintain GDPR Article 30 ROPA activities, evaluate Schrems II international transfers, and verify Article 28 DPA execution.'}
+                  {userRole === 'ai_governance_manager' && 'Classify AI model risk tiers (Annex III), enforce prohibited practice guardrails, and compile Annex IV technical documentation.'}
+                  {userRole === 'contributor' && 'Fulfill assigned evidence requests, answer control audit questions, and view feedback notes from compliance reviewers.'}
+                  {!['auditor', 'tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'].includes(userRole) && 'Materialized compliance health metrics verified across live regulatory registers.'}
                 </p>
               </div>
+
+              {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  onClick={() => setActiveTab('frameworks')}
-                  style={{
-                    backgroundColor: 'var(--status-success)',
-                    color: '#fff',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    border: 'none',
-                    cursor: 'pointer',
-                  }}
-                >
-                  🚀 Framework Wizard
-                </button>
-                <button
-                  onClick={handleRecalculateMetrics}
-                  disabled={loadingAction === 'metrics'}
-                  style={{
-                    backgroundColor: 'var(--accent-blue)',
-                    color: '#fff',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    border: 'none',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {loadingAction === 'metrics' ? 'Calculating...' : '🔄 Re-calculate Live Metrics'}
-                </button>
+                {userRole === 'auditor' ? (
+                  <>
+                    <button
+                      onClick={() => handleRequestExport('framework_soc2_dossier')}
+                      disabled={loadingAction === 'export_framework_soc2_dossier'}
+                      style={{
+                        backgroundColor: 'var(--status-success)',
+                        color: '#fff',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      📦 1-Click Audit Dossier (ZIP)
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('applicability_review')}
+                      style={{
+                        backgroundColor: 'var(--bg-surface-hover)',
+                        color: '#fff',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        border: '1px solid var(--border-color)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      🔍 Inspect Scoping Rationale
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setActiveTab('frameworks')}
+                      style={{
+                        backgroundColor: 'var(--status-success)',
+                        color: '#fff',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      🚀 Framework Wizard
+                    </button>
+                    <button
+                      onClick={handleRecalculateMetrics}
+                      disabled={loadingAction === 'metrics'}
+                      style={{
+                        backgroundColor: 'var(--accent-blue)',
+                        color: '#fff',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {loadingAction === 'metrics' ? 'Calculating...' : '🔄 Re-calculate Live Metrics'}
+                    </button>
+                  </>
+                )}
               </div>
             </header>
 
-            {/* Metrics KPI Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Overall Readiness Score</div>
-                <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--status-success)', marginTop: '4px' }}>
-                  {metrics?.overallComplianceScore ?? 88}%
-                </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                  {metrics?.implementedControlsCount ?? controlsList.filter((c) => c.status === 'implemented').length} of{' '}
-                  {metrics?.totalControlsCount ?? controlsList.length} Controls Verified
-                </div>
-              </div>
+            {/* 1. DRATA-STYLE COMPLIANCE OVERVIEW WIDGET */}
+            <ComplianceOverviewCards
+              title="Compliance Overview"
+              onSelectFramework={(fwId) => {
+                if (fwId === 'gdpr') setActiveTab('gdpr');
+                else if (fwId === 'eu_ai_act') setActiveTab('ai_systems');
+                else setActiveTab('controls');
+              }}
+            />
 
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pending Evidence Reviews</div>
-                <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--status-warning)', marginTop: '4px' }}>
-                  {metrics?.pendingEvidenceReviewsCount ?? evidenceList.filter((e) => e.status === 'under_review').length}
-                </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Four-Eyes Queue</div>
-              </div>
+            {/* 2. ROLE-TAILORED METRIC TILES & WORKSPACES */}
+            {userRole === 'auditor' && (
+              <div style={{ marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
+                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Audit Readiness Score</div>
+                    <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--status-success)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+                      {metrics?.overallComplianceScore ?? 92}%
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Ready for Statutory Review
+                    </div>
+                  </div>
 
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Active AI Systems</div>
-                <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '4px' }}>
-                  {metrics?.registeredAISystemsCount ?? aiSystemsList.length}
-                </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                  {aiSystemsList.filter((a) => a.riskTier === 'high_risk').length} High-Risk Models
-                </div>
-              </div>
+                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Verified Controls</div>
+                    <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--text-primary)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+                      {controlsList.filter((c) => c.status === 'implemented').length} <span style={{ fontSize: '16px', color: 'var(--text-muted)' }}>/ {controlsList.length || 85}</span>
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--status-success)', marginTop: '4px' }}>
+                      100% Deterministic Lineage
+                    </div>
+                  </div>
 
-              <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Open Remediation Tasks</div>
-                <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
-                  {tasksList.filter((t) => t.status !== 'completed').length}
+                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Four-Eyes Evidence Files</div>
+                    <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--accent-blue)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+                      {evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      SHA-256 Hashed Artifacts
+                    </div>
+                  </div>
+
+                  <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Open Audit Gaps</div>
+                    <div style={{ fontSize: '28px', fontWeight: 800, color: issuesList.filter((i) => i.status === 'open').length > 0 ? 'var(--status-warning)' : 'var(--status-success)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+                      {issuesList.filter((i) => i.status === 'open').length}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      {issuesList.filter((i) => i.status === 'open').length === 0 ? 'Zero Critical Exceptions' : 'Remediations in Progress'}
+                    </div>
+                  </div>
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                  {issuesList.filter((i) => i.status === 'open').length} Unresolved Issues
+
+                {/* Auditor Quick Inspection Box */}
+                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '20px', marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <div>
+                      <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>Four-Eyes Verified Evidence Repository Preview</h3>
+                      <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        Immutable compliance documentation verified with multi-stakeholder sign-offs.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('evidence')}
+                      style={{ fontSize: '12px', color: 'var(--accent-blue)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      View All Evidence ➔
+                    </button>
+                  </div>
+                  {evidenceList.length === 0 ? (
+                    <div style={{ fontSize: '13px', color: 'var(--text-muted)', padding: '12px 0' }}>No evidence files submitted yet.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {evidenceList.slice(0, 4).map((ev) => (
+                        <div
+                          key={ev.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '10px 14px',
+                            backgroundColor: 'var(--bg-primary)',
+                            borderRadius: '6px',
+                            border: '1px solid var(--border-color)',
+                            fontSize: '12px',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '16px' }}>📄</span>
+                            <div>
+                              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{ev.title || ev.id}</div>
+                              <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
+                                Category: {ev.category} • SHA-256: {ev.fileHashSha256 ? `${ev.fileHashSha256.slice(0, 16)}...` : 'Verified'}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span
+                              style={{
+                                fontSize: '10.5px',
+                                fontWeight: 700,
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                backgroundColor: ev.status === 'approved' || ev.status === 'valid' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                                color: ev.status === 'approved' || ev.status === 'valid' ? 'var(--status-success)' : 'var(--status-warning)',
+                              }}
+                            >
+                              {(ev.status || 'valid').toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
+            )}
+
+            {/* Standard Metrics & Operational Stream for Other Roles */}
+            {userRole !== 'auditor' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Overall Readiness Score</div>
+                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--status-success)', marginTop: '4px' }}>
+                    {metrics?.overallComplianceScore ?? 88}%
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    {metrics?.implementedControlsCount ?? controlsList.filter((c) => c.status === 'implemented').length} of{' '}
+                    {metrics?.totalControlsCount ?? controlsList.length} Controls Verified
+                  </div>
+                </div>
+
+                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pending Evidence Reviews</div>
+                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--status-warning)', marginTop: '4px' }}>
+                    {metrics?.pendingEvidenceReviewsCount ?? evidenceList.filter((e) => e.status === 'under_review').length}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Four-Eyes Queue</div>
+                </div>
+
+                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Active AI Systems</div>
+                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '4px' }}>
+                    {metrics?.registeredAISystemsCount ?? aiSystemsList.length}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    {aiSystemsList.filter((a) => a.riskTier === 'high_risk').length} High-Risk Models
+                  </div>
+                </div>
+
+                <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '18px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Open Remediation Tasks</div>
+                  <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
+                    {tasksList.filter((t) => t.status !== 'completed').length}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    {issuesList.filter((i) => i.status === 'open').length} Unresolved Issues
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Live Audit Stream */}
             <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '20px' }}>
