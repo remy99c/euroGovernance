@@ -901,7 +901,7 @@ export default function DashboardPage() {
                       variant: 'success',
                     }
                   : {
-                      label: 'Re-calculate Live Metrics',
+                      label: 'Recalculate Posture Score',
                       icon: '🔄',
                       onClick: handleRecalculateMetrics,
                       loading: loadingAction === 'metrics',
