@@ -320,4 +320,5 @@ export {
   syncAssessmentRisksToRegister,
   linkAssessmentToControls,
   checkThirdPartyAssessmentDeadlines,
+  materializeThirdPartyAssessmentSummaryMetrics,
 } from './handlers/third-party-assessments.js';

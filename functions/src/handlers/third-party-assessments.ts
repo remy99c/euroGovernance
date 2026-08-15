@@ -22,6 +22,8 @@ import {
   RecurringAssessmentSchedule,
   DynamicQuestionnaireSection,
   NotificationType,
+  ThirdPartyAssessmentSummaryMetrics,
+  calculateThirdPartyAssessmentSummaryMetrics,
   analyzeSubmissionRiskPosture,
   validateThirdPartyAssessmentRequest,
   isValidRequestStateTransition,
@@ -1501,6 +1503,88 @@ export const checkThirdPartyAssessmentDeadlines = onCall<CheckThirdPartyAssessme
       nearingDueDateCount,
       overdueCount,
       recurringCycleApproachingCount,
+    };
+  }
+);
+
+// -----------------------------------------------------------------------------
+// 9. MATERIALIZE THIRD-PARTY ASSESSMENT SUMMARY METRICS
+// -----------------------------------------------------------------------------
+
+export interface MaterializeThirdPartyAssessmentSummaryMetricsInput {
+  tenantId: string;
+}
+
+export const materializeThirdPartyAssessmentSummaryMetrics = onCall<MaterializeThirdPartyAssessmentSummaryMetricsInput>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const { tenantId } = data;
+    if (!tenantId) {
+      throw new HttpsError('invalid-argument', 'tenantId is required.');
+    }
+
+    await requireTenantMember(request, tenantId, [
+      'tenant_admin',
+      'compliance_manager',
+      'privacy_manager',
+      'security_manager',
+      'auditor',
+      'approver',
+      'contributor',
+    ]);
+
+    // 1. Fetch all requests
+    const reqsSnap = await db.collection('tenants').doc(tenantId).collection('assessment_requests').get();
+    const requests = reqsSnap.docs.map((d) => d.data() as ThirdPartyAssessmentRequest);
+
+    // 2. Fetch all schedules
+    const schedsSnap = await db.collection('tenants').doc(tenantId).collection('recurring_schedules').get();
+    const schedules = schedsSnap.docs.map((d) => d.data() as RecurringAssessmentSchedule);
+
+    // 3. Fetch critical processor profile IDs
+    const procsSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('processor_profiles')
+      .where('riskTier', '==', 'critical')
+      .get();
+    const criticalProcessorProfileIds = procsSnap.docs.map((d) => d.id);
+
+    // 4. Fetch critical vendor IDs
+    const vendsSnap = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('vendors')
+      .where('riskTier', '==', 'critical')
+      .get();
+    const criticalVendorIds = vendsSnap.docs.map((d) => d.id);
+
+    // 5. Aggregate metrics
+    const metrics: ThirdPartyAssessmentSummaryMetrics = calculateThirdPartyAssessmentSummaryMetrics(
+      tenantId,
+      requests,
+      schedules,
+      {
+        criticalProcessorProfileIds,
+        criticalVendorIds,
+      }
+    );
+
+    // 6. Save to /tenants/{tenantId}/summary_metrics/third_party_assessments
+    await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('summary_metrics')
+      .doc('third_party_assessments')
+      .set(metrics);
+
+    return {
+      success: true,
+      metrics,
     };
   }
 );

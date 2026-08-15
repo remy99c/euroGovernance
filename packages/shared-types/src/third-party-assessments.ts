@@ -762,3 +762,263 @@ export function evaluateControlAssessmentSatisfaction(
     explanation: `Satisfied by accepted assessment '${latest.title}' (${latest.thirdPartyName}) scored ${latest.finalScorePercent || 100}% on ${completionIso?.substring(0, 10)}. Valid for ${daysUntilExpiry} more days.`,
   };
 }
+
+// =============================================================================
+// 7. SUMMARY METRICS & LIST VIEW AGGREGATION ENGINE
+// =============================================================================
+
+export interface ThirdPartyAssessmentSummaryMetrics {
+  id: string; // 'third_party_assessments'
+  tenantId: string;
+  totalRequestsCount: number;
+  outstandingRequestsCount: number;      // draft, sent, opened, in_progress
+  submittedWaitingReviewCount: number;   // submitted, under_review
+  acceptedAssessmentsCount: number;      // accepted
+  rejectedOrFollowUpCount: number;       // rejected, revision_requested
+  overdueResponsesCount: number;         // active requests with dueDate in past
+  overdueRecurringSchedulesCount: number;// recurring schedules past due date
+  criticalProcessorAssessmentsCount: number; // requests linked to critical processors/vendors
+  controlEvidenceAssessmentsCount: number;   // requests linked to controls & evidence
+  averageComplianceScorePercent: number;
+  riskTierDistribution: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    unrated: number;
+  };
+  lastMaterializedAt: string;
+}
+
+export interface ThirdPartyAssessmentFilterOptions {
+  viewPreset?:
+    | 'all'
+    | 'outstanding'
+    | 'waiting_review'
+    | 'accepted'
+    | 'follow_up_needed'
+    | 'overdue'
+    | 'critical_processors'
+    | 'control_evidence';
+  status?: AssessmentRequestStatus[];
+  targetType?: AssessmentTargetType;
+  riskTier?: AssessmentRiskTier[];
+  vendorId?: string;
+  processorProfileId?: string;
+  linkedControlId?: string;
+  isCriticalProcessor?: boolean;
+  hasControlEvidence?: boolean;
+  searchTerm?: string;
+}
+
+/**
+ * Deterministically aggregates summary metrics for third-party assessments across the tenant.
+ */
+export function calculateThirdPartyAssessmentSummaryMetrics(
+  tenantId: string,
+  requests: ThirdPartyAssessmentRequest[],
+  schedules: RecurringAssessmentSchedule[] = [],
+  options: {
+    criticalProcessorProfileIds?: string[];
+    criticalVendorIds?: string[];
+    nowDate?: Date;
+  } = {}
+): ThirdPartyAssessmentSummaryMetrics {
+  const now = options.nowDate ? options.nowDate.getTime() : Date.now();
+  const criticalProcSet = new Set(options.criticalProcessorProfileIds || []);
+  const criticalVendSet = new Set(options.criticalVendorIds || []);
+
+  let outstandingRequestsCount = 0;
+  let submittedWaitingReviewCount = 0;
+  let acceptedAssessmentsCount = 0;
+  let rejectedOrFollowUpCount = 0;
+  let overdueResponsesCount = 0;
+  let criticalProcessorAssessmentsCount = 0;
+  let controlEvidenceAssessmentsCount = 0;
+
+  let totalScoreSum = 0;
+  let scoredCount = 0;
+
+  const riskTierDistribution = {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    unrated: 0,
+  };
+
+  const outstandingStatuses: AssessmentRequestStatus[] = ['draft', 'sent', 'opened', 'in_progress'];
+  const waitingReviewStatuses: AssessmentRequestStatus[] = ['submitted', 'under_review'];
+
+  for (const req of requests) {
+    if (outstandingStatuses.includes(req.status)) {
+      outstandingRequestsCount++;
+    } else if (waitingReviewStatuses.includes(req.status)) {
+      submittedWaitingReviewCount++;
+    } else if (req.status === 'accepted') {
+      acceptedAssessmentsCount++;
+    } else if (req.status === 'rejected') {
+      rejectedOrFollowUpCount++;
+    }
+
+    // Overdue check
+    if (req.dueDate && ['sent', 'opened', 'in_progress'].includes(req.status)) {
+      const dueTime = new Date(req.dueDate).getTime();
+      if (now > dueTime) {
+        overdueResponsesCount++;
+      }
+    }
+
+    // Critical processor / vendor check
+    const isCritical =
+      (req.processorProfileId && criticalProcSet.has(req.processorProfileId)) ||
+      (req.vendorId && criticalVendSet.has(req.vendorId));
+    if (isCritical) {
+      criticalProcessorAssessmentsCount++;
+    }
+
+    // Control & Evidence linkage check
+    if (
+      (req.linkedControlIds && req.linkedControlIds.length > 0) ||
+      (req.linkedEvidenceIds && req.linkedEvidenceIds.length > 0)
+    ) {
+      controlEvidenceAssessmentsCount++;
+    }
+
+    // Scores
+    if (typeof req.finalScorePercent === 'number') {
+      totalScoreSum += req.finalScorePercent;
+      scoredCount++;
+    }
+
+    // Risk Tiers
+    if (req.overallRiskRating === 'critical') {
+      riskTierDistribution.critical++;
+    } else if (req.overallRiskRating === 'high') {
+      riskTierDistribution.high++;
+    } else if (req.overallRiskRating === 'medium') {
+      riskTierDistribution.medium++;
+    } else if (req.overallRiskRating === 'low') {
+      riskTierDistribution.low++;
+    } else {
+      riskTierDistribution.unrated++;
+    }
+  }
+
+  // Overdue recurring schedules
+  let overdueRecurringSchedulesCount = 0;
+  for (const sched of schedules) {
+    if (sched.status === 'active' && sched.nextAssessmentDueDate) {
+      const dueTime = new Date(sched.nextAssessmentDueDate).getTime();
+      if (now > dueTime) {
+        overdueRecurringSchedulesCount++;
+      }
+    }
+  }
+
+  const averageComplianceScorePercent =
+    scoredCount > 0 ? Math.round(totalScoreSum / scoredCount) : 0;
+
+  return {
+    id: 'third_party_assessments',
+    tenantId,
+    totalRequestsCount: requests.length,
+    outstandingRequestsCount,
+    submittedWaitingReviewCount,
+    acceptedAssessmentsCount,
+    rejectedOrFollowUpCount,
+    overdueResponsesCount,
+    overdueRecurringSchedulesCount,
+    criticalProcessorAssessmentsCount,
+    controlEvidenceAssessmentsCount,
+    averageComplianceScorePercent,
+    riskTierDistribution,
+    lastMaterializedAt: new Date(now).toISOString(),
+  };
+}
+
+/**
+ * In-memory filter implementation matching Firestore index capabilities.
+ */
+export function filterThirdPartyAssessments(
+  requests: ThirdPartyAssessmentRequest[],
+  filters: ThirdPartyAssessmentFilterOptions,
+  options: {
+    criticalProcessorProfileIds?: string[];
+    criticalVendorIds?: string[];
+    nowDate?: Date;
+  } = {}
+): ThirdPartyAssessmentRequest[] {
+  const now = options.nowDate ? options.nowDate.getTime() : Date.now();
+  const criticalProcSet = new Set(options.criticalProcessorProfileIds || []);
+  const criticalVendSet = new Set(options.criticalVendorIds || []);
+
+  return requests.filter((req) => {
+    // 1. Preset filter
+    if (filters.viewPreset === 'outstanding') {
+      if (!['draft', 'sent', 'opened', 'in_progress'].includes(req.status)) return false;
+    } else if (filters.viewPreset === 'waiting_review') {
+      if (!['submitted', 'under_review'].includes(req.status)) return false;
+    } else if (filters.viewPreset === 'accepted') {
+      if (req.status !== 'accepted') return false;
+    } else if (filters.viewPreset === 'follow_up_needed') {
+      if (req.status !== 'rejected') return false;
+    } else if (filters.viewPreset === 'overdue') {
+      if (!['sent', 'opened', 'in_progress'].includes(req.status)) return false;
+      if (!req.dueDate || new Date(req.dueDate).getTime() >= now) return false;
+    } else if (filters.viewPreset === 'critical_processors') {
+      const isCritical =
+        (req.processorProfileId && criticalProcSet.has(req.processorProfileId)) ||
+        (req.vendorId && criticalVendSet.has(req.vendorId));
+      if (!isCritical) return false;
+    } else if (filters.viewPreset === 'control_evidence') {
+      const hasLinkage =
+        (req.linkedControlIds && req.linkedControlIds.length > 0) ||
+        (req.linkedEvidenceIds && req.linkedEvidenceIds.length > 0);
+      if (!hasLinkage) return false;
+    }
+
+    // 2. Explicit Status filter
+    if (filters.status && filters.status.length > 0) {
+      if (!filters.status.includes(req.status)) return false;
+    }
+
+    // 3. Target Type filter
+    if (filters.targetType && req.targetType !== filters.targetType) {
+      return false;
+    }
+
+    // 4. Risk Tier filter
+    if (filters.riskTier && filters.riskTier.length > 0) {
+      if (!req.overallRiskRating || !filters.riskTier.includes(req.overallRiskRating)) {
+        return false;
+      }
+    }
+
+    // 5. VendorId filter
+    if (filters.vendorId && req.vendorId !== filters.vendorId) {
+      return false;
+    }
+
+    // 6. ProcessorProfileId filter
+    if (filters.processorProfileId && req.processorProfileId !== filters.processorProfileId) {
+      return false;
+    }
+
+    // 7. Linked Control filter
+    if (filters.linkedControlId && !req.linkedControlIds?.includes(filters.linkedControlId)) {
+      return false;
+    }
+
+    // 8. Search Term filter
+    if (filters.searchTerm) {
+      const term = filters.searchTerm.toLowerCase().trim();
+      const titleMatch = req.title.toLowerCase().includes(term);
+      const nameMatch = req.thirdPartyName.toLowerCase().includes(term);
+      const emailMatch = req.respondent?.email?.toLowerCase().includes(term);
+      if (!titleMatch && !nameMatch && !emailMatch) return false;
+    }
+
+    return true;
+  });
+}
