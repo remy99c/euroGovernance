@@ -369,6 +369,12 @@ service cloud.firestore {
         allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
       }
 
+      // Assessment Access Tokens (Restricted Token Storage - writes via Cloud Functions only)
+      match /assessment_access_tokens/{tokenId} {
+        allow read: if isTenantMember(tenantId);
+        allow write: if false; // Issued, validated, and revoked exclusively server-side
+      }
+
       // Systems & Assets
       match /system_assets/{assetId} {
         allow read: if isTenantMember(tenantId);

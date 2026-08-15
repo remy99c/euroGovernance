@@ -299,3 +299,11 @@ export {
   reviewProcessorAssessment,
   renewRecurringProcessorAssessment,
 } from './handlers/processor-assessments.js';
+
+// Assessment Access Token & Secure External Link Handlers
+export {
+  issueAssessmentAccessToken,
+  validateAssessmentAccessToken,
+  revokeAssessmentAccessToken,
+  regenerateAssessmentAccessToken,
+} from './handlers/assessment-access-tokens.js';
