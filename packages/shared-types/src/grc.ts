@@ -180,7 +180,13 @@ export type EvidenceCategory =
   | 'soc_report'
   | 'subprocessor_list'
   | 'transfer_assessment_support'
-  | 'incident_notice';
+  | 'incident_notice'
+  | 'bridge_letter'
+  | 'management_assertion'
+  | 'penetration_test_report'
+  | 'code_of_conduct_doc'
+  | 'industry_label_evidence'
+  | 'custom_assurance_doc';
 
 export const VALID_EVIDENCE_CATEGORIES: readonly EvidenceCategory[] = [
   'audit_log',
@@ -200,6 +206,12 @@ export const VALID_EVIDENCE_CATEGORIES: readonly EvidenceCategory[] = [
   'subprocessor_list',
   'transfer_assessment_support',
   'incident_notice',
+  'bridge_letter',
+  'management_assertion',
+  'penetration_test_report',
+  'code_of_conduct_doc',
+  'industry_label_evidence',
+  'custom_assurance_doc',
 ] as const;
 
 /**
@@ -223,6 +235,7 @@ export interface Evidence extends BaseEntity {
   transferArrangementIds?: string[];
   vendorIds?: string[];
   certificationIds?: string[];
+  processorCertificationIds?: string[];
   collectedAt: string;
   reviewDueDate: string | null;
   reviewedBy: string | null;

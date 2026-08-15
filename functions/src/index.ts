@@ -189,8 +189,10 @@ export {
   listTenantEvidence,
   linkEvidenceToProcessorProfile,
   linkEvidenceToTransferArrangement,
+  linkEvidenceToProcessorCertification,
   getProcessorEvidenceSummary,
   getTransferArrangementEvidenceSummary,
+  getProcessorCertificationEvidenceSummary,
 } from './handlers/evidence.js';
 
 // Audit Log Callable Handler

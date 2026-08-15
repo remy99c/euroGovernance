@@ -11,8 +11,11 @@ import {
   VALID_EVIDENCE_CATEGORIES,
   ProcessorProfile,
   TransferArrangement,
+  ProcessorCertification,
   evaluateProcessorEvidenceCompleteness,
   evaluateTransferEvidenceCompleteness,
+  evaluateProcessorCertificationCompleteness,
+  findEvidenceForProcessorCertification,
 } from '@eurogovernance/shared-types';
 
 export interface CreateEvidenceInput {
@@ -33,6 +36,8 @@ export interface CreateEvidenceInput {
   processorProfileIds?: string[];
   transferArrangementIds?: string[];
   vendorIds?: string[];
+  certificationIds?: string[];
+  processorCertificationIds?: string[];
 }
 
 export interface CreateEvidenceVersionInput {
@@ -754,6 +759,124 @@ export const getTransferArrangementEvidenceSummary = onCall<GetTransferArrangeme
   return {
     success: true,
     transferArrangementId,
+    completeness,
+    linkedEvidenceCount: linkedEvidences.length,
+    evidences: linkedEvidences,
+  };
+});
+
+export interface LinkEvidenceToProcessorCertificationInput {
+  tenantId: string;
+  certificationId: string;
+  evidenceId: string;
+}
+
+/**
+ * Callable Function: linkEvidenceToProcessorCertification
+ * Atomically links an evidence document to a processor certification with bidirectional referencing and audit logging.
+ */
+export const linkEvidenceToProcessorCertification = onCall<LinkEvidenceToProcessorCertificationInput>(async (request) => {
+  const { tenantId, certificationId, evidenceId } = request.data;
+  if (!tenantId || !certificationId || !evidenceId) {
+    throw new HttpsError('invalid-argument', 'tenantId, certificationId, and evidenceId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+    'ai_governance_manager',
+  ]);
+
+  const certRef = db.collection('tenants').doc(tenantId).collection('processor_certifications').doc(certificationId);
+  const evidenceRef = db.collection('tenants').doc(tenantId).collection('evidence').doc(evidenceId);
+
+  const [certSnap, evSnap] = await Promise.all([certRef.get(), evidenceRef.get()]);
+
+  if (!certSnap.exists) {
+    throw new HttpsError('not-found', `Processor certification "${certificationId}" not found.`);
+  }
+  if (!evSnap.exists) {
+    throw new HttpsError('not-found', `Evidence "${evidenceId}" not found.`);
+  }
+
+  const cert = certSnap.data() as ProcessorCertification;
+  const ev = evSnap.data() as Evidence;
+
+  const certEvidenceIds = Array.from(new Set([...(cert.linkedEvidenceIds || []), evidenceId]));
+  const evCertIds = Array.from(new Set([...(ev.processorCertificationIds || []), certificationId]));
+
+  const now = new Date().toISOString();
+
+  await Promise.all([
+    certRef.update({
+      linkedEvidenceIds: certEvidenceIds,
+      updatedBy: authContext.userId,
+      updatedAt: now,
+    }),
+    evidenceRef.update({
+      processorCertificationIds: evCertIds,
+      updatedBy: authContext.userId,
+      updatedAt: now,
+    }),
+  ]);
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    action: 'link',
+    entityType: 'processor_certification',
+    entityId: certificationId,
+    beforeSummary: { linkedEvidenceIds: cert.linkedEvidenceIds || [] },
+    afterSummary: { linkedEvidenceIds: certEvidenceIds, newlyLinkedEvidenceId: evidenceId },
+    source: 'cloud_function',
+    workflowContext: 'processor_certification_evidence_linked',
+  });
+
+  return {
+    success: true,
+    certificationId,
+    evidenceId,
+    linkedEvidenceIds: certEvidenceIds,
+  };
+});
+
+export interface GetProcessorCertificationEvidenceSummaryInput {
+  tenantId: string;
+  certificationId: string;
+}
+
+/**
+ * Callable Function: getProcessorCertificationEvidenceSummary
+ * Evaluates evidence completeness, multi-file resolution, and missing evidence gaps for a processor certification.
+ */
+export const getProcessorCertificationEvidenceSummary = onCall<GetProcessorCertificationEvidenceSummaryInput>(async (request) => {
+  const { tenantId, certificationId } = request.data;
+  if (!tenantId || !certificationId) {
+    throw new HttpsError('invalid-argument', 'tenantId and certificationId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const certRef = db.collection('tenants').doc(tenantId).collection('processor_certifications').doc(certificationId);
+  const certSnap = await certRef.get();
+  if (!certSnap.exists) {
+    throw new HttpsError('not-found', `Processor certification "${certificationId}" not found.`);
+  }
+  const cert = certSnap.data() as ProcessorCertification;
+
+  const evidenceSnap = await db.collection('tenants').doc(tenantId).collection('evidence').get();
+  const allEvidences: Evidence[] = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+  const linkedEvidences = findEvidenceForProcessorCertification(cert, allEvidences);
+  const completeness = evaluateProcessorCertificationCompleteness(cert, allEvidences);
+
+  return {
+    success: true,
+    certificationId,
     completeness,
     linkedEvidenceCount: linkedEvidences.length,
     evidences: linkedEvidences,

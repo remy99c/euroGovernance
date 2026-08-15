@@ -10,12 +10,15 @@ import {
   evaluateProcessorCertificationCompleteness,
   evaluateProcessorCertificationRiskFlags,
   evaluateProcessorCertificationReminders,
+  findEvidenceForProcessorCertification,
+  findProcessorCertificationsForEvidence,
   getAssuranceTaxonomy,
   getAssuranceDisplayName,
   getAssuranceArtifactKindLabel,
   validateAssuranceMetadataRules,
   VALID_ASSURANCE_STANDARD_FAMILIES,
   VALID_ASSURANCE_ARTIFACT_KINDS,
+  VALID_EVIDENCE_CATEGORIES,
   Evidence,
 } from '@eurogovernance/shared-types';
 import { getFirestoreRules } from './fixtures/test-factories.js';
@@ -588,6 +591,298 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       const resultKind = validateProcessorCertification(invalidKind);
       expect(resultKind.valid).toBe(false);
       expect(resultKind.errors.some((e) => e.includes('artifactKind must be one of'))).toBe(true);
+    });
+  });
+
+  describe('5. Evidence Repository Integration, Multi-Evidence Linking & Reverse Lookups', () => {
+    it('supports new processor assurance evidence categories in EvidenceCategory enum', () => {
+      const assuranceCategories = [
+        'iso_certificate',
+        'soc_report',
+        'security_report',
+        'toms',
+        'adequacy_support',
+        'bridge_letter',
+        'management_assertion',
+        'penetration_test_report',
+        'code_of_conduct_doc',
+        'industry_label_evidence',
+        'custom_assurance_doc',
+      ];
+
+      for (const cat of assuranceCategories) {
+        expect(VALID_EVIDENCE_CATEGORIES.includes(cat as any)).toBe(true);
+      }
+    });
+
+    it('resolves multiple evidence files attached to a single certification (e.g. SOC 2 Report + Bridge Letter + Management Assertion)', () => {
+      const cert: ProcessorCertification = {
+        id: 'cert_aws_soc2_multi',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_hosting',
+        vendorId: 'vnd_aws_emea',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'PwC LLP',
+        certificateOrReportNumber: 'PWC-SOC2-2025',
+        reportPeriodStart: '2024-10-01T00:00:00.000Z',
+        reportPeriodEnd: '2025-09-30T23:59:59.000Z',
+        validFrom: '2025-10-15T00:00:00.000Z',
+        validUntil: '2026-10-14T23:59:59.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'AWS Trust Services Criteria',
+        legalEntityOrRegionalScope: 'AWS Global',
+        systemsOrServicesCovered: ['Compute', 'Storage'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'compliant_verified',
+        reviewDueDate: '2026-08-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_soc2_pdf', 'ev_bridge_letter', 'ev_mgmt_assertion'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2025-10-15T00:00:00.000Z',
+        updatedAt: '2025-10-15T00:00:00.000Z',
+      };
+
+      const evidenceDocs: Evidence[] = [
+        {
+          id: 'ev_soc2_pdf',
+          tenantId: 'tenant_eurocorp_de',
+          title: 'AWS SOC 2 Type II Report 2025',
+          description: 'Full audit opinion report',
+          category: 'soc_report',
+          status: 'valid',
+          storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_soc2_pdf/report.pdf',
+          fileSizeBytes: 5242880,
+          mimeType: 'application/pdf',
+          fileHashSha256: 'hash_soc2',
+          controlIds: [],
+          requirementIds: [],
+          policyIds: [],
+          riskIds: [],
+          assessmentIds: [],
+          processorCertificationIds: ['cert_aws_soc2_multi'],
+          collectedAt: '2025-10-15T00:00:00.000Z',
+          reviewDueDate: '2026-10-14T00:00:00.000Z',
+          reviewedBy: 'usr_compliance_01',
+          reviewedAt: '2025-10-15T00:00:00.000Z',
+          rejectionReason: null,
+          currentVersion: 1,
+          ownerId: 'usr_compliance_01',
+          createdAt: '2025-10-15T00:00:00.000Z',
+          updatedAt: '2025-10-15T00:00:00.000Z',
+          createdBy: 'usr_compliance_01',
+          updatedBy: 'usr_compliance_01',
+        },
+        {
+          id: 'ev_bridge_letter',
+          tenantId: 'tenant_eurocorp_de',
+          title: 'AWS Q4 2025 Bridge Letter',
+          description: 'Gap letter covering period to year end',
+          category: 'bridge_letter',
+          status: 'valid',
+          storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_bridge_letter/bridge.pdf',
+          fileSizeBytes: 262144,
+          mimeType: 'application/pdf',
+          fileHashSha256: 'hash_bridge',
+          controlIds: [],
+          requirementIds: [],
+          policyIds: [],
+          riskIds: [],
+          assessmentIds: [],
+          processorCertificationIds: ['cert_aws_soc2_multi'],
+          collectedAt: '2025-10-20T00:00:00.000Z',
+          reviewDueDate: '2026-10-14T00:00:00.000Z',
+          reviewedBy: 'usr_compliance_01',
+          reviewedAt: '2025-10-20T00:00:00.000Z',
+          rejectionReason: null,
+          currentVersion: 1,
+          ownerId: 'usr_compliance_01',
+          createdAt: '2025-10-20T00:00:00.000Z',
+          updatedAt: '2025-10-20T00:00:00.000Z',
+          createdBy: 'usr_compliance_01',
+          updatedBy: 'usr_compliance_01',
+        },
+        {
+          id: 'ev_mgmt_assertion',
+          tenantId: 'tenant_eurocorp_de',
+          title: 'AWS Management Assertion on Controls',
+          description: 'Executive management sign-off',
+          category: 'management_assertion',
+          status: 'valid',
+          storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_mgmt_assertion/assertion.pdf',
+          fileSizeBytes: 524288,
+          mimeType: 'application/pdf',
+          fileHashSha256: 'hash_assertion',
+          controlIds: [],
+          requirementIds: [],
+          policyIds: [],
+          riskIds: [],
+          assessmentIds: [],
+          processorCertificationIds: ['cert_aws_soc2_multi'],
+          collectedAt: '2025-10-15T00:00:00.000Z',
+          reviewDueDate: '2026-10-14T00:00:00.000Z',
+          reviewedBy: 'usr_compliance_01',
+          reviewedAt: '2025-10-15T00:00:00.000Z',
+          rejectionReason: null,
+          currentVersion: 1,
+          ownerId: 'usr_compliance_01',
+          createdAt: '2025-10-15T00:00:00.000Z',
+          updatedAt: '2025-10-15T00:00:00.000Z',
+          createdBy: 'usr_compliance_01',
+          updatedBy: 'usr_compliance_01',
+        },
+      ];
+
+      // 1. Multi-Evidence Resolution
+      const resolved = findEvidenceForProcessorCertification(cert, evidenceDocs);
+      expect(resolved.length).toBe(3);
+      expect(resolved.map((e) => e.category)).toEqual(
+        expect.arrayContaining(['soc_report', 'bridge_letter', 'management_assertion'])
+      );
+
+      // 2. Completeness Evaluator Multi-Evidence Details
+      const completeness = evaluateProcessorCertificationCompleteness(cert, evidenceDocs, new Date('2025-11-01'));
+      expect(completeness.isComplete).toBe(true);
+      expect(completeness.attachedEvidenceCount).toBe(3);
+      expect(completeness.attachedEvidences.length).toBe(3);
+      expect(completeness.gaps.length).toBe(0);
+    });
+
+    it('performs reverse lookup from an Evidence file to all linked Processor Certifications', () => {
+      const singleEvidence: Evidence = {
+        id: 'ev_shared_iso_cert',
+        tenantId: 'tenant_eurocorp_de',
+        title: 'TÜV Shared Infrastructure ISO Certificate',
+        description: 'Covers Compute and Storage',
+        category: 'iso_certificate',
+        status: 'valid',
+        storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_shared_iso_cert/cert.pdf',
+        fileSizeBytes: 1048576,
+        mimeType: 'application/pdf',
+        fileHashSha256: 'hash_shared',
+        controlIds: [],
+        requirementIds: [],
+        policyIds: [],
+        riskIds: [],
+        assessmentIds: [],
+        processorCertificationIds: ['cert_prof_01', 'cert_prof_02'],
+        collectedAt: '2025-01-01T00:00:00.000Z',
+        reviewDueDate: '2028-01-01T00:00:00.000Z',
+        reviewedBy: 'usr_privacy_01',
+        reviewedAt: '2025-01-01T00:00:00.000Z',
+        rejectionReason: null,
+        currentVersion: 1,
+        ownerId: 'usr_privacy_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+        createdBy: 'usr_privacy_01',
+        updatedBy: 'usr_privacy_01',
+      };
+
+      const certsList: ProcessorCertification[] = [
+        {
+          id: 'cert_prof_01',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_primary',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'TÜV',
+          certificateOrReportNumber: 'TUV-001',
+          validFrom: '2025-01-01T00:00:00.000Z',
+          validUntil: '2028-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Scope 1',
+          legalEntityOrRegionalScope: 'EMEA',
+          systemsOrServicesCovered: ['Compute'],
+          reviewOwnerUserId: 'usr_privacy_01',
+          reviewStatus: 'compliant_verified',
+          reviewDueDate: '2026-01-01T00:00:00.000Z',
+          linkedEvidenceIds: ['ev_shared_iso_cert'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          ownerId: 'usr_privacy_01',
+          createdBy: 'usr_privacy_01',
+          updatedBy: 'usr_privacy_01',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'cert_prof_02',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_secondary',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'TÜV',
+          certificateOrReportNumber: 'TUV-002',
+          validFrom: '2025-01-01T00:00:00.000Z',
+          validUntil: '2028-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Scope 2',
+          legalEntityOrRegionalScope: 'EMEA',
+          systemsOrServicesCovered: ['Storage'],
+          reviewOwnerUserId: 'usr_privacy_01',
+          reviewStatus: 'compliant_verified',
+          reviewDueDate: '2026-01-01T00:00:00.000Z',
+          linkedEvidenceIds: ['ev_shared_iso_cert'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          ownerId: 'usr_privacy_01',
+          createdBy: 'usr_privacy_01',
+          updatedBy: 'usr_privacy_01',
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:00.000Z',
+        },
+      ];
+
+      const matchedCerts = findProcessorCertificationsForEvidence(singleEvidence, certsList);
+      expect(matchedCerts.length).toBe(2);
+      expect(matchedCerts.map((c) => c.id)).toEqual(['cert_prof_01', 'cert_prof_02']);
+    });
+
+    it('generates missing evidence gap and risk indicator when structural record has no supporting file', () => {
+      const structuralCertOnly: ProcessorCertification = {
+        id: 'cert_no_file',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_unverified_vendor',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'Unknown Auditor',
+        certificateOrReportNumber: 'UNVERIFIED-2025',
+        reportPeriodStart: '2024-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-12-31T23:59:59.000Z',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2026-01-01T00:00:00.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'Unverified Scope',
+        legalEntityOrRegionalScope: 'Global',
+        systemsOrServicesCovered: ['SaaS'],
+        reviewOwnerUserId: 'usr_privacy_01',
+        reviewStatus: 'under_assessment',
+        reviewDueDate: '2025-06-01T00:00:00.000Z',
+        linkedEvidenceIds: [], // NO FILE ATTACHED
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_privacy_01',
+        createdBy: 'usr_privacy_01',
+        updatedBy: 'usr_privacy_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      };
+
+      const completeness = evaluateProcessorCertificationCompleteness(structuralCertOnly, [], new Date('2025-03-01'));
+      expect(completeness.isComplete).toBe(false);
+      expect(completeness.hasAttachedEvidence).toBe(false);
+      expect(completeness.attachedEvidenceCount).toBe(0);
+
+      const missingEvidenceGap = completeness.gaps.find((g) => g.code === 'PROCESSOR_CERT_MISSING_EVIDENCE');
+      expect(missingEvidenceGap).toBeDefined();
+      expect(missingEvidenceGap?.severity).toBe('high');
+
+      const riskFlags = evaluateProcessorCertificationRiskFlags([structuralCertOnly], [], new Date('2025-03-01'));
+      expect(riskFlags.some((f) => f.ruleCode === 'PROCESSOR_CERT_MISSING_EVIDENCE')).toBe(true);
     });
   });
 });

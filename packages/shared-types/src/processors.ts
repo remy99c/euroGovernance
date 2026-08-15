@@ -1,5 +1,5 @@
 import { BaseEntity } from './core.js';
-import { Evidence, EvidenceCategory, ProcessorSystemRelationshipType, SystemAsset } from './grc.js';
+import { Evidence, EvidenceCategory, EvidenceStatus, ProcessorSystemRelationshipType, SystemAsset } from './grc.js';
 import { PersonalDataBreach, BreachReportingSource, BreachSeverity, BreachStatus } from './gdpr.js';
 import { NotificationType, NotificationPriority } from './audit.js';
 
@@ -1066,6 +1066,14 @@ export interface ProcessorCertificationEvidenceCompleteness {
   certificationId: string;
   isComplete: boolean;
   hasAttachedEvidence: boolean;
+  attachedEvidenceCount: number;
+  attachedEvidences: Array<{
+    id: string;
+    title: string;
+    category: EvidenceCategory;
+    status: EvidenceStatus;
+    fileHashSha256: string;
+  }>;
   isExpired: boolean;
   isExpiringSoon: boolean;
   daysUntilExpiry: number;
@@ -1077,6 +1085,40 @@ export interface ProcessorCertificationEvidenceCompleteness {
     severity: 'critical' | 'high' | 'medium' | 'low';
     suggestedAction: string;
   }>;
+}
+
+/**
+ * Resolves all attached evidence records for a processor certification.
+ * Supports multi-evidence resolution (e.g. main report, bridge letter, management assertion, SOC 3 summary).
+ */
+export function findEvidenceForProcessorCertification(
+  cert: ProcessorCertification,
+  evidenceDocs: Evidence[] = []
+): Evidence[] {
+  if (!cert) return [];
+  const certEvidenceIds = new Set(cert.linkedEvidenceIds || []);
+  return evidenceDocs.filter((e) => {
+    if (certEvidenceIds.has(e.id)) return true;
+    if (e.processorCertificationIds && e.processorCertificationIds.includes(cert.id)) return true;
+    if (e.certificationIds && e.certificationIds.includes(cert.id)) return true;
+    return false;
+  });
+}
+
+/**
+ * Reverse lookup: Resolves all processor certifications referencing or linked to a specific evidence record.
+ */
+export function findProcessorCertificationsForEvidence(
+  evidence: Evidence,
+  certs: ProcessorCertification[] = []
+): ProcessorCertification[] {
+  if (!evidence) return [];
+  return certs.filter((c) => {
+    if (c.linkedEvidenceIds && c.linkedEvidenceIds.includes(evidence.id)) return true;
+    if (evidence.processorCertificationIds && evidence.processorCertificationIds.includes(c.id)) return true;
+    if (evidence.certificationIds && evidence.certificationIds.includes(c.id)) return true;
+    return false;
+  });
 }
 
 /**
@@ -1101,10 +1143,9 @@ export function evaluateProcessorCertificationCompleteness(
     isReviewOverdue = dueMillis < nowMillis && cert.status === 'active_valid';
   }
 
-  const linkedEvidences = evidenceDocs.filter(e =>
-    cert.linkedEvidenceIds && cert.linkedEvidenceIds.includes(e.id)
-  );
-  const hasAttachedEvidence = linkedEvidences.some(e => e.status === 'valid');
+  const linkedEvidences = findEvidenceForProcessorCertification(cert, evidenceDocs);
+  const validAttachedEvidences = linkedEvidences.filter((e) => e.status === 'valid');
+  const hasAttachedEvidence = validAttachedEvidences.length > 0;
 
   const gaps: Array<{
     code: string;
@@ -1160,6 +1201,14 @@ export function evaluateProcessorCertificationCompleteness(
     certificationId: cert.id,
     isComplete: gaps.length === 0,
     hasAttachedEvidence,
+    attachedEvidenceCount: linkedEvidences.length,
+    attachedEvidences: linkedEvidences.map((e) => ({
+      id: e.id,
+      title: e.title,
+      category: e.category,
+      status: e.status,
+      fileHashSha256: e.fileHashSha256,
+    })),
     isExpired,
     isExpiringSoon,
     daysUntilExpiry,
