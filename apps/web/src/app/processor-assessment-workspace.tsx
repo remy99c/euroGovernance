@@ -18,6 +18,12 @@ import { UIBadge } from './components/ui-badge';
 import { UIFilterBar } from './components/ui-filter-bar';
 import { UIDataTable, ColumnDefinition } from './components/ui-data-table';
 import { UIEmptyState } from './components/ui-empty-state';
+import {
+  UIFormField,
+  UIFormSection,
+  UIFormStepper,
+  UIFormReviewSummary,
+} from './components/ui-form-wizard';
 
 export interface ProcessorAssessmentWorkspaceProps {
   tenantId: string;
@@ -57,6 +63,8 @@ export function ProcessorAssessmentWorkspace({
 
   // Modals & Drawers
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
+  const [wizardStep, setWizardStep] = useState<number>(0);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [reviewingAssessment, setReviewingAssessment] = useState<ProcessorAssessment | null>(null);
   const [copiedTokenAssessmentId, setCopiedTokenAssessmentId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'assessments' | 'templates'>('assessments');
@@ -615,7 +623,7 @@ export function ProcessorAssessmentWorkspace({
         </div>
       )}
 
-      {/* CREATE MODAL */}
+      {/* CREATE ASSESSMENT GUIDED WIZARD MODAL */}
       {isCreateModalOpen && (
         <div
           style={{
@@ -624,202 +632,376 @@ export function ProcessorAssessmentWorkspace({
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.5)',
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 1000,
+            padding: '20px',
           }}
         >
           <div
+            className="card-modern"
             style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '8px',
-              padding: '24px',
-              width: '600px',
+              width: '680px',
+              maxWidth: '100%',
+              backgroundColor: 'var(--surface-l2-card)',
+              border: '1px solid var(--border-default)',
+              boxShadow: 'var(--shadow-lg)',
+              borderRadius: 'var(--radius-xl)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
               maxHeight: '90vh',
-              overflowY: 'auto',
             }}
           >
-            <h2 style={{ fontSize: '18px', fontWeight: 600, margin: '0 0 16px 0', color: '#0f172a' }}>
-              Create Processor Assessment
-            </h2>
-
-            <div style={{ marginBottom: '14px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>
-                Assessment Title *
-              </label>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="e.g. CloudCore Infrastructure Pre-Contract Due Diligence"
-                style={{ width: '100%', padding: '8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
-              />
+            {/* Wizard Header */}
+            <div
+              style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--border-subtle)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <h2 className="text-section-title" style={{ margin: 0, color: 'var(--text-primary)' }}>
+                  Create Due Diligence Assessment
+                </h2>
+                <p className="text-caption" style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>
+                  GDPR Article 28 & Third-Party Technical & Organizational Measures (TOMs)
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setIsCreateModalOpen(false);
+                  setWizardStep(0);
+                  setFormErrors({});
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '18px',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                ✕
+              </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>
-                  Assessment Type *
-                </label>
-                <select
-                  value={newAssessmentType}
-                  onChange={(e) => setNewAssessmentType(e.target.value as ProcessorAssessmentType)}
-                  style={{ width: '100%', padding: '8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
-                >
-                  <option value="pre_contract_due_diligence">One-Time Pre-Contract Due Diligence</option>
-                  <option value="periodic_assurance_review">Recurring Periodic Review</option>
-                  <option value="security_posture_deep_dive">Security & TOMs Deep Dive</option>
-                  <option value="ai_supplier_governance">AI Supplier Governance</option>
-                  <option value="cross_border_transfer_diligence">Schrems II Transfer Diligence</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>
-                  Vendor / Supplier Name *
-                </label>
-                <input
-                  type="text"
-                  value={newVendorName}
-                  onChange={(e) => setNewVendorName(e.target.value)}
-                  placeholder="e.g. CloudCore Infrastructure SE"
-                  style={{ width: '100%', padding: '8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
-                />
-              </div>
-            </div>
+            {/* Stepper Bar */}
+            <UIFormStepper
+              steps={[
+                { id: 'step_scope', title: 'Scope & Template', subtitle: 'Framework mapping' },
+                { id: 'step_recipient', title: 'Recipient & Cadence', subtitle: 'Access parameters' },
+                { id: 'step_review', title: 'Review & Dispatch', subtitle: 'Verify parameters' },
+              ]}
+              currentStepIndex={wizardStep}
+              onStepClick={(idx) => setWizardStep(idx)}
+            />
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>
-                  Respondent Contact Name *
-                </label>
-                <input
-                  type="text"
-                  value={newRespondentName}
-                  onChange={(e) => setNewRespondentName(e.target.value)}
-                  placeholder="e.g. John Doe"
-                  style={{ width: '100%', padding: '8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>
-                  Respondent Email *
-                </label>
-                <input
-                  type="email"
-                  value={newRespondentEmail}
-                  onChange={(e) => setNewRespondentEmail(e.target.value)}
-                  placeholder="e.g. privacy@cloudcore.example.eu"
-                  style={{ width: '100%', padding: '8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>
-                  Submission Due Date *
-                </label>
-                <input
-                  type="date"
-                  value={newDueDate}
-                  onChange={(e) => setNewDueDate(e.target.value)}
-                  style={{ width: '100%', padding: '8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>
-                  Template Library
-                </label>
-                <select
-                  value={selectedTemplateId}
-                  onChange={(e) => setSelectedTemplateId(e.target.value)}
-                  style={{ width: '100%', padding: '8px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
-                >
-                  {CANONICAL_ASSESSMENT_TEMPLATES.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={newIsRecurring}
-                  onChange={(e) => setNewIsRecurring(e.target.checked)}
-                />
-                Enable Recurring Assurance Cycle (Periodic Assessment)
-              </label>
-              {newIsRecurring && (
-                <div style={{ marginTop: '8px' }}>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>Recurrence Cadence</label>
-                  <select
-                    value={newCadence}
-                    onChange={(e) => setNewCadence(e.target.value as AssessmentRecurrenceCadence)}
-                    style={{ padding: '6px 10px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
+            {/* Step Body (Scrollable) */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 16px 20px' }}>
+              {/* STEP 0: SCOPE & TEMPLATE */}
+              {wizardStep === 0 && (
+                <div>
+                  <UIFormField
+                    label="Assessment Title"
+                    required
+                    hint="Include vendor name and purpose"
+                    error={formErrors.title}
                   >
-                    <option value="quarterly">Quarterly (90 Days)</option>
-                    <option value="semi_annual">Semi-Annual (180 Days)</option>
-                    <option value="annual">Annual (365 Days)</option>
-                    <option value="biennial">Biennial (2 Years)</option>
-                  </select>
+                    <input
+                      type="text"
+                      value={newTitle}
+                      onChange={(e) => {
+                        setNewTitle(e.target.value);
+                        if (formErrors.title) setFormErrors({ ...formErrors, title: '' });
+                      }}
+                      placeholder="e.g. CloudCore Infrastructure Pre-Contract Due Diligence"
+                      className="input-modern"
+                      style={{ width: '100%' }}
+                    />
+                  </UIFormField>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                    <UIFormField label="Vendor / Processor Legal Name" required error={formErrors.vendorName}>
+                      <input
+                        type="text"
+                        value={newVendorName}
+                        onChange={(e) => {
+                          setNewVendorName(e.target.value);
+                          if (formErrors.vendorName) setFormErrors({ ...formErrors, vendorName: '' });
+                        }}
+                        placeholder="e.g. CloudCore Infrastructure SE"
+                        className="input-modern"
+                        style={{ width: '100%' }}
+                      />
+                    </UIFormField>
+
+                    <UIFormField label="Assessment Type" required>
+                      <select
+                        value={newAssessmentType}
+                        onChange={(e) => setNewAssessmentType(e.target.value as ProcessorAssessmentType)}
+                        className="input-modern"
+                        style={{ width: '100%' }}
+                      >
+                        <option value="pre_contract_due_diligence">One-Time Pre-Contract Due Diligence</option>
+                        <option value="periodic_assurance_review">Recurring Periodic Review</option>
+                        <option value="security_posture_deep_dive">Security & TOMs Deep Dive</option>
+                        <option value="ai_supplier_governance">AI Supplier Governance</option>
+                        <option value="cross_border_transfer_diligence">Schrems II Transfer Diligence</option>
+                      </select>
+                    </UIFormField>
+                  </div>
+
+                  <UIFormField
+                    label="Canonical Questionnaire Template"
+                    hint="Questions will be cloned and version-locked upon creation"
+                  >
+                    <select
+                      value={selectedTemplateId}
+                      onChange={(e) => setSelectedTemplateId(e.target.value)}
+                      className="input-modern"
+                      style={{ width: '100%' }}
+                    >
+                      {CANONICAL_ASSESSMENT_TEMPLATES.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.sections.reduce((acc, s) => acc + s.questions.length, 0)} questions)
+                        </option>
+                      ))}
+                    </select>
+                  </UIFormField>
+                </div>
+              )}
+
+              {/* STEP 1: RECIPIENT & CADENCE */}
+              {wizardStep === 1 && (
+                <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                    <UIFormField label="Respondent Contact Name" hint="Primary POC">
+                      <input
+                        type="text"
+                        value={newRespondentName}
+                        onChange={(e) => setNewRespondentName(e.target.value)}
+                        placeholder="e.g. Marie Curie"
+                        className="input-modern"
+                        style={{ width: '100%' }}
+                      />
+                    </UIFormField>
+
+                    <UIFormField label="Respondent Business Email" required error={formErrors.email}>
+                      <input
+                        type="email"
+                        value={newRespondentEmail}
+                        onChange={(e) => {
+                          setNewRespondentEmail(e.target.value);
+                          if (formErrors.email) setFormErrors({ ...formErrors, email: '' });
+                        }}
+                        placeholder="e.g. privacy@vendor.eu"
+                        className="input-modern"
+                        style={{ width: '100%' }}
+                      />
+                    </UIFormField>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                    <UIFormField label="Respondent Title / Department">
+                      <input
+                        type="text"
+                        value={newRespondentTitle}
+                        onChange={(e) => setNewRespondentTitle(e.target.value)}
+                        placeholder="e.g. Data Protection Officer (DPO)"
+                        className="input-modern"
+                        style={{ width: '100%' }}
+                      />
+                    </UIFormField>
+
+                    <UIFormField label="Submission Due Date" required error={formErrors.dueDate}>
+                      <input
+                        type="date"
+                        value={newDueDate}
+                        onChange={(e) => {
+                          setNewDueDate(e.target.value);
+                          if (formErrors.dueDate) setFormErrors({ ...formErrors, dueDate: '' });
+                        }}
+                        className="input-modern"
+                        style={{ width: '100%' }}
+                      />
+                    </UIFormField>
+                  </div>
+
+                  {/* Progressive Disclosure: Recurring Cadence */}
+                  <UIFormSection
+                    title="Recurring Assurance Cycle"
+                    description="Automatically trigger reassessment questionnaires on a defined interval."
+                  >
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-primary)' }}>
+                      <input
+                        type="checkbox"
+                        checked={newIsRecurring}
+                        onChange={(e) => setNewIsRecurring(e.target.checked)}
+                      />
+                      <span>Enable Scheduled Periodic Recurrence</span>
+                    </label>
+
+                    {newIsRecurring && (
+                      <div style={{ marginTop: '12px', paddingLeft: '22px' }}>
+                        <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          Recurrence Interval
+                        </label>
+                        <select
+                          value={newCadence}
+                          onChange={(e) => setNewCadence(e.target.value as AssessmentRecurrenceCadence)}
+                          className="input-modern"
+                          style={{ width: '220px' }}
+                        >
+                          <option value="quarterly">Quarterly (Every 90 Days)</option>
+                          <option value="semi_annual">Semi-Annual (Every 180 Days)</option>
+                          <option value="annual">Annual (Every 365 Days)</option>
+                          <option value="biennial">Biennial (Every 2 Years)</option>
+                        </select>
+                      </div>
+                    )}
+                  </UIFormSection>
+                </div>
+              )}
+
+              {/* STEP 2: REVIEW & DISPATCH */}
+              {wizardStep === 2 && (
+                <div>
+                  <UIFormReviewSummary
+                    title="Statutory Assessment Parameters"
+                    description="Verify supplier details and governance scope before creating the tokenized questionnaire link."
+                    fields={[
+                      { label: 'Vendor Name', value: newVendorName },
+                      { label: 'Assessment Title', value: newTitle },
+                      { label: 'Assessment Type', value: newAssessmentType.replace(/_/g, ' ') },
+                      {
+                        label: 'Cloned Template',
+                        value: CANONICAL_ASSESSMENT_TEMPLATES.find((t) => t.id === selectedTemplateId)?.name || 'Custom',
+                      },
+                      { label: 'Recipient Email', value: newRespondentEmail },
+                      { label: 'Submission Due Date', value: newDueDate },
+                      {
+                        label: 'Assurance Cadence',
+                        value: newIsRecurring ? `Recurring (${newCadence})` : 'One-Time Submission',
+                      },
+                      { label: 'Reviewer Authority', value: currentUserRole.toUpperCase() },
+                    ]}
+                  />
+
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      backgroundColor: 'var(--status-compliant-bg)',
+                      border: '1px solid var(--status-compliant-border)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: '12px',
+                      color: 'var(--text-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                    }}
+                  >
+                    <span>🛡️</span>
+                    <div>
+                      A 256-bit cryptographically signed magic access token will be generated. The supplier will submit responses securely without requiring portal credentials.
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                type="button"
-                onClick={() => setIsCreateModalOpen(false)}
-                style={{
-                  padding: '8px 14px',
-                  fontSize: '13px',
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSubmittingCreate}
-                onClick={() => handleCreateSubmit(false)}
-                style={{
-                  padding: '8px 14px',
-                  fontSize: '13px',
-                  backgroundColor: '#f1f5f9',
-                  color: '#334155',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                }}
-              >
-                Save as Draft
-              </button>
-              <button
-                type="button"
-                disabled={isSubmittingCreate}
-                onClick={() => handleCreateSubmit(true)}
-                style={{
-                  padding: '8px 16px',
-                  fontSize: '13px',
-                  backgroundColor: '#0284c7',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                {isSubmittingCreate ? 'Creating...' : 'Create & Send Link'}
-              </button>
+            {/* Sticky Wizard Footer */}
+            <div
+              style={{
+                padding: '14px 20px',
+                backgroundColor: 'var(--surface-subtle)',
+                borderTop: '1px solid var(--border-subtle)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                {wizardStep > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep((s) => s - 1)}
+                    className="btn-secondary"
+                    style={{ fontSize: '12px', padding: '6px 14px' }}
+                  >
+                    ← Back
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreateModalOpen(false);
+                      setWizardStep(0);
+                    }}
+                    className="btn-secondary"
+                    style={{ fontSize: '12px', padding: '6px 14px' }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {wizardStep < 2 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const errors: Record<string, string> = {};
+                      if (wizardStep === 0) {
+                        if (!newTitle.trim()) errors.title = 'Title is required.';
+                        if (!newVendorName.trim()) errors.vendorName = 'Vendor name is required.';
+                      } else if (wizardStep === 1) {
+                        if (!newRespondentEmail.trim()) errors.email = 'Email is required.';
+                        if (!newDueDate) errors.dueDate = 'Due date is required.';
+                      }
+
+                      if (Object.keys(errors).length > 0) {
+                        setFormErrors(errors);
+                        return;
+                      }
+
+                      setFormErrors({});
+                      setWizardStep((s) => s + 1);
+                    }}
+                    className="btn-primary"
+                    style={{ fontSize: '12px', padding: '6px 16px' }}
+                  >
+                    Next: {wizardStep === 0 ? 'Recipient & Schedule →' : 'Review & Confirm →'}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isSubmittingCreate}
+                      onClick={() => handleCreateSubmit(false)}
+                      className="btn-secondary"
+                      style={{ fontSize: '12px', padding: '6px 14px' }}
+                    >
+                      Save as Draft
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSubmittingCreate}
+                      onClick={() => handleCreateSubmit(true)}
+                      className="btn-primary"
+                      style={{ fontSize: '12px', padding: '6px 16px', fontWeight: 700 }}
+                    >
+                      {isSubmittingCreate ? 'Generating...' : 'Confirm & Dispatch Magic Link 🚀'}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
