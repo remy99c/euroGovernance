@@ -427,6 +427,547 @@ export function validateTransferArrangement(input: unknown): ValidateTransferArr
 }
 
 // -----------------------------------------------------------------------------
+// STRUCTURED PROCESSOR CERTIFICATIONS & ASSURANCE
+// -----------------------------------------------------------------------------
+
+export type AssuranceArtifactKind =
+  | 'accredited_certification'
+  | 'independent_attestation_report'
+  | 'regulatory_declaration'
+  | 'code_of_conduct'
+  | 'industry_label'
+  | 'self_assessment'
+  | 'custom_assurance';
+
+export const VALID_ASSURANCE_ARTIFACT_KINDS: readonly AssuranceArtifactKind[] = [
+  'accredited_certification',
+  'independent_attestation_report',
+  'regulatory_declaration',
+  'code_of_conduct',
+  'industry_label',
+  'self_assessment',
+  'custom_assurance',
+] as const;
+
+export type AssuranceStandardFamily =
+  | 'iso_27001'
+  | 'iso_27701'
+  | 'iso_42001'
+  | 'iso_22301'
+  | 'soc1_type2'
+  | 'soc2_type1'
+  | 'soc2_type2'
+  | 'soc3'
+  | 'bsi_c5'
+  | 'tisax'
+  | 'cyber_essentials_plus'
+  | 'gdpr_art42_europrivacy'
+  | 'pci_dss_aoc'
+  | 'hipaa_security'
+  | 'dpf_self_certification'
+  | 'csa_star'
+  | 'other';
+
+export const VALID_ASSURANCE_STANDARD_FAMILIES: readonly AssuranceStandardFamily[] = [
+  'iso_27001',
+  'iso_27701',
+  'iso_42001',
+  'iso_22301',
+  'soc1_type2',
+  'soc2_type1',
+  'soc2_type2',
+  'soc3',
+  'bsi_c5',
+  'tisax',
+  'cyber_essentials_plus',
+  'gdpr_art42_europrivacy',
+  'pci_dss_aoc',
+  'hipaa_security',
+  'dpf_self_certification',
+  'csa_star',
+  'other',
+] as const;
+
+export type ProcessorCertificationStatus =
+  | 'active_valid'
+  | 'expiring_soon'
+  | 'expired'
+  | 'under_review'
+  | 'superseded'
+  | 'revoked'
+  | 'suspended';
+
+export const VALID_PROCESSOR_CERTIFICATION_STATUSES: readonly ProcessorCertificationStatus[] = [
+  'active_valid',
+  'expiring_soon',
+  'expired',
+  'under_review',
+  'superseded',
+  'revoked',
+  'suspended',
+] as const;
+
+export type ProcessorCertificationReviewStatus =
+  | 'compliant_verified'
+  | 'under_assessment'
+  | 'minor_gaps_identified'
+  | 'major_deficiencies_identified'
+  | 'renewal_requested';
+
+export const VALID_PROCESSOR_CERTIFICATION_REVIEW_STATUSES: readonly ProcessorCertificationReviewStatus[] = [
+  'compliant_verified',
+  'under_assessment',
+  'minor_gaps_identified',
+  'major_deficiencies_identified',
+  'renewal_requested',
+] as const;
+
+/**
+ * Structured Processor Certification / Attestation Record
+ * Firestore path: /tenants/{tenantId}/processor_certifications/{certId}
+ * Models third-party security, privacy, and regulatory assurance linked to a ProcessorProfile.
+ */
+export interface ProcessorCertification extends BaseEntity {
+  tenantId: string;
+  processorProfileId: string; // FK to /tenants/{tenantId}/processor_profiles/{profileId}
+  vendorId?: string; // FK to /tenants/{tenantId}/vendors/{vendorId} for denormalized querying
+  artifactKind: AssuranceArtifactKind;
+  standardFamily: AssuranceStandardFamily;
+  customStandardName?: string | null;
+  issuingBodyOrAuditor: string; // e.g. 'TÜV Rheinland', 'PwC GmbH', 'BSI Group', 'Schellman'
+  leadAuditorName?: string | null;
+  certificateOrReportNumber: string; // e.g. '01 104 219804', 'PWC-SOC2-2025'
+  reportPeriodStart?: string | null; // ISO 8601 UTC date (relevant for SOC 1/2/3, C5 period-of-time attestations)
+  reportPeriodEnd?: string | null; // ISO 8601 UTC date
+  validFrom: string; // ISO 8601 UTC date (issue date or start of validity)
+  validUntil: string; // ISO 8601 UTC date (expiry date or renewal deadline)
+  status: ProcessorCertificationStatus;
+  assuranceScopeSummary: string; // Narrative of systems, infrastructure, and physical boundaries covered
+  legalEntityOrRegionalScope: string; // e.g. 'Amazon Web Services EMEA SARL (Frankfurt, Dublin, Paris)'
+  systemsOrServicesCovered: string[]; // e.g. ['Compute', 'Storage', 'Database', 'Telemetry']
+  notes?: string | null;
+  reviewOwnerUserId: string; // UID of assigned internal risk/compliance reviewer
+  reviewStatus: ProcessorCertificationReviewStatus;
+  reviewDueDate: string | null; // ISO 8601 UTC date
+  lastReviewedAt?: string | null;
+  lastReviewedBy?: string | null;
+  linkedEvidenceIds: string[]; // FKs to /tenants/{tenantId}/evidence/{evidenceId}
+  linkedControlIds?: string[]; // FKs to /tenants/{tenantId}/controls/{controlId}
+  linkedTransferArrangementIds?: string[]; // FKs to /tenants/{tenantId}/transfer_arrangements/{arrangementId}
+  unresolvedFindingsCount: number;
+  hasMajorDeficiencies: boolean;
+  ownerId: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ValidateProcessorCertificationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/**
+ * Validates a ProcessorCertification payload for data consistency and relationship integrity.
+ */
+export function validateProcessorCertification(input: unknown): ValidateProcessorCertificationResult {
+  const errors: string[] = [];
+
+  if (!input || typeof input !== 'object') {
+    return { valid: false, errors: ['Payload must be a non-null object.'] };
+  }
+
+  const c = input as Partial<ProcessorCertification>;
+
+  // 1. Identifiers & Relationship Integrity
+  if (!c.tenantId || typeof c.tenantId !== 'string' || c.tenantId.trim() === '') {
+    errors.push('tenantId is required and must be a non-empty string.');
+  }
+
+  if (!c.processorProfileId || typeof c.processorProfileId !== 'string' || c.processorProfileId.trim() === '') {
+    errors.push('processorProfileId is required and must reference a valid ProcessorProfile.');
+  }
+
+  if (c.vendorId !== undefined && (typeof c.vendorId !== 'string' || c.vendorId.trim() === '')) {
+    errors.push('vendorId, if provided, must be a non-empty string referencing a valid Vendor.');
+  }
+
+  // 2. Artifact Kind & Standard Family
+  if (!c.artifactKind || !VALID_ASSURANCE_ARTIFACT_KINDS.includes(c.artifactKind)) {
+    errors.push(`artifactKind must be one of: ${VALID_ASSURANCE_ARTIFACT_KINDS.join(', ')}.`);
+  }
+
+  if (!c.standardFamily || !VALID_ASSURANCE_STANDARD_FAMILIES.includes(c.standardFamily)) {
+    errors.push(`standardFamily must be one of: ${VALID_ASSURANCE_STANDARD_FAMILIES.join(', ')}.`);
+  }
+
+  // 3. Issuing Body & Reference Number
+  if (!c.issuingBodyOrAuditor || typeof c.issuingBodyOrAuditor !== 'string' || c.issuingBodyOrAuditor.trim().length < 2) {
+    errors.push('issuingBodyOrAuditor is required and must be at least 2 characters long.');
+  }
+
+  if (!c.certificateOrReportNumber || typeof c.certificateOrReportNumber !== 'string' || c.certificateOrReportNumber.trim().length < 2) {
+    errors.push('certificateOrReportNumber is required and must be at least 2 characters long.');
+  }
+
+  // 4. Validity Window & Date Sanity
+  if (!c.validFrom || typeof c.validFrom !== 'string' || isNaN(new Date(c.validFrom).getTime())) {
+    errors.push('validFrom must be a valid ISO date string.');
+  }
+
+  if (!c.validUntil || typeof c.validUntil !== 'string' || isNaN(new Date(c.validUntil).getTime())) {
+    errors.push('validUntil must be a valid ISO date string.');
+  }
+
+  if (c.validFrom && c.validUntil && new Date(c.validFrom).getTime() > new Date(c.validUntil).getTime()) {
+    errors.push('validFrom date cannot be after validUntil date.');
+  }
+
+  // 5. Report Period (where relevant for attestations like SOC 2 / C5)
+  if (c.reportPeriodStart) {
+    if (typeof c.reportPeriodStart !== 'string' || isNaN(new Date(c.reportPeriodStart).getTime())) {
+      errors.push('reportPeriodStart must be a valid ISO date string if provided.');
+    }
+  }
+
+  if (c.reportPeriodEnd) {
+    if (typeof c.reportPeriodEnd !== 'string' || isNaN(new Date(c.reportPeriodEnd).getTime())) {
+      errors.push('reportPeriodEnd must be a valid ISO date string if provided.');
+    }
+  }
+
+  if (c.reportPeriodStart && c.reportPeriodEnd && new Date(c.reportPeriodStart).getTime() > new Date(c.reportPeriodEnd).getTime()) {
+    errors.push('reportPeriodStart cannot be after reportPeriodEnd.');
+  }
+
+  // 6. Status & Scope
+  if (!c.status || !VALID_PROCESSOR_CERTIFICATION_STATUSES.includes(c.status)) {
+    errors.push(`status must be one of: ${VALID_PROCESSOR_CERTIFICATION_STATUSES.join(', ')}.`);
+  }
+
+  if (!c.assuranceScopeSummary || typeof c.assuranceScopeSummary !== 'string' || c.assuranceScopeSummary.trim().length < 3) {
+    errors.push('assuranceScopeSummary is required and must describe the certified scope.');
+  }
+
+  if (!c.legalEntityOrRegionalScope || typeof c.legalEntityOrRegionalScope !== 'string' || c.legalEntityOrRegionalScope.trim().length < 2) {
+    errors.push('legalEntityOrRegionalScope is required and must specify the in-scope legal entities/territories.');
+  }
+
+  if (!Array.isArray(c.systemsOrServicesCovered) || !c.systemsOrServicesCovered.every(s => typeof s === 'string' && s.trim() !== '')) {
+    errors.push('systemsOrServicesCovered must be an array of covered systems or services.');
+  }
+
+  // 7. Review Governance
+  if (!c.reviewOwnerUserId || typeof c.reviewOwnerUserId !== 'string' || c.reviewOwnerUserId.trim() === '') {
+    errors.push('reviewOwnerUserId is required and must specify the internal review owner.');
+  }
+
+  if (!c.reviewStatus || !VALID_PROCESSOR_CERTIFICATION_REVIEW_STATUSES.includes(c.reviewStatus)) {
+    errors.push(`reviewStatus must be one of: ${VALID_PROCESSOR_CERTIFICATION_REVIEW_STATUSES.join(', ')}.`);
+  }
+
+  if (c.reviewDueDate !== null && c.reviewDueDate !== undefined && (typeof c.reviewDueDate !== 'string' || isNaN(new Date(c.reviewDueDate).getTime()))) {
+    errors.push('reviewDueDate must be a valid ISO date string or null.');
+  }
+
+  // 8. Evidence Links
+  if (!Array.isArray(c.linkedEvidenceIds) || !c.linkedEvidenceIds.every(id => typeof id === 'string')) {
+    errors.push('linkedEvidenceIds must be an array of string identifiers referencing Evidence records.');
+  }
+
+  // 9. Deficiencies & Findings
+  if (typeof c.unresolvedFindingsCount !== 'number' || c.unresolvedFindingsCount < 0) {
+    errors.push('unresolvedFindingsCount must be a non-negative integer.');
+  }
+
+  if (typeof c.hasMajorDeficiencies !== 'boolean') {
+    errors.push('hasMajorDeficiencies must be a boolean flag.');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export interface ProcessorCertificationEvidenceCompleteness {
+  certificationId: string;
+  isComplete: boolean;
+  hasAttachedEvidence: boolean;
+  isExpired: boolean;
+  isExpiringSoon: boolean;
+  daysUntilExpiry: number;
+  isReviewOverdue: boolean;
+  daysUntilReviewDue: number | null;
+  gaps: Array<{
+    code: string;
+    description: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    suggestedAction: string;
+  }>;
+}
+
+/**
+ * Pure evaluator for single processor certification evidence completeness and review health.
+ */
+export function evaluateProcessorCertificationCompleteness(
+  cert: ProcessorCertification,
+  evidenceDocs: Evidence[] = [],
+  asOfDate: Date = new Date()
+): ProcessorCertificationEvidenceCompleteness {
+  const nowMillis = asOfDate.getTime();
+  const validUntilMillis = new Date(cert.validUntil).getTime();
+  const daysUntilExpiry = Math.ceil((validUntilMillis - nowMillis) / (1000 * 60 * 60 * 24));
+  const isExpired = daysUntilExpiry <= 0 || cert.status === 'expired' || cert.status === 'revoked' || cert.status === 'suspended';
+  const isExpiringSoon = !isExpired && daysUntilExpiry <= 60;
+
+  let isReviewOverdue = false;
+  let daysUntilReviewDue: number | null = null;
+  if (cert.reviewDueDate) {
+    const dueMillis = new Date(cert.reviewDueDate).getTime();
+    daysUntilReviewDue = Math.ceil((dueMillis - nowMillis) / (1000 * 60 * 60 * 24));
+    isReviewOverdue = dueMillis < nowMillis && cert.status === 'active_valid';
+  }
+
+  const linkedEvidences = evidenceDocs.filter(e =>
+    cert.linkedEvidenceIds && cert.linkedEvidenceIds.includes(e.id)
+  );
+  const hasAttachedEvidence = linkedEvidences.some(e => e.status === 'valid');
+
+  const gaps: Array<{
+    code: string;
+    description: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    suggestedAction: string;
+  }> = [];
+
+  if (isExpired) {
+    gaps.push({
+      code: 'PROCESSOR_CERT_EXPIRED',
+      description: `Processor assurance (${cert.standardFamily.toUpperCase()} - ${cert.certificateOrReportNumber}) expired on ${cert.validUntil}.`,
+      severity: 'critical',
+      suggestedAction: 'Request renewed SOC 2 report or accredited ISO certificate from vendor.',
+    });
+  } else if (isExpiringSoon) {
+    gaps.push({
+      code: 'PROCESSOR_CERT_EXPIRING_SOON',
+      description: `Processor assurance (${cert.certificateOrReportNumber}) expires in ${daysUntilExpiry} days on ${cert.validUntil}.`,
+      severity: 'high',
+      suggestedAction: 'Initiate vendor assurance renewal request.',
+    });
+  }
+
+  if (!hasAttachedEvidence) {
+    gaps.push({
+      code: 'PROCESSOR_CERT_MISSING_EVIDENCE',
+      description: `Processor assurance record (${cert.certificateOrReportNumber}) has no attached verified evidence file in the Evidence repository.`,
+      severity: 'high',
+      suggestedAction: 'Upload formal PDF report or certificate to Evidence repository and link it.',
+    });
+  }
+
+  if (isReviewOverdue) {
+    gaps.push({
+      code: 'PROCESSOR_CERT_REVIEW_OVERDUE',
+      description: `Periodic internal review for assurance (${cert.certificateOrReportNumber}) was due on ${cert.reviewDueDate}.`,
+      severity: 'high',
+      suggestedAction: 'Complete reviewer assessment and sign off reviewStatus.',
+    });
+  }
+
+  if (cert.hasMajorDeficiencies || cert.reviewStatus === 'major_deficiencies_identified') {
+    gaps.push({
+      code: 'PROCESSOR_CERT_MAJOR_DEFICIENCIES',
+      description: `Assurance report has recorded major audit exceptions or qualified opinion.`,
+      severity: 'critical',
+      suggestedAction: 'Review Bridge Letter / Corrective Action Plan from vendor and trigger risk mitigation.',
+    });
+  }
+
+  return {
+    certificationId: cert.id,
+    isComplete: gaps.length === 0,
+    hasAttachedEvidence,
+    isExpired,
+    isExpiringSoon,
+    daysUntilExpiry,
+    isReviewOverdue,
+    daysUntilReviewDue,
+    gaps,
+  };
+}
+
+export interface ProcessorCertificationRiskFlag {
+  id: string;
+  certificationId: string;
+  processorProfileId: string;
+  standardFamily: AssuranceStandardFamily;
+  certificateOrReportNumber: string;
+  ruleCode: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  title: string;
+  description: string;
+  suggestedTreatment: string;
+  inherentScore: number;
+  isActionable: boolean;
+}
+
+/**
+ * Evaluates risk flags across all processor certifications for a tenant or processor profile.
+ */
+export function evaluateProcessorCertificationRiskFlags(
+  certs: ProcessorCertification[],
+  evidenceDocs: Evidence[] = [],
+  asOfDate: Date = new Date()
+): ProcessorCertificationRiskFlag[] {
+  const flags: ProcessorCertificationRiskFlag[] = [];
+
+  for (const cert of certs) {
+    const completeness = evaluateProcessorCertificationCompleteness(cert, evidenceDocs, asOfDate);
+
+    for (const gap of completeness.gaps) {
+      flags.push({
+        id: `flag_${cert.id}_${gap.code.toLowerCase()}`,
+        certificationId: cert.id,
+        processorProfileId: cert.processorProfileId,
+        standardFamily: cert.standardFamily,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        ruleCode: gap.code,
+        severity: gap.severity,
+        title: `${gap.code.replace(/_/g, ' ')}: ${cert.certificateOrReportNumber}`,
+        description: gap.description,
+        suggestedTreatment: gap.suggestedAction,
+        inherentScore: gap.severity === 'critical' ? 20 : gap.severity === 'high' ? 12 : 6,
+        isActionable: true,
+      });
+    }
+  }
+
+  return flags;
+}
+
+export interface ProcessorCertificationReminderCandidate {
+  recipientUserId: string;
+  tenantId: string;
+  processorProfileId: string;
+  certificationId: string;
+  certificateOrReportNumber: string;
+  standardFamily: AssuranceStandardFamily;
+  reminderType: NotificationType;
+  title: string;
+  message: string;
+  dueDate: string;
+  severity: NotificationPriority;
+}
+
+/**
+ * Evaluates reminder candidates for upcoming expiries, overdue reviews, and missing evidence.
+ */
+export function evaluateProcessorCertificationReminders(
+  certs: ProcessorCertification[],
+  options: { asOfDate?: Date; windowDays?: number } = {}
+): ProcessorCertificationReminderCandidate[] {
+  const asOf = options.asOfDate || new Date();
+  const windowDays = options.windowDays || 90;
+  const nowMillis = asOf.getTime();
+  const windowMillis = windowDays * 24 * 60 * 60 * 1000;
+  const reminders: ProcessorCertificationReminderCandidate[] = [];
+
+  for (const cert of certs) {
+    const recipient = cert.reviewOwnerUserId || cert.createdBy;
+    const expiryMillis = new Date(cert.validUntil).getTime();
+    const daysUntilExpiry = Math.ceil((expiryMillis - nowMillis) / (1000 * 60 * 60 * 24));
+
+    if (expiryMillis <= nowMillis) {
+      reminders.push({
+        recipientUserId: recipient,
+        tenantId: cert.tenantId,
+        processorProfileId: cert.processorProfileId,
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardFamily: cert.standardFamily,
+        reminderType: 'certification_expired',
+        title: `Processor Assurance Expired: ${cert.certificateOrReportNumber}`,
+        message: `Third-party assurance (${cert.standardFamily.toUpperCase()}) for processor profile ${cert.processorProfileId} expired on ${cert.validUntil}.`,
+        dueDate: cert.validUntil,
+        severity: 'urgent',
+      });
+    } else if (daysUntilExpiry <= 30) {
+      reminders.push({
+        recipientUserId: recipient,
+        tenantId: cert.tenantId,
+        processorProfileId: cert.processorProfileId,
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardFamily: cert.standardFamily,
+        reminderType: 'certification_expiry_warning_30d',
+        title: `Urgent Processor Assurance Expiry (30d): ${cert.certificateOrReportNumber}`,
+        message: `Assurance (${cert.standardFamily.toUpperCase()}) expires in ${daysUntilExpiry} days on ${cert.validUntil}.`,
+        dueDate: cert.validUntil,
+        severity: 'high',
+      });
+    } else if (daysUntilExpiry <= 90) {
+      reminders.push({
+        recipientUserId: recipient,
+        tenantId: cert.tenantId,
+        processorProfileId: cert.processorProfileId,
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardFamily: cert.standardFamily,
+        reminderType: 'certification_expiry_warning_90d',
+        title: `Processor Assurance Renewal Window (90d): ${cert.certificateOrReportNumber}`,
+        message: `Assurance (${cert.standardFamily.toUpperCase()}) expires on ${cert.validUntil}. Request updated report/certificate.`,
+        dueDate: cert.validUntil,
+        severity: 'medium',
+      });
+    }
+
+    // Review Due Date
+    if (cert.reviewDueDate) {
+      const reviewMillis = new Date(cert.reviewDueDate).getTime();
+      if (reviewMillis <= nowMillis + windowMillis && cert.status === 'active_valid') {
+        const isOverdue = reviewMillis < nowMillis;
+        reminders.push({
+          recipientUserId: recipient,
+          tenantId: cert.tenantId,
+          processorProfileId: cert.processorProfileId,
+          certificationId: cert.id,
+          certificateOrReportNumber: cert.certificateOrReportNumber,
+          standardFamily: cert.standardFamily,
+          reminderType: 'processor_annual_review_due',
+          title: isOverdue
+            ? `Processor Assurance Review Overdue: ${cert.certificateOrReportNumber}`
+            : `Processor Assurance Review Due: ${cert.certificateOrReportNumber}`,
+          message: `Assurance review for ${cert.standardFamily.toUpperCase()} is scheduled for ${cert.reviewDueDate}.`,
+          dueDate: cert.reviewDueDate,
+          severity: isOverdue ? 'high' : 'medium',
+        });
+      }
+    }
+
+    // Missing Evidence Follow-up
+    if ((!cert.linkedEvidenceIds || cert.linkedEvidenceIds.length === 0) && cert.status === 'active_valid') {
+      reminders.push({
+        recipientUserId: recipient,
+        tenantId: cert.tenantId,
+        processorProfileId: cert.processorProfileId,
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardFamily: cert.standardFamily,
+        reminderType: 'missing_evidence_follow_up',
+        title: `Missing Report/Certificate PDF: ${cert.certificateOrReportNumber}`,
+        message: `Attach formal certificate or attestation PDF to the Evidence repository for processor profile ${cert.processorProfileId}.`,
+        dueDate: cert.validFrom,
+        severity: 'medium',
+      });
+    }
+  }
+
+  return reminders;
+}
+
+// -----------------------------------------------------------------------------
 // TIA INTEGRATION & DERIVED INDICATORS
 // -----------------------------------------------------------------------------
 

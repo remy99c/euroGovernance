@@ -289,6 +289,16 @@ service cloud.firestore {
         allow delete: if isTenantAdmin(tenantId);
       }
 
+      // Processor Certifications & Third-Party Assurance
+      match /processor_certifications/{certId} {
+        allow read: if isTenantMember(tenantId);
+        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
+                      && validTenantScopedCreate(tenantId);
+        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
+                      && validTenantScopedUpdate(tenantId);
+        allow delete: if isTenantAdmin(tenantId) || hasRole(tenantId, 'compliance_manager');
+      }
+
       // Systems & Assets
       match /system_assets/{assetId} {
         allow read: if isTenantMember(tenantId);
