@@ -72,6 +72,8 @@ export {
   linkProcessorToSystemAsset,
   getProcessorsForSystemAsset,
   getSystemsForProcessorProfile,
+  getProcessorReviewReminders,
+  dispatchProcessorReviewReminders,
 } from './handlers/vendors-and-assets.js';
 
 // GDPR Phase 1 Module Handlers

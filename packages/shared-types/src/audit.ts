@@ -42,7 +42,13 @@ export type NotificationType =
   | 'breach_deadline_warning'
   | 'dsr_deadline_warning'
   | 'ai_incident_reported'
-  | 'audit_scheduled';
+  | 'audit_scheduled'
+  | 'processor_annual_review_due'
+  | 'dpa_renewal_due'
+  | 'scc_review_due'
+  | 'transfer_arrangement_review_due'
+  | 'tia_review_due'
+  | 'missing_evidence_follow_up';
 
 /**
  * Immutable Audit Log Event (/tenants/{tenantId}/audit_logs/{logId})

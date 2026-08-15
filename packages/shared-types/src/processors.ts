@@ -1,6 +1,7 @@
 import { BaseEntity } from './core.js';
 import { Evidence, EvidenceCategory, ProcessorSystemRelationshipType, SystemAsset } from './grc.js';
 import { PersonalDataBreach, BreachReportingSource, BreachSeverity, BreachStatus } from './gdpr.js';
+import { NotificationType, NotificationPriority } from './audit.js';
 
 export type ProcessorRole =
   | 'data_processor'
@@ -1504,4 +1505,262 @@ export function evaluateProcessorRiskFlags(
     flags,
     linkedRiskIds: profile.linkedRiskIds || [],
   };
+}
+
+// -----------------------------------------------------------------------------
+// PROCESSOR & TRANSFER REVIEW REMINDERS & LIFECYCLE NOTIFICATIONS
+// -----------------------------------------------------------------------------
+
+export interface ProcessorReminderCandidate {
+  id: string; // Idempotency key: e.g. `${reminderType}_${sourceEntityId}_${dueDate || 'pending'}`
+  reminderType: NotificationType;
+  priority: NotificationPriority;
+  title: string;
+  message: string;
+  sourceEntityType: 'processor_profile' | 'transfer_arrangement';
+  sourceEntityId: string;
+  processorProfileId: string;
+  transferArrangementId?: string;
+  targetRecipientRole?: 'privacy_manager' | 'compliance_manager' | 'security_manager';
+  recipientUserId?: string | null;
+  dueDate?: string | null;
+  linkUrl: string;
+}
+
+export interface EvaluateRemindersOptions {
+  windowDays?: number; // default 30 days ahead of due date
+  asOfDate?: Date;
+}
+
+/**
+ * Pure evaluator for periodic review reminders, DPA renewals, SCC checks, TIA deadlines, and missing evidence follow-ups.
+ */
+export function evaluateProcessorReminders(
+  profile: ProcessorProfile,
+  transfers: TransferArrangement[] = [],
+  evidenceDocs: Evidence[] = [],
+  options: EvaluateRemindersOptions = {}
+): ProcessorReminderCandidate[] {
+  const { windowDays = 30, asOfDate = new Date() } = options;
+  const nowMillis = asOfDate.getTime();
+  const windowMillis = windowDays * 24 * 60 * 60 * 1000;
+  const reminders: ProcessorReminderCandidate[] = [];
+  const seenIds = new Set<string>();
+
+  const addReminder = (candidate: ProcessorReminderCandidate) => {
+    if (!seenIds.has(candidate.id)) {
+      seenIds.add(candidate.id);
+      reminders.push(candidate);
+    }
+  };
+
+  const recipientId = profile.ownerUserId || profile.ownerId || null;
+
+  // 1. Annual / Periodic Processor Review Due
+  if (profile.nextReviewDate) {
+    const nextReviewMillis = new Date(profile.nextReviewDate).getTime();
+    const isOverdue = nextReviewMillis < nowMillis;
+    const isUpcoming = nextReviewMillis - nowMillis <= windowMillis && !isOverdue;
+
+    if (isOverdue || isUpcoming) {
+      const priority: NotificationPriority = isOverdue ? 'high' : 'medium';
+      const statusText = isOverdue ? 'is OVERDUE' : `is due on ${profile.nextReviewDate.slice(0, 10)}`;
+      addReminder({
+        id: `processor_annual_review_due_${profile.id}_${profile.nextReviewDate.slice(0, 10)}`,
+        reminderType: 'processor_annual_review_due',
+        priority,
+        title: `Processor Review Due: ${profile.engagementName || profile.id}`,
+        message: `The scheduled privacy review for processor "${profile.engagementName || profile.id}" ${statusText}. Please conduct Article 28 supplier review.`,
+        sourceEntityType: 'processor_profile',
+        sourceEntityId: profile.id,
+        processorProfileId: profile.id,
+        targetRecipientRole: 'privacy_manager',
+        recipientUserId: recipientId,
+        dueDate: profile.nextReviewDate,
+        linkUrl: `/processors/${profile.id}`,
+      });
+    }
+  }
+
+  // 2. DPA Renewal Due / Missing DPA
+  if (!profile.dpaSigned) {
+    addReminder({
+      id: `dpa_renewal_due_${profile.id}_missing`,
+      reminderType: 'dpa_renewal_due',
+      priority: profile.isSpecialCategoryData ? 'urgent' : 'high',
+      title: `Missing Executed DPA: ${profile.engagementName || profile.id}`,
+      message: `Processor engagement "${profile.engagementName || profile.id}" lacks a signed Article 28 Data Processing Agreement.`,
+      sourceEntityType: 'processor_profile',
+      sourceEntityId: profile.id,
+      processorProfileId: profile.id,
+      targetRecipientRole: 'privacy_manager',
+      recipientUserId: recipientId,
+      dueDate: null,
+      linkUrl: `/processors/${profile.id}`,
+    });
+  }
+
+  // 3. Missing Evidence Follow-up on Profile
+  if (profile.dpaSigned && !profile.linkedDpaEvidenceId) {
+    addReminder({
+      id: `missing_evidence_follow_up_${profile.id}_dpa_doc`,
+      reminderType: 'missing_evidence_follow_up',
+      priority: 'medium',
+      title: `Attach Executed DPA PDF: ${profile.engagementName || profile.id}`,
+      message: `Processor "${profile.engagementName || profile.id}" is marked as DPA signed, but no countersigned DPA document has been linked in the Evidence Repository.`,
+      sourceEntityType: 'processor_profile',
+      sourceEntityId: profile.id,
+      processorProfileId: profile.id,
+      targetRecipientRole: 'compliance_manager',
+      recipientUserId: recipientId,
+      dueDate: null,
+      linkUrl: `/processors/${profile.id}`,
+    });
+  }
+
+  // Transfer Arrangement Level Reminders
+  for (const t of transfers) {
+    const transferRecipientId = t.ownerId || recipientId;
+
+    // 4. SCC Review Due
+    if (t.transferMechanismType === 'standard_contractual_clauses') {
+      if (t.reviewDueDate) {
+        const sccReviewMillis = new Date(t.reviewDueDate).getTime();
+        const isOverdue = sccReviewMillis < nowMillis;
+        const isUpcoming = sccReviewMillis - nowMillis <= windowMillis && !isOverdue;
+
+        if (isOverdue || isUpcoming) {
+          addReminder({
+            id: `scc_review_due_${t.id}_${t.reviewDueDate.slice(0, 10)}`,
+            reminderType: 'scc_review_due',
+            priority: isOverdue ? 'high' : 'medium',
+            title: `Standard Contractual Clauses Review Due: ${t.name}`,
+            message: `The Standard Contractual Clauses (SCC) mechanism for transfer "${t.name}" ${isOverdue ? 'is OVERDUE' : `is due for periodic review on ${t.reviewDueDate.slice(0, 10)}`}.`,
+            sourceEntityType: 'transfer_arrangement',
+            sourceEntityId: t.id,
+            processorProfileId: profile.id,
+            transferArrangementId: t.id,
+            targetRecipientRole: 'privacy_manager',
+            recipientUserId: transferRecipientId,
+            dueDate: t.reviewDueDate,
+            linkUrl: `/processors/${profile.id}/transfers/${t.id}`,
+          });
+        }
+      }
+
+      // Missing SCC Evidence
+      if (!t.linkedEvidenceIds || t.linkedEvidenceIds.length === 0) {
+        addReminder({
+          id: `missing_evidence_follow_up_${t.id}_scc_doc`,
+          reminderType: 'missing_evidence_follow_up',
+          priority: 'high',
+          title: `Upload Signed SCC Contract: ${t.name}`,
+          message: `Transfer arrangement "${t.name}" designates SCCs as its Chapter V legal mechanism but has no attached contract PDF in the evidence repository.`,
+          sourceEntityType: 'transfer_arrangement',
+          sourceEntityId: t.id,
+          processorProfileId: profile.id,
+          transferArrangementId: t.id,
+          targetRecipientRole: 'compliance_manager',
+          recipientUserId: transferRecipientId,
+          dueDate: null,
+          linkUrl: `/processors/${profile.id}/transfers/${t.id}`,
+        });
+      }
+    }
+
+    // 5. Transfer Arrangement Review Due (Other mechanisms)
+    if (t.transferMechanismType !== 'standard_contractual_clauses' && t.reviewDueDate) {
+      const reviewMillis = new Date(t.reviewDueDate).getTime();
+      const isOverdue = reviewMillis < nowMillis;
+      const isUpcoming = reviewMillis - nowMillis <= windowMillis && !isOverdue;
+
+      if (isOverdue || isUpcoming) {
+        addReminder({
+          id: `transfer_arrangement_review_due_${t.id}_${t.reviewDueDate.slice(0, 10)}`,
+          reminderType: 'transfer_arrangement_review_due',
+          priority: isOverdue ? 'high' : 'medium',
+          title: `Transfer Arrangement Review Due: ${t.name}`,
+          message: `Transfer arrangement "${t.name}" (${t.transferMechanismType}) review ${isOverdue ? 'is OVERDUE' : `is due on ${t.reviewDueDate.slice(0, 10)}`}.`,
+          sourceEntityType: 'transfer_arrangement',
+          sourceEntityId: t.id,
+          processorProfileId: profile.id,
+          transferArrangementId: t.id,
+          targetRecipientRole: 'privacy_manager',
+          recipientUserId: transferRecipientId,
+          dueDate: t.reviewDueDate,
+          linkUrl: `/processors/${profile.id}/transfers/${t.id}`,
+        });
+      }
+    }
+
+    // 6. TIA Stale / Review Due
+    if (t.restrictedTransfer && !t.linkedTiaId) {
+      addReminder({
+        id: `tia_review_due_${t.id}_missing`,
+        reminderType: 'tia_review_due',
+        priority: 'high',
+        title: `Transfer Impact Assessment (TIA) Required: ${t.name}`,
+        message: `Restricted transfer "${t.name}" to non-adequate third countries (${t.destinationCountries.join(', ')}) requires a completed Transfer Impact Assessment (TIA).`,
+        sourceEntityType: 'transfer_arrangement',
+        sourceEntityId: t.id,
+        processorProfileId: profile.id,
+        transferArrangementId: t.id,
+        targetRecipientRole: 'privacy_manager',
+        recipientUserId: transferRecipientId,
+        dueDate: null,
+        linkUrl: `/processors/${profile.id}/transfers/${t.id}`,
+      });
+    }
+
+    // 7. Missing Subprocessor documentation
+    if (t.subprocessorInvolvement && (!t.linkedEvidenceIds || t.linkedEvidenceIds.length === 0)) {
+      addReminder({
+        id: `missing_evidence_follow_up_${t.id}_subprocessors`,
+        reminderType: 'missing_evidence_follow_up',
+        priority: 'medium',
+        title: `Attach Subprocessor Authorization Schedule: ${t.name}`,
+        message: `Transfer arrangement "${t.name}" indicates subprocessor involvement without attached subprocessor authorization or SOC/ISO audit reports.`,
+        sourceEntityType: 'transfer_arrangement',
+        sourceEntityId: t.id,
+        processorProfileId: profile.id,
+        transferArrangementId: t.id,
+        targetRecipientRole: 'compliance_manager',
+        recipientUserId: transferRecipientId,
+        dueDate: null,
+        linkUrl: `/processors/${profile.id}/transfers/${t.id}`,
+      });
+    }
+
+    // 8. Evidence Expiring Soon / Expired
+    if (t.linkedEvidenceIds && t.linkedEvidenceIds.length > 0 && evidenceDocs.length > 0) {
+      for (const evId of t.linkedEvidenceIds) {
+        const evDoc = evidenceDocs.find((e) => e.id === evId);
+        if (evDoc?.reviewDueDate) {
+          const evExpiryMillis = new Date(evDoc.reviewDueDate).getTime();
+          const isExpired = evExpiryMillis < nowMillis;
+          const isExpiring = evExpiryMillis - nowMillis <= windowMillis && !isExpired;
+
+          if (isExpired || isExpiring) {
+            addReminder({
+              id: `missing_evidence_follow_up_${t.id}_evidence_expired_${evId}`,
+              reminderType: 'missing_evidence_follow_up',
+              priority: isExpired ? 'high' : 'medium',
+              title: `Evidence Review Due: ${evDoc.title || evId}`,
+              message: `Evidence document "${evDoc.title || evId}" attached to transfer "${t.name}" ${isExpired ? 'is OVERDUE for review' : `is due for renewal/review on ${evDoc.reviewDueDate.slice(0, 10)}`}. Please obtain updated compliance documentation.`,
+              sourceEntityType: 'transfer_arrangement',
+              sourceEntityId: t.id,
+              processorProfileId: profile.id,
+              transferArrangementId: t.id,
+              targetRecipientRole: 'compliance_manager',
+              recipientUserId: transferRecipientId,
+              dueDate: evDoc.reviewDueDate,
+              linkUrl: `/processors/${profile.id}/transfers/${t.id}`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return reminders;
 }

@@ -2,6 +2,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
+import { createNotification } from '../lib/notifications.js';
 import {
   Vendor,
   VendorRiskTier,
@@ -24,6 +25,9 @@ import {
   ProcessorSystemRelationship,
   buildSystemProcessorView,
   buildProcessorSystemView,
+  Evidence,
+  ProcessorReminderCandidate,
+  evaluateProcessorReminders,
 } from '@eurogovernance/shared-types';
 
 export interface CreateVendorInput {
@@ -1688,4 +1692,184 @@ export const listTenantTransferArrangements = onCall<ListTransferArrangementsInp
   const arrangements: TransferArrangement[] = snap.docs.map((d) => d.data() as TransferArrangement);
 
   return { success: true, count: arrangements.length, arrangements };
+});
+
+// -----------------------------------------------------------------------------
+// 5. PROCESSOR & TRANSFER REVIEW REMINDERS & LIFECYCLE NOTIFICATIONS
+// -----------------------------------------------------------------------------
+
+export interface GetProcessorReviewRemindersInput {
+  tenantId: string;
+  processorProfileId?: string;
+  windowDays?: number;
+}
+
+export const getProcessorReviewReminders = onCall<GetProcessorReviewRemindersInput>(async (request) => {
+  const { tenantId, processorProfileId, windowDays = 30 } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // 1. Fetch Processor Profiles
+  let profiles: ProcessorProfile[] = [];
+  if (processorProfileId) {
+    const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId).get();
+    if (pSnap.exists) {
+      profiles.push(pSnap.data() as ProcessorProfile);
+    }
+  } else {
+    const snap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').get();
+    profiles = snap.docs.map((d) => d.data() as ProcessorProfile);
+  }
+
+  // 2. Fetch Transfers
+  const transSnap = await db.collection('tenants').doc(tenantId).collection('transfer_arrangements').get();
+  const allTransfers = transSnap.docs.map((d) => d.data() as TransferArrangement);
+
+  // 3. Fetch Evidence
+  const evSnap = await db.collection('tenants').doc(tenantId).collection('evidence').get();
+  const allEvidence = evSnap.docs.map((d) => d.data() as Evidence);
+
+  const allReminders: ProcessorReminderCandidate[] = [];
+  for (const profile of profiles) {
+    const relevantTransfers = allTransfers.filter((t) => t.processorProfileId === profile.id);
+    const reminders = evaluateProcessorReminders(profile, relevantTransfers, allEvidence, { windowDays });
+    allReminders.push(...reminders);
+  }
+
+  return {
+    success: true,
+    count: allReminders.length,
+    reminders: allReminders,
+  };
+});
+
+export interface DispatchProcessorReviewRemindersInput {
+  tenantId: string;
+  processorProfileId?: string;
+  windowDays?: number;
+  dryRun?: boolean;
+}
+
+export const dispatchProcessorReviewReminders = onCall<DispatchProcessorReviewRemindersInput>(async (request) => {
+  const { tenantId, processorProfileId, windowDays = 30, dryRun = false } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+  ]);
+
+  // 1. Load Profiles
+  let profiles: ProcessorProfile[] = [];
+  if (processorProfileId) {
+    const pSnap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').doc(processorProfileId).get();
+    if (pSnap.exists) {
+      profiles.push(pSnap.data() as ProcessorProfile);
+    }
+  } else {
+    const snap = await db.collection('tenants').doc(tenantId).collection('processor_profiles').get();
+    profiles = snap.docs.map((d) => d.data() as ProcessorProfile);
+  }
+
+  // 2. Load Transfers & Evidence
+  const transSnap = await db.collection('tenants').doc(tenantId).collection('transfer_arrangements').get();
+  const allTransfers = transSnap.docs.map((d) => d.data() as TransferArrangement);
+
+  const evSnap = await db.collection('tenants').doc(tenantId).collection('evidence').get();
+  const allEvidence = evSnap.docs.map((d) => d.data() as Evidence);
+
+  // 3. Load Memberships for Role-based routing fallback
+  const memSnap = await db.collection('tenants').doc(tenantId).collection('memberships').get();
+  const members = memSnap.docs.map((d) => d.data());
+
+  const privacyOfficers = members.filter((m) => m.role === 'privacy_manager' || m.role === 'compliance_manager' || m.role === 'tenant_admin');
+  const fallbackRecipientId = (privacyOfficers.length > 0 && privacyOfficers[0]?.userId) ? privacyOfficers[0].userId : authContext.userId;
+
+  // 4. Load recent notifications for deduplication
+  const notifSnap = await db.collection('tenants').doc(tenantId).collection('notifications').get();
+  const existingNotifs = notifSnap.docs.map((d) => d.data());
+
+  const now = Date.now();
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  const candidateReminders: ProcessorReminderCandidate[] = [];
+  for (const profile of profiles) {
+    const relevantTransfers = allTransfers.filter((t) => t.processorProfileId === profile.id);
+    const rems = evaluateProcessorReminders(profile, relevantTransfers, allEvidence, { windowDays });
+    candidateReminders.push(...rems);
+  }
+
+  const dispatchedNotifications: string[] = [];
+  let actualSuppressed = 0;
+
+  if (!dryRun) {
+    for (const candidate of candidateReminders) {
+      const targetUserId = candidate.recipientUserId || fallbackRecipientId;
+
+      // Deduplication check: Has an active notification of the exact type for this entity been created for this recipient recently?
+      const isDuplicate = existingNotifs.some(
+        (n) =>
+          n.recipientId === targetUserId &&
+          n.type === candidate.reminderType &&
+          n.sourceEntityId === candidate.sourceEntityId &&
+          n.sourceEntityType === candidate.sourceEntityType &&
+          !n.isRead &&
+          new Date(n.createdAt).getTime() > sevenDaysAgo
+      );
+
+      if (isDuplicate) {
+        actualSuppressed++;
+        continue;
+      }
+
+      const notif = await createNotification({
+        tenantId,
+        recipientId: targetUserId,
+        title: candidate.title,
+        message: candidate.message,
+        type: candidate.reminderType,
+        priority: candidate.priority,
+        sourceEntityType: candidate.sourceEntityType,
+        sourceEntityId: candidate.sourceEntityId,
+        linkUrl: candidate.linkUrl,
+      });
+
+      dispatchedNotifications.push(notif.id);
+    }
+
+    if (dispatchedNotifications.length > 0) {
+      await recordAuditLog({
+        tenantId,
+        actorId: authContext.userId,
+        actorEmail: authContext.email,
+        actorRole: authContext.role,
+        entityType: 'notification',
+        entityId: `batch_${Date.now()}`,
+        action: 'create',
+        afterSummary: {
+          totalDispatched: dispatchedNotifications.length,
+          totalSuppressed: actualSuppressed,
+          processorProfileId: processorProfileId || 'all',
+        },
+        source: 'cloud_function',
+        workflowContext: 'processor_review_reminders_dispatch',
+      });
+    }
+  }
+
+  return {
+    success: true,
+    dryRun,
+    candidatesFound: candidateReminders.length,
+    dispatchedCount: dryRun ? candidateReminders.length : dispatchedNotifications.length,
+    suppressedCount: dryRun ? 0 : actualSuppressed,
+    notificationIds: dispatchedNotifications,
+  };
 });
