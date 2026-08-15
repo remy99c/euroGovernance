@@ -306,6 +306,8 @@ export {
   validateAssessmentAccessToken,
   revokeAssessmentAccessToken,
   regenerateAssessmentAccessToken,
+  savePublicAssessmentDraft,
+  submitPublicAssessment,
 } from './handlers/assessment-access-tokens.js';
 
 // Third-Party Assessment Request Workflow Handlers
