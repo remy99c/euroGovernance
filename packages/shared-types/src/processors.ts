@@ -3827,3 +3827,842 @@ export function summarizeProcessorAssuranceInventory(
     standardBreakdown,
   };
 }
+
+// =============================================================================
+// SECTION 10: PROCESSOR ASSURANCE EXPORT REPORTING PAYLOADS & GENERATORS
+// =============================================================================
+
+export interface BaseAssuranceExportOptions {
+  tenantId: string;
+  requestedBy: string;
+  generatedAt?: string;
+}
+
+/**
+ * 1. Processor Assurance Register Export Payload
+ */
+export interface ProcessorAssuranceRegisterExportPayload {
+  exportHeader: {
+    tenantId: string;
+    exportType: 'processor_assurance_register';
+    title: string;
+    generatedAt: string;
+    requestedBy: string;
+    totalAssuranceRecords: number;
+    activeValidCount: number;
+    expiringSoonCount: number;
+    expiredCount: number;
+    criticalProcessorsCount: number;
+    missingEvidenceCount: number;
+    insufficientOrRejectedCount: number;
+  };
+  summary: ProcessorAssuranceInventorySummary;
+  records: Array<{
+    certificationId: string;
+    certificateOrReportNumber: string;
+    standardFamily: AssuranceStandardFamily;
+    standardDisplayName: string;
+    artifactKind: AssuranceArtifactKind;
+    artifactKindLabel: string;
+    processorProfileId: string;
+    processorName: string;
+    processorRole: string;
+    processorCriticality: string;
+    vendorId: string | null;
+    vendorName: string | null;
+    vendorRiskTier: string | null;
+    issuingBodyOrAuditor: string;
+    leadAuditorName: string | null;
+    validFrom: string;
+    validUntil: string;
+    reportPeriodStart: string | null;
+    reportPeriodEnd: string | null;
+    daysUntilExpiry: number;
+    validityStatus: string;
+    assuranceScopeSummary: string;
+    legalEntityOrRegionalScope: string | null;
+    systemsOrServicesCovered: string[];
+    linkedSystemAssetNames: string[];
+    reviewStatus: string;
+    reviewOwnerUserId: string;
+    reviewDueDate: string | null;
+    reviewNotes: string | null;
+    rejectionReason: string | null;
+    insufficientRationale: string | null;
+    isInsufficient: boolean;
+    hasMajorDeficiencies: boolean;
+    unresolvedFindingsCount: number;
+    hasAttachedEvidence: boolean;
+    attachedEvidenceCount: number;
+    attachedEvidenceSummaries: Array<{ id: string; title: string; category: string; status: string; fileHashSha256?: string }>;
+    gaps: Array<{ code: string; description: string; suggestedAction: string }>;
+    isHistoricVersion: boolean;
+    versionNumber: number;
+  }>;
+}
+
+export function generateProcessorAssuranceRegisterExportPayload(
+  items: ProcessorAssuranceInventoryItem[],
+  options: BaseAssuranceExportOptions
+): ProcessorAssuranceRegisterExportPayload {
+  const generatedAt = options.generatedAt || new Date().toISOString();
+  const summary = summarizeProcessorAssuranceInventory(items);
+
+  const records = items.map((item) => {
+    const { certification: cert, processorProfile: profile, vendor } = item;
+    const taxonomy = getAssuranceTaxonomy(cert.standardFamily);
+
+    return {
+      certificationId: cert.id,
+      certificateOrReportNumber: cert.certificateOrReportNumber,
+      standardFamily: cert.standardFamily,
+      standardDisplayName: taxonomy.displayName,
+      artifactKind: cert.artifactKind,
+      artifactKindLabel: getAssuranceArtifactKindLabel(cert.artifactKind),
+      processorProfileId: profile.id,
+      processorName: profile.name,
+      processorRole: profile.processorRole,
+      processorCriticality: profile.criticality,
+      vendorId: vendor ? vendor.id : null,
+      vendorName: vendor ? vendor.name : null,
+      vendorRiskTier: vendor && vendor.riskTier ? vendor.riskTier : null,
+      issuingBodyOrAuditor: cert.issuingBodyOrAuditor,
+      leadAuditorName: cert.leadAuditorName || null,
+      validFrom: cert.validFrom,
+      validUntil: cert.validUntil,
+      reportPeriodStart: cert.reportPeriodStart || null,
+      reportPeriodEnd: cert.reportPeriodEnd || null,
+      daysUntilExpiry: item.daysUntilExpiry,
+      validityStatus: item.validityStatus,
+      assuranceScopeSummary: cert.assuranceScopeSummary,
+      legalEntityOrRegionalScope: cert.legalEntityOrRegionalScope || null,
+      systemsOrServicesCovered: cert.systemsOrServicesCovered || [],
+      linkedSystemAssetNames: item.linkedSystemNames,
+      reviewStatus: cert.reviewStatus,
+      reviewOwnerUserId: cert.reviewOwnerUserId,
+      reviewDueDate: cert.reviewDueDate || null,
+      reviewNotes: cert.reviewNotes || null,
+      rejectionReason: cert.rejectionReason || null,
+      insufficientRationale: cert.insufficientRationale || null,
+      isInsufficient: Boolean(cert.isInsufficient),
+      hasMajorDeficiencies: Boolean(cert.hasMajorDeficiencies),
+      unresolvedFindingsCount: cert.unresolvedFindingsCount || 0,
+      hasAttachedEvidence: item.hasAttachedEvidence,
+      attachedEvidenceCount: item.attachedEvidenceCount,
+      attachedEvidenceSummaries: item.attachedEvidenceSummaries,
+      gaps: item.gaps,
+      isHistoricVersion: Boolean(cert.isHistoricVersion),
+      versionNumber: cert.versionNumber || 1,
+    };
+  });
+
+  return {
+    exportHeader: {
+      tenantId: options.tenantId,
+      exportType: 'processor_assurance_register',
+      title: 'Processor Assurance & External Certification Register',
+      generatedAt,
+      requestedBy: options.requestedBy,
+      totalAssuranceRecords: summary.totalAssuranceRecords,
+      activeValidCount: summary.activeValidCount,
+      expiringSoonCount: summary.expiringSoonCount,
+      expiredCount: summary.expiredCount,
+      criticalProcessorsCount: summary.criticalProcessorsCount,
+      missingEvidenceCount: summary.missingEvidenceCount,
+      insufficientOrRejectedCount: summary.insufficientOrRejectedCount,
+    },
+    summary,
+    records,
+  };
+}
+
+/**
+ * 2. Expiring Certifications Report Payload
+ */
+export interface ProcessorExpiringCertificationsExportPayload {
+  exportHeader: {
+    tenantId: string;
+    exportType: 'processor_expiring_certifications_report';
+    title: string;
+    generatedAt: string;
+    requestedBy: string;
+    expiryWindowDays: number;
+    expiringCertificationsCount: number;
+  };
+  expiringCertifications: Array<{
+    certificationId: string;
+    certificateOrReportNumber: string;
+    standardDisplayName: string;
+    artifactKindLabel: string;
+    processorName: string;
+    processorCriticality: string;
+    vendorName: string | null;
+    issuingBodyOrAuditor: string;
+    validUntil: string;
+    daysUntilExpiry: number;
+    reviewOwnerUserId: string;
+    reviewDueDate: string | null;
+    hasAttachedEvidence: boolean;
+    actionRequired: string;
+  }>;
+}
+
+export function generateProcessorExpiringCertificationsExportPayload(
+  items: ProcessorAssuranceInventoryItem[],
+  options: BaseAssuranceExportOptions & { expiryWindowDays?: number }
+): ProcessorExpiringCertificationsExportPayload {
+  const generatedAt = options.generatedAt || new Date().toISOString();
+  const expiryWindowDays = options.expiryWindowDays !== undefined ? options.expiryWindowDays : 60;
+
+  // Filter only items expiring within window (and not superseded)
+  const expiringItems = items
+    .filter(
+      (item) =>
+        !item.certification.isHistoricVersion &&
+        item.certification.status !== 'superseded' &&
+        item.certification.status !== 'revoked' &&
+        item.daysUntilExpiry <= expiryWindowDays &&
+        item.daysUntilExpiry >= 0
+    )
+    .sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
+
+  const expiringCertifications = expiringItems.map((item) => {
+    const { certification: cert, processorProfile: profile, vendor } = item;
+    const taxonomy = getAssuranceTaxonomy(cert.standardFamily);
+
+    return {
+      certificationId: cert.id,
+      certificateOrReportNumber: cert.certificateOrReportNumber,
+      standardDisplayName: taxonomy.displayName,
+      artifactKindLabel: getAssuranceArtifactKindLabel(cert.artifactKind),
+      processorName: profile.name,
+      processorCriticality: profile.criticality,
+      vendorName: vendor ? vendor.name : null,
+      issuingBodyOrAuditor: cert.issuingBodyOrAuditor,
+      validUntil: cert.validUntil,
+      daysUntilExpiry: item.daysUntilExpiry,
+      reviewOwnerUserId: cert.reviewOwnerUserId,
+      reviewDueDate: cert.reviewDueDate || null,
+      hasAttachedEvidence: item.hasAttachedEvidence,
+      actionRequired:
+        item.daysUntilExpiry <= 14
+          ? 'URGENT: Request renewed certification / bridge letter immediately from vendor.'
+          : 'Initiate annual assurance renewal review with vendor.',
+    };
+  });
+
+  return {
+    exportHeader: {
+      tenantId: options.tenantId,
+      exportType: 'processor_expiring_certifications_report',
+      title: `Expiring Processor Certifications Report (Next ${expiryWindowDays} Days)`,
+      generatedAt,
+      requestedBy: options.requestedBy,
+      expiryWindowDays,
+      expiringCertificationsCount: expiringCertifications.length,
+    },
+    expiringCertifications,
+  };
+}
+
+/**
+ * 3. Expired / Insufficient Assurance Report Payload
+ */
+export interface ProcessorExpiredInsufficientAssuranceExportPayload {
+  exportHeader: {
+    tenantId: string;
+    exportType: 'processor_expired_insufficient_assurance_report';
+    title: string;
+    generatedAt: string;
+    requestedBy: string;
+    totalDeficienciesCount: number;
+    expiredCount: number;
+    rejectedCount: number;
+    insufficientCount: number;
+    missingEvidenceCount: number;
+  };
+  deficiencies: Array<{
+    certificationId: string;
+    certificateOrReportNumber: string;
+    standardDisplayName: string;
+    processorName: string;
+    processorCriticality: string;
+    vendorName: string | null;
+    deficiencyType: 'expired' | 'rejected' | 'insufficient' | 'missing_evidence';
+    reasonOrRationale: string;
+    validUntil: string;
+    reviewOwnerUserId: string;
+    gaps: Array<{ code: string; description: string; suggestedAction: string }>;
+    remediationAction: string;
+  }>;
+}
+
+export function generateProcessorExpiredInsufficientAssuranceExportPayload(
+  items: ProcessorAssuranceInventoryItem[],
+  options: BaseAssuranceExportOptions
+): ProcessorExpiredInsufficientAssuranceExportPayload {
+  const generatedAt = options.generatedAt || new Date().toISOString();
+
+  let expiredCount = 0;
+  let rejectedCount = 0;
+  let insufficientCount = 0;
+  let missingEvidenceCount = 0;
+
+  const deficienciesList: ProcessorExpiredInsufficientAssuranceExportPayload['deficiencies'] = [];
+
+  for (const item of items) {
+    if (item.certification.isHistoricVersion || item.certification.status === 'superseded') {
+      continue;
+    }
+
+    const { certification: cert, processorProfile: profile, vendor } = item;
+    const taxonomy = getAssuranceTaxonomy(cert.standardFamily);
+
+    let isDeficient = false;
+    let defType: 'expired' | 'rejected' | 'insufficient' | 'missing_evidence' = 'expired';
+    let rationale = '';
+    let remediation = '';
+
+    if (item.isExpired || cert.status === 'expired') {
+      isDeficient = true;
+      defType = 'expired';
+      expiredCount++;
+      rationale = `Certification lapsed on ${cert.validUntil.slice(0, 10)} (${Math.abs(item.daysUntilExpiry)} days overdue).`;
+      remediation = 'Obtain active ISO certificate / renewed SOC report or reassess processor criticality.';
+    } else if (cert.reviewStatus === 'rejected') {
+      isDeficient = true;
+      defType = 'rejected';
+      rejectedCount++;
+      rationale = cert.rejectionReason || 'Assurance artifact rejected during governance review.';
+      remediation = 'Request revised report covering correct scope or trigger processor termination review.';
+    } else if (cert.isInsufficient || cert.reviewStatus === 'insufficient') {
+      isDeficient = true;
+      defType = 'insufficient';
+      insufficientCount++;
+      rationale = cert.insufficientRationale || 'Assurance marked insufficient (e.g. missing carve-outs or CUECs).';
+      remediation = 'Request complementary documentation or bridge letter addressing identified deficiency.';
+    } else if (!item.hasAttachedEvidence) {
+      isDeficient = true;
+      defType = 'missing_evidence';
+      missingEvidenceCount++;
+      rationale = 'Certification record has 0 linked verification files or attestations in evidence locker.';
+      remediation = 'Upload signed PDF certificate or auditor attestation report to evidence store.';
+    }
+
+    if (isDeficient) {
+      deficienciesList.push({
+        certificationId: cert.id,
+        certificateOrReportNumber: cert.certificateOrReportNumber,
+        standardDisplayName: taxonomy.displayName,
+        processorName: profile.name,
+        processorCriticality: profile.criticality,
+        vendorName: vendor ? vendor.name : null,
+        deficiencyType: defType,
+        reasonOrRationale: rationale,
+        validUntil: cert.validUntil,
+        reviewOwnerUserId: cert.reviewOwnerUserId,
+        gaps: item.gaps,
+        remediationAction: remediation,
+      });
+    }
+  }
+
+  return {
+    exportHeader: {
+      tenantId: options.tenantId,
+      exportType: 'processor_expired_insufficient_assurance_report',
+      title: 'Expired, Rejected & Insufficient Processor Assurance Deficiencies Report',
+      generatedAt,
+      requestedBy: options.requestedBy,
+      totalDeficienciesCount: deficienciesList.length,
+      expiredCount,
+      rejectedCount,
+      insufficientCount,
+      missingEvidenceCount,
+    },
+    deficiencies: deficienciesList,
+  };
+}
+
+/**
+ * 4. Processor-by-Certification-Type Matrix Export Payload
+ */
+export interface ProcessorByCertificationTypeMatrixExportPayload {
+  exportHeader: {
+    tenantId: string;
+    exportType: 'processor_by_certification_type_matrix';
+    title: string;
+    generatedAt: string;
+    requestedBy: string;
+    totalProcessors: number;
+    standardsEvaluatedCount: number;
+  };
+  standardCatalog: Array<{
+    standardFamily: AssuranceStandardFamily;
+    displayName: string;
+    description: string;
+  }>;
+  matrix: Array<{
+    processorProfileId: string;
+    processorName: string;
+    processorRole: string;
+    criticality: string;
+    vendorName: string | null;
+    totalActiveCertifications: number;
+    coverageByStandard: Record<
+      string,
+      {
+        covered: boolean;
+        status: 'active_valid' | 'expiring_soon' | 'expired' | 'missing' | 'insufficient';
+        certificateOrReportNumber?: string;
+        validUntil?: string;
+        daysUntilExpiry?: number;
+        hasAttachedEvidence?: boolean;
+      }
+    >;
+  }>;
+  standardAdoptionRates: Record<string, { totalHoldingProcessors: number; adoptionPercentage: number }>;
+}
+
+export function generateProcessorByCertificationTypeMatrixExportPayload(
+  profiles: ProcessorProfile[],
+  certifications: ProcessorCertification[],
+  vendors: Vendor[],
+  options: BaseAssuranceExportOptions
+): ProcessorByCertificationTypeMatrixExportPayload {
+  const generatedAt = options.generatedAt || new Date().toISOString();
+  const asOf = new Date(generatedAt);
+
+  const activeStandards: AssuranceStandardFamily[] = [
+    'iso_27001',
+    'iso_27701',
+    'iso_42001',
+    'soc1_type2',
+    'soc2_type1',
+    'soc2_type2',
+    'soc3',
+    'csa_star',
+    'pci_dss_aoc',
+    'bsi_c5',
+    'tisax',
+    'cyber_essentials_plus',
+    'gdpr_art42_europrivacy',
+    'hipaa_security',
+    'dpf_self_certification',
+  ];
+
+  const standardCatalog = activeStandards.map((s) => {
+    const tax = getAssuranceTaxonomy(s);
+    return {
+      standardFamily: s,
+      displayName: tax.displayName,
+      description: tax.description,
+    };
+  });
+
+  const vendorMap = new Map(vendors.map((v) => [v.id, v]));
+  const matrix: ProcessorByCertificationTypeMatrixExportPayload['matrix'] = [];
+  const standardHoldingCounts: Record<string, number> = {};
+
+  activeStandards.forEach((s) => {
+    standardHoldingCounts[s] = 0;
+  });
+
+  for (const prof of profiles) {
+    const vendor = prof.vendorId ? vendorMap.get(prof.vendorId) || null : null;
+    const profCerts = certifications.filter(
+      (c) => c.processorProfileId === prof.id && !c.isHistoricVersion && c.status !== 'superseded'
+    );
+
+    const coverageByStandard: ProcessorByCertificationTypeMatrixExportPayload['matrix'][0]['coverageByStandard'] = {};
+    let totalActive = 0;
+
+    for (const std of activeStandards) {
+      const match = profCerts.find((c) => c.standardFamily === std);
+
+      if (match) {
+        const expiryDate = new Date(match.validUntil);
+        const daysRemaining = Math.ceil((expiryDate.getTime() - asOf.getTime()) / (1000 * 60 * 60 * 24));
+        const isExp = daysRemaining < 0;
+        const isExpSoon = daysRemaining <= 60 && daysRemaining >= 0;
+        const isInsuff = match.isInsufficient || match.reviewStatus === 'insufficient' || match.reviewStatus === 'rejected';
+
+        let status: 'active_valid' | 'expiring_soon' | 'expired' | 'missing' | 'insufficient' = 'active_valid';
+        if (isInsuff) status = 'insufficient';
+        else if (isExp) status = 'expired';
+        else if (isExpSoon) status = 'expiring_soon';
+
+        if (status === 'active_valid' || status === 'expiring_soon') {
+          totalActive++;
+          standardHoldingCounts[std] = (standardHoldingCounts[std] || 0) + 1;
+        }
+
+        coverageByStandard[std] = {
+          covered: status === 'active_valid' || status === 'expiring_soon',
+          status,
+          certificateOrReportNumber: match.certificateOrReportNumber,
+          validUntil: match.validUntil,
+          daysUntilExpiry: daysRemaining,
+          hasAttachedEvidence: Boolean(match.linkedEvidenceIds && match.linkedEvidenceIds.length > 0),
+        };
+      } else {
+        coverageByStandard[std] = {
+          covered: false,
+          status: 'missing',
+        };
+      }
+    }
+
+    matrix.push({
+      processorProfileId: prof.id,
+      processorName: prof.engagementName || (prof as any).name || prof.id,
+      processorRole: prof.processorRole,
+      criticality: prof.criticality,
+      vendorName: vendor ? vendor.name : null,
+      totalActiveCertifications: totalActive,
+      coverageByStandard,
+    });
+  }
+
+  const standardAdoptionRates: ProcessorByCertificationTypeMatrixExportPayload['standardAdoptionRates'] = {};
+  const totalProfs = profiles.length || 1;
+
+  for (const std of activeStandards) {
+    const count = standardHoldingCounts[std] || 0;
+    standardAdoptionRates[std] = {
+      totalHoldingProcessors: count,
+      adoptionPercentage: Math.round((count / totalProfs) * 100),
+    };
+  }
+
+  return {
+    exportHeader: {
+      tenantId: options.tenantId,
+      exportType: 'processor_by_certification_type_matrix',
+      title: 'Processor Assurance Standard Coverage Matrix',
+      generatedAt,
+      requestedBy: options.requestedBy,
+      totalProcessors: profiles.length,
+      standardsEvaluatedCount: activeStandards.length,
+    },
+    standardCatalog,
+    matrix,
+    standardAdoptionRates,
+  };
+}
+
+/**
+ * 5. Assurance Coverage by Linked Systems/Services Export Payload
+ */
+export interface ProcessorAssuranceCoverageBySystemsExportPayload {
+  exportHeader: {
+    tenantId: string;
+    exportType: 'processor_assurance_coverage_by_systems';
+    title: string;
+    generatedAt: string;
+    requestedBy: string;
+    totalSystemsEvaluated: number;
+    compliantSystemsCount: number;
+    warningSystemsCount: number;
+    criticalGapSystemsCount: number;
+  };
+  systemCoverage: Array<{
+    systemAssetId: string;
+    systemName: string;
+    assetType: string;
+    systemCriticality: string;
+    dataClassification: string;
+    containsPersonalData: boolean;
+    linkedProcessorsCount: number;
+    overallSystemAssuranceStatus: 'compliant' | 'warning' | 'critical_gap' | 'no_processors';
+    processors: Array<{
+      processorProfileId: string;
+      processorName: string;
+      criticality: string;
+      activeCertifications: Array<{
+        certificationId: string;
+        standardDisplayName: string;
+        certificateOrReportNumber: string;
+        validUntil: string;
+        hasAttachedEvidence: boolean;
+        coversThisSystemExplicitly: boolean;
+      }>;
+      processorAssuranceHealth: 'active_valid' | 'expiring_soon' | 'expired' | 'no_assurance';
+    }>;
+    gapsIdentified: string[];
+  }>;
+}
+
+export function generateProcessorAssuranceCoverageBySystemsExportPayload(
+  systemAssets: SystemAsset[],
+  profiles: ProcessorProfile[],
+  certifications: ProcessorCertification[],
+  _vendors: Vendor[],
+  options: BaseAssuranceExportOptions
+): ProcessorAssuranceCoverageBySystemsExportPayload {
+  const generatedAt = options.generatedAt || new Date().toISOString();
+  const asOf = new Date(generatedAt);
+
+  const profileMap = new Map(profiles.map((p) => [p.id, p]));
+  let compliantCount = 0;
+  let warningCount = 0;
+  let criticalGapCount = 0;
+
+  const systemCoverage: ProcessorAssuranceCoverageBySystemsExportPayload['systemCoverage'] = [];
+
+  for (const asset of systemAssets) {
+    const linkedProfIds = asset.processorProfileIds || [];
+    const gaps: string[] = [];
+
+    if (linkedProfIds.length === 0) {
+      systemCoverage.push({
+        systemAssetId: asset.id,
+        systemName: asset.name,
+        assetType: asset.assetType,
+        systemCriticality: asset.criticality,
+        dataClassification: asset.dataClassification,
+        containsPersonalData: Boolean(asset.containsPersonalData),
+        linkedProcessorsCount: 0,
+        overallSystemAssuranceStatus: 'no_processors',
+        processors: [],
+        gapsIdentified: [],
+      });
+      continue;
+    }
+
+    const processorsList: ProcessorAssuranceCoverageBySystemsExportPayload['systemCoverage'][0]['processors'] = [];
+    let hasCriticalGap = false;
+    let hasWarning = false;
+
+    for (const profId of linkedProfIds) {
+      const prof = profileMap.get(profId);
+      if (!prof) continue;
+
+      const profCerts = certifications.filter(
+        (c) => c.processorProfileId === profId && !c.isHistoricVersion && c.status !== 'superseded'
+      );
+
+      const activeCerts = profCerts.map((c) => {
+        const tax = getAssuranceTaxonomy(c.standardFamily);
+        const coversExplicitly = Boolean(
+          c.systemsOrServicesCovered &&
+            c.systemsOrServicesCovered.some(
+              (sys) =>
+                sys.toLowerCase().includes(asset.name.toLowerCase()) ||
+                asset.name.toLowerCase().includes(sys.toLowerCase())
+            )
+        );
+
+        return {
+          certificationId: c.id,
+          standardDisplayName: tax.displayName,
+          certificateOrReportNumber: c.certificateOrReportNumber,
+          validUntil: c.validUntil,
+          hasAttachedEvidence: Boolean(c.linkedEvidenceIds && c.linkedEvidenceIds.length > 0),
+          coversThisSystemExplicitly: coversExplicitly,
+        };
+      });
+
+      let health: 'active_valid' | 'expiring_soon' | 'expired' | 'no_assurance' = 'active_valid';
+
+      if (profCerts.length === 0) {
+        health = 'no_assurance';
+        hasCriticalGap = true;
+        gaps.push(`Processor "${prof.engagementName || (prof as any).name}" has zero registered certifications.`);
+      } else {
+        const anyActive = profCerts.some((c) => {
+          const rem = Math.ceil((new Date(c.validUntil).getTime() - asOf.getTime()) / (1000 * 60 * 60 * 24));
+          return rem >= 0 && c.status === 'active_valid' && c.reviewStatus !== 'rejected';
+        });
+
+        const anyExpSoon = profCerts.some((c) => {
+          const rem = Math.ceil((new Date(c.validUntil).getTime() - asOf.getTime()) / (1000 * 60 * 60 * 24));
+          return rem <= 60 && rem >= 0;
+        });
+
+        if (!anyActive) {
+          health = 'expired';
+          hasCriticalGap = true;
+          gaps.push(`All certifications for processor "${prof.engagementName || (prof as any).name}" have expired or are rejected.`);
+        } else if (anyExpSoon) {
+          health = 'expiring_soon';
+          hasWarning = true;
+          gaps.push(`Processor "${prof.engagementName || (prof as any).name}" has assurance expiring within 60 days.`);
+        }
+      }
+
+      processorsList.push({
+        processorProfileId: prof.id,
+        processorName: prof.engagementName || (prof as any).name || prof.id,
+        criticality: prof.criticality,
+        activeCertifications: activeCerts,
+        processorAssuranceHealth: health,
+      });
+    }
+
+    let overallStatus: 'compliant' | 'warning' | 'critical_gap' | 'no_processors' = 'compliant';
+    if (hasCriticalGap) {
+      overallStatus = 'critical_gap';
+      criticalGapCount++;
+    } else if (hasWarning) {
+      overallStatus = 'warning';
+      warningCount++;
+    } else {
+      compliantCount++;
+    }
+
+    systemCoverage.push({
+      systemAssetId: asset.id,
+      systemName: asset.name,
+      assetType: asset.assetType,
+      systemCriticality: asset.criticality,
+      dataClassification: asset.dataClassification,
+      containsPersonalData: Boolean(asset.containsPersonalData),
+      linkedProcessorsCount: processorsList.length,
+      overallSystemAssuranceStatus: overallStatus,
+      processors: processorsList,
+      gapsIdentified: gaps,
+    });
+  }
+
+  return {
+    exportHeader: {
+      tenantId: options.tenantId,
+      exportType: 'processor_assurance_coverage_by_systems',
+      title: 'Assurance & Certification Coverage by Linked Systems / Services',
+      generatedAt,
+      requestedBy: options.requestedBy,
+      totalSystemsEvaluated: systemAssets.length,
+      compliantSystemsCount: compliantCount,
+      warningSystemsCount: warningCount,
+      criticalGapSystemsCount: criticalGapCount,
+    },
+    systemCoverage,
+  };
+}
+
+/**
+ * 6. Critical Processors Missing Current Assurance Export Payload
+ */
+export interface CriticalProcessorsMissingAssuranceExportPayload {
+  exportHeader: {
+    tenantId: string;
+    exportType: 'critical_processors_missing_assurance';
+    title: string;
+    generatedAt: string;
+    requestedBy: string;
+    totalCriticalProcessorsCount: number;
+    criticalProcessorsAtRiskCount: number;
+    nonComplianceRatePercentage: number;
+  };
+  criticalProcessorsAtRisk: Array<{
+    processorProfileId: string;
+    processorName: string;
+    processorRole: string;
+    serviceDescription: string;
+    dataCategories: string[];
+    jurisdictions: string[];
+    vendorName: string | null;
+    vendorRiskTier: string | null;
+    riskCategory: 'no_certifications' | 'all_expired' | 'review_rejected' | 'missing_evidence';
+    findingsSummary: string;
+    urgentRemediationAction: string;
+  }>;
+}
+
+export function generateCriticalProcessorsMissingAssuranceExportPayload(
+  profiles: ProcessorProfile[],
+  certifications: ProcessorCertification[],
+  vendors: Vendor[],
+  _evidenceList: Evidence[],
+  options: BaseAssuranceExportOptions
+): CriticalProcessorsMissingAssuranceExportPayload {
+  const generatedAt = options.generatedAt || new Date().toISOString();
+  const asOf = new Date(generatedAt);
+
+  const vendorMap = new Map(vendors.map((v) => [v.id, v]));
+  const criticalProfiles = profiles.filter((p) => p.criticality === 'critical');
+
+  const atRiskList: CriticalProcessorsMissingAssuranceExportPayload['criticalProcessorsAtRisk'] = [];
+
+  for (const prof of criticalProfiles) {
+    const vendor = prof.vendorId ? vendorMap.get(prof.vendorId) || null : null;
+    const profCerts = certifications.filter(
+      (c) => c.processorProfileId === prof.id && !c.isHistoricVersion && c.status !== 'superseded'
+    );
+
+    let isAtRisk = false;
+    let riskCat: 'no_certifications' | 'all_expired' | 'review_rejected' | 'missing_evidence' = 'no_certifications';
+    let findings = '';
+    let action = '';
+
+    if (profCerts.length === 0) {
+      isAtRisk = true;
+      riskCat = 'no_certifications';
+      findings = 'Critical processor has 0 external certifications or SOC reports recorded.';
+      action = 'Require vendor to produce current ISO 27001/27701 certificate or SOC 2 report immediately.';
+    } else {
+      const validCerts = profCerts.filter((c) => {
+        const rem = Math.ceil((new Date(c.validUntil).getTime() - asOf.getTime()) / (1000 * 60 * 60 * 24));
+        return rem >= 0 && c.status === 'active_valid';
+      });
+
+      if (validCerts.length === 0) {
+        isAtRisk = true;
+        riskCat = 'all_expired';
+        findings = `All ${profCerts.length} certification records for this critical processor have lapsed / expired.`;
+        action = 'Escalate to Vendor Management to request renewed certification package.';
+      } else {
+        const anyRejected = validCerts.some((c) => c.reviewStatus === 'rejected' || c.isInsufficient);
+        const anyWithEvidence = validCerts.some(
+          (c) => c.linkedEvidenceIds && c.linkedEvidenceIds.length > 0
+        );
+
+        if (anyRejected) {
+          isAtRisk = true;
+          riskCat = 'review_rejected';
+          findings = 'Critical processor assurance was rejected or marked insufficient during governance review.';
+          action = 'Review rejection rationale with DPO/CISO and issue formal remediation notice to vendor.';
+        } else if (!anyWithEvidence) {
+          isAtRisk = true;
+          riskCat = 'missing_evidence';
+          findings = 'Critical processor has valid records registered but lacks supporting files in evidence locker.';
+          action = 'Upload signed certificate files to complete audit trail compliance.';
+        }
+      }
+    }
+
+    if (isAtRisk) {
+      atRiskList.push({
+        processorProfileId: prof.id,
+        processorName: prof.engagementName || (prof as any).name || prof.id,
+        processorRole: prof.processorRole,
+        serviceDescription: prof.serviceDescription || '',
+        dataCategories: prof.dataCategories || [],
+        jurisdictions: prof.jurisdictions || [],
+        vendorName: vendor ? vendor.name : null,
+        vendorRiskTier: vendor && vendor.riskTier ? vendor.riskTier : null,
+        riskCategory: riskCat,
+        findingsSummary: findings,
+        urgentRemediationAction: action,
+      });
+    }
+  }
+
+  const totalCrit = criticalProfiles.length || 1;
+  const nonComplianceRate = Math.round((atRiskList.length / totalCrit) * 100);
+
+  return {
+    exportHeader: {
+      tenantId: options.tenantId,
+      exportType: 'critical_processors_missing_assurance',
+      title: 'Critical Processors Missing Current Assurance Compliance Report',
+      generatedAt,
+      requestedBy: options.requestedBy,
+      totalCriticalProcessorsCount: criticalProfiles.length,
+      criticalProcessorsAtRiskCount: atRiskList.length,
+      nonComplianceRatePercentage: nonComplianceRate,
+    },
+    criticalProcessorsAtRisk: atRiskList,
+  };
+}

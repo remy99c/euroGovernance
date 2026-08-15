@@ -15,6 +15,14 @@ import {
   Evidence,
   ROPAEntry,
   Certification,
+  ProcessorCertification,
+  synthesizeProcessorAssuranceInventory,
+  generateProcessorAssuranceRegisterExportPayload,
+  generateProcessorExpiringCertificationsExportPayload,
+  generateProcessorExpiredInsufficientAssuranceExportPayload,
+  generateProcessorByCertificationTypeMatrixExportPayload,
+  generateProcessorAssuranceCoverageBySystemsExportPayload,
+  generateCriticalProcessorsMissingAssuranceExportPayload,
   evaluateProcessorEvidenceCompleteness,
   evaluateProcessorRiskFlags,
   evaluateCertificationCompleteness,
@@ -915,6 +923,141 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
         null,
         2
       );
+    } else if (job.exportType === 'processor_assurance_register') {
+      const [certSnap, profSnap, vendSnap, sysSnap, evSnap] = await Promise.all([
+        tenantRef.collection('processor_certifications').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+        tenantRef.collection('system_assets').get(),
+        tenantRef.collection('evidence').get(),
+      ]);
+
+      const certs = certSnap.docs.map((d) => d.data() as ProcessorCertification);
+      const profiles = profSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const vendors = vendSnap.docs.map((d) => d.data() as Vendor);
+      const assets = sysSnap.docs.map((d) => d.data() as SystemAsset);
+      const evidences = evSnap.docs.map((d) => d.data() as Evidence);
+
+      const items = synthesizeProcessorAssuranceInventory(certs, profiles, vendors, assets, evidences, new Date(processingTime));
+      const payload = generateProcessorAssuranceRegisterExportPayload(items, {
+        tenantId,
+        requestedBy: job.requestedBy,
+        generatedAt: processingTime,
+      });
+
+      fileName = `processor_assurance_register_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'processor_expiring_certifications_report') {
+      const [certSnap, profSnap, vendSnap, sysSnap, evSnap] = await Promise.all([
+        tenantRef.collection('processor_certifications').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+        tenantRef.collection('system_assets').get(),
+        tenantRef.collection('evidence').get(),
+      ]);
+
+      const certs = certSnap.docs.map((d) => d.data() as ProcessorCertification);
+      const profiles = profSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const vendors = vendSnap.docs.map((d) => d.data() as Vendor);
+      const assets = sysSnap.docs.map((d) => d.data() as SystemAsset);
+      const evidences = evSnap.docs.map((d) => d.data() as Evidence);
+
+      const expiryWindowDays = (job.filtersApplied?.expiryWindowDays as number) || 60;
+      const items = synthesizeProcessorAssuranceInventory(certs, profiles, vendors, assets, evidences, new Date(processingTime));
+      const payload = generateProcessorExpiringCertificationsExportPayload(items, {
+        tenantId,
+        requestedBy: job.requestedBy,
+        generatedAt: processingTime,
+        expiryWindowDays,
+      });
+
+      fileName = `processor_expiring_certifications_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'processor_expired_insufficient_assurance_report') {
+      const [certSnap, profSnap, vendSnap, sysSnap, evSnap] = await Promise.all([
+        tenantRef.collection('processor_certifications').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+        tenantRef.collection('system_assets').get(),
+        tenantRef.collection('evidence').get(),
+      ]);
+
+      const certs = certSnap.docs.map((d) => d.data() as ProcessorCertification);
+      const profiles = profSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const vendors = vendSnap.docs.map((d) => d.data() as Vendor);
+      const assets = sysSnap.docs.map((d) => d.data() as SystemAsset);
+      const evidences = evSnap.docs.map((d) => d.data() as Evidence);
+
+      const items = synthesizeProcessorAssuranceInventory(certs, profiles, vendors, assets, evidences, new Date(processingTime));
+      const payload = generateProcessorExpiredInsufficientAssuranceExportPayload(items, {
+        tenantId,
+        requestedBy: job.requestedBy,
+        generatedAt: processingTime,
+      });
+
+      fileName = `processor_expired_insufficient_assurance_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'processor_by_certification_type_matrix') {
+      const [certSnap, profSnap, vendSnap] = await Promise.all([
+        tenantRef.collection('processor_certifications').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+      ]);
+
+      const certs = certSnap.docs.map((d) => d.data() as ProcessorCertification);
+      const profiles = profSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const vendors = vendSnap.docs.map((d) => d.data() as Vendor);
+
+      const payload = generateProcessorByCertificationTypeMatrixExportPayload(profiles, certs, vendors, {
+        tenantId,
+        requestedBy: job.requestedBy,
+        generatedAt: processingTime,
+      });
+
+      fileName = `processor_certification_matrix_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'processor_assurance_coverage_by_systems') {
+      const [certSnap, profSnap, vendSnap, sysSnap] = await Promise.all([
+        tenantRef.collection('processor_certifications').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+        tenantRef.collection('system_assets').get(),
+      ]);
+
+      const certs = certSnap.docs.map((d) => d.data() as ProcessorCertification);
+      const profiles = profSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const vendors = vendSnap.docs.map((d) => d.data() as Vendor);
+      const assets = sysSnap.docs.map((d) => d.data() as SystemAsset);
+
+      const payload = generateProcessorAssuranceCoverageBySystemsExportPayload(assets, profiles, certs, vendors, {
+        tenantId,
+        requestedBy: job.requestedBy,
+        generatedAt: processingTime,
+      });
+
+      fileName = `processor_assurance_coverage_by_systems_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'critical_processors_missing_assurance') {
+      const [certSnap, profSnap, vendSnap, evSnap] = await Promise.all([
+        tenantRef.collection('processor_certifications').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+        tenantRef.collection('evidence').get(),
+      ]);
+
+      const certs = certSnap.docs.map((d) => d.data() as ProcessorCertification);
+      const profiles = profSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const vendors = vendSnap.docs.map((d) => d.data() as Vendor);
+      const evidences = evSnap.docs.map((d) => d.data() as Evidence);
+
+      const payload = generateCriticalProcessorsMissingAssuranceExportPayload(profiles, certs, vendors, evidences, {
+        tenantId,
+        requestedBy: job.requestedBy,
+        generatedAt: processingTime,
+      });
+
+      fileName = `critical_processors_missing_assurance_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
     } else {
       // Default: tenant_evidence_package_zip metadata package
       const evidenceSnap = await tenantRef.collection('evidence').get();

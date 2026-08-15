@@ -32,7 +32,13 @@ export type ExportType =
   | 'processor_review_schedule_report'
   | 'processor_system_mapping_report'
   | 'processor_ropa_mapping_report'
-  | 'certification_register_report';
+  | 'certification_register_report'
+  | 'processor_assurance_register'
+  | 'processor_expiring_certifications_report'
+  | 'processor_expired_insufficient_assurance_report'
+  | 'processor_by_certification_type_matrix'
+  | 'processor_assurance_coverage_by_systems'
+  | 'critical_processors_missing_assurance';
 
 export type NotificationPriority = 'low' | 'medium' | 'high' | 'urgent';
 

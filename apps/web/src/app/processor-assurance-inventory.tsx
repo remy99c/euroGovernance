@@ -97,9 +97,35 @@ export default function ProcessorAssuranceInventory({
   const [rejectionReasonInput, setRejectionReasonInput] = useState<string>('');
   const [insufficientRationaleInput, setInsufficientRationaleInput] = useState<string>('');
   const [submittingReview, setSubmittingReview] = useState<boolean>(false);
+  const [exportingReport, setExportingReport] = useState<string | null>(null);
 
   const showMsg = (msg: string) => {
     if (onNotice) onNotice(msg);
+  };
+
+  const handleTriggerExport = async (exportType: string) => {
+    if (!tenantId) return;
+    setExportingReport(exportType);
+    try {
+      const exportFn = httpsCallable(functions, 'generateTenantEvidenceExport');
+      const res: any = await exportFn({
+        tenantId,
+        exportType,
+        filters: {
+          standardFilter: standardFilter !== 'all' ? standardFilter : undefined,
+          statusFilter: statusFilter !== 'all' ? statusFilter : undefined,
+          validityFilter: validityFilter !== 'all' ? validityFilter : undefined,
+          criticalProcessorOnly,
+        },
+      });
+
+      showMsg(`✅ Export job queued & completed: ${res.data?.fileStoragePath || exportType}`);
+    } catch (err: any) {
+      console.error('Failed to trigger export:', err);
+      showMsg(`Error generating export: ${err.message || 'Unknown error'}`);
+    } finally {
+      setExportingReport(null);
+    }
   };
 
   // Load Inventory Data via Server-Side Correlated Query
@@ -251,7 +277,7 @@ export default function ProcessorAssuranceInventory({
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={() => fetchAssuranceInventory()}
             style={{
@@ -266,6 +292,38 @@ export default function ProcessorAssuranceInventory({
           >
             🔄 Refresh
           </button>
+
+          {/* Export Report Action Selector */}
+          <select
+            onChange={(e) => {
+              if (e.target.value) {
+                handleTriggerExport(e.target.value);
+                e.target.value = '';
+              }
+            }}
+            defaultValue=""
+            disabled={Boolean(exportingReport)}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '6px',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+            }}
+          >
+            <option value="" disabled>
+              {exportingReport ? `⏳ Generating ${exportingReport}...` : '📦 Export Compliance Report ▾'}
+            </option>
+            <option value="processor_assurance_register">🛡️ 1. Processor Assurance Register</option>
+            <option value="processor_expiring_certifications_report">⏳ 2. Expiring Certifications Report</option>
+            <option value="processor_expired_insufficient_assurance_report">⚠️ 3. Expired / Insufficient Assurance</option>
+            <option value="processor_by_certification_type_matrix">📊 4. Processor-by-Certification Matrix</option>
+            <option value="processor_assurance_coverage_by_systems">💻 5. Assurance Coverage by Systems</option>
+            <option value="critical_processors_missing_assurance">🚨 6. Critical Processors Missing Assurance</option>
+          </select>
 
           <button
             onClick={() => {

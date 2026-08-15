@@ -1396,6 +1396,42 @@ export default function DashboardPage() {
                 🏆 Master Certifications Register
               </button>
               <button
+                onClick={() => handleRequestExport('processor_assurance_register')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                🛡️ Processor Assurance Register
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_expiring_certifications_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                ⏳ Expiring Certifications Report
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_expired_insufficient_assurance_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                ⚠️ Expired / Insufficient Assurance
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_by_certification_type_matrix')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📊 Processor Assurance Matrix
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_assurance_coverage_by_systems')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                💻 Assurance Coverage by Systems
+              </button>
+              <button
+                onClick={() => handleRequestExport('critical_processors_missing_assurance')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                🚨 Critical Processors Missing Assurance
+              </button>
+              <button
                 onClick={() => handleRequestExport('gdpr_ropa_xlsx')}
                 style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
