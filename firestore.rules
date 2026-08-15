@@ -87,7 +87,7 @@ service cloud.firestore {
     function validTenantScopedUpdate(tenantId) {
       return (!('tenantId' in request.resource.data) || (request.resource.data.tenantId == resource.data.tenantId && request.resource.data.tenantId == tenantId)) &&
              (!('createdBy' in resource.data) || !('createdBy' in request.resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
-             (!('updatedBy' in request.resource.data) || request.resource.data.updatedBy == request.auth.uid) &&
+             (!('updatedBy' in request.resource.data) || request.resource.data.updatedBy == request.auth.uid || request.resource.data.updatedBy == resource.data.updatedBy) &&
              (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is string || request.resource.data.updatedAt == request.time);
     }
 
@@ -296,7 +296,7 @@ service cloud.firestore {
                       && validTenantScopedCreate(tenantId);
         allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
                       && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId) || hasRole(tenantId, 'compliance_manager');
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
       }
 
       // Systems & Assets
@@ -316,7 +316,7 @@ service cloud.firestore {
                       && validTenantScopedCreate(tenantId);
         allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'approver'])
                       && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId) || hasRole(tenantId, 'compliance_manager');
+        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
       }
 
       // GDPR: ROPA Entries
