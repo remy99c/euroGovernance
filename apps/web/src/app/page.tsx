@@ -16,6 +16,7 @@ import { httpsCallable } from 'firebase/functions';
 import FrameworkAdoptionWizard from './framework-adoption-wizard';
 import ApplicabilityReviewTab from './applicability-review';
 import FrameworkCoverageDashboardTab from './framework-coverage-dashboard';
+import ProcessorTransfersManager from './processor-transfers-manager';
 
 type TabType =
   | 'overview'
@@ -26,6 +27,7 @@ type TabType =
   | 'evidence'
   | 'risks_tasks'
   | 'gdpr'
+  | 'processor_transfers'
   | 'ai_systems'
   | 'members'
   | 'exports';
@@ -476,6 +478,7 @@ export default function DashboardPage() {
               { id: 'evidence', label: '📁 Evidence Inbox' },
               { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
               { id: 'gdpr', label: '🇪🇺 GDPR & Privacy' },
+              { id: 'processor_transfers', label: '🌍 Processor Transfers' },
               { id: 'ai_systems', label: '🤖 EU AI Act Register' },
               { id: 'members', label: '👥 Team & RBAC' },
               { id: 'exports', label: '📦 Compliance Exports' },
@@ -991,11 +994,31 @@ export default function DashboardPage() {
         {/* TAB 5: GDPR & PRIVACY */}
         {activeTab === 'gdpr' && (
           <div>
-            <header style={{ marginBottom: '24px' }}>
-              <h1 style={{ fontSize: '22px', fontWeight: 700 }}>GDPR & Privacy Subsystem</h1>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Art. 30 ROPA, Art. 35 DPIA impact assessments, and Art. 33 72-hour breach tracker.
-              </p>
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h1 style={{ fontSize: '22px', fontWeight: 700 }}>GDPR & Privacy Subsystem</h1>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  Art. 30 ROPA, Art. 35 DPIA impact assessments, and Art. 33 72-hour breach tracker.
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveTab('processor_transfers')}
+                style={{
+                  backgroundColor: 'var(--accent-blue)',
+                  color: '#fff',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>🌍</span> Cross-Border Transfers
+              </button>
             </header>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -1028,6 +1051,11 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* TAB 5B: PROCESSOR CROSS-BORDER TRANSFERS */}
+        {activeTab === 'processor_transfers' && (
+          <ProcessorTransfersManager tenantId={tenantId} onNotice={showNotice} />
         )}
 
         {/* TAB 6: EU AI ACT REGISTER */}
