@@ -114,7 +114,9 @@ export type AssessmentRequestType =
 
 export type AssessmentRequestStatus =
   | 'draft'               // Created internally
-  | 'dispatched'          // Token generated and invitation dispatched
+  | 'sent'                // Dispatched to external respondent
+  | 'dispatched'          // Token generated and link created (alias for sent)
+  | 'opened'              // Respondent opened magic link
   | 'in_progress'         // Respondent opened link and saved answers
   | 'submitted'           // Completed and submitted by respondent
   | 'under_review'        // Internal compliance team reviewing
@@ -124,6 +126,34 @@ export type AssessmentRequestStatus =
   | 'expired'             // Deadline lapsed without submission
   | 'canceled'            // Withdrawn internally
   | 'superseded';         // Replaced by newer assessment cycle
+
+/**
+ * Validates whether a state transition is permitted in the assessment request lifecycle.
+ */
+export function isValidRequestStateTransition(
+  fromState: AssessmentRequestStatus,
+  toState: AssessmentRequestStatus
+): boolean {
+  if (fromState === toState) return true;
+
+  const allowedTransitions: Record<AssessmentRequestStatus, AssessmentRequestStatus[]> = {
+    draft: ['sent', 'dispatched', 'canceled'],
+    sent: ['opened', 'in_progress', 'sent', 'dispatched', 'expired', 'canceled'],
+    dispatched: ['opened', 'in_progress', 'sent', 'dispatched', 'expired', 'canceled'],
+    opened: ['in_progress', 'submitted', 'expired', 'canceled', 'sent'],
+    in_progress: ['submitted', 'expired', 'canceled', 'sent', 'opened'],
+    submitted: ['under_review', 'accepted', 'rejected', 'revision_requested', 'canceled'],
+    under_review: ['accepted', 'rejected', 'revision_requested', 'canceled'],
+    revision_requested: ['sent', 'dispatched', 'opened', 'in_progress', 'canceled'],
+    accepted: ['superseded'],
+    rejected: ['superseded', 'draft'],
+    expired: ['sent', 'dispatched', 'draft', 'canceled'],
+    canceled: ['draft'],
+    superseded: [],
+  };
+
+  return allowedTransitions[fromState]?.includes(toState) ?? false;
+}
 
 export interface AssessmentRespondentContact {
   name: string;
@@ -193,8 +223,8 @@ export interface ThirdPartyAssessmentRequest extends BaseEntity {
   respondent: AssessmentRespondentContact;
 
   // Tokenized Least-Privilege Access Security
-  accessTokenHash?: string;                  // SHA-256 hash of random access token
-  tokenExpiresAt?: string;                   // ISO date
+  accessTokenHash?: string | null;                  // SHA-256 hash of random access token
+  tokenExpiresAt?: string | null;                   // ISO date
   accessCount: number;
   lastAccessedAt?: string | null;
 

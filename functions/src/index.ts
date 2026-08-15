@@ -307,3 +307,10 @@ export {
   revokeAssessmentAccessToken,
   regenerateAssessmentAccessToken,
 } from './handlers/assessment-access-tokens.js';
+
+// Third-Party Assessment Request Workflow Handlers
+export {
+  createThirdPartyAssessmentRequest,
+  sendThirdPartyAssessmentRequest,
+  cancelThirdPartyAssessmentRequest,
+} from './handlers/third-party-assessments.js';
