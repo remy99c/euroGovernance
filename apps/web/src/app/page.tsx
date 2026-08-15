@@ -17,6 +17,7 @@ import FrameworkAdoptionWizard from './framework-adoption-wizard';
 import ApplicabilityReviewTab from './applicability-review';
 import FrameworkCoverageDashboardTab from './framework-coverage-dashboard';
 import ProcessorTransfersManager from './processor-transfers-manager';
+import ProcessorGovernanceHub from './processor-governance-hub';
 
 type TabType =
   | 'overview'
@@ -27,6 +28,7 @@ type TabType =
   | 'evidence'
   | 'risks_tasks'
   | 'gdpr'
+  | 'processor_hub'
   | 'processor_transfers'
   | 'ai_systems'
   | 'members'
@@ -478,6 +480,7 @@ export default function DashboardPage() {
               { id: 'evidence', label: '📁 Evidence Inbox' },
               { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
               { id: 'gdpr', label: '🇪🇺 GDPR & Privacy' },
+              { id: 'processor_hub', label: '🏢 Processor Hub' },
               { id: 'processor_transfers', label: '🌍 Processor Transfers' },
               { id: 'ai_systems', label: '🤖 EU AI Act Register' },
               { id: 'members', label: '👥 Team & RBAC' },
@@ -1001,24 +1004,45 @@ export default function DashboardPage() {
                   Art. 30 ROPA, Art. 35 DPIA impact assessments, and Art. 33 72-hour breach tracker.
                 </p>
               </div>
-              <button
-                onClick={() => setActiveTab('processor_transfers')}
-                style={{
-                  backgroundColor: 'var(--accent-blue)',
-                  color: '#fff',
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-              >
-                <span>🌍</span> Cross-Border Transfers
-              </button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => setActiveTab('processor_hub')}
+                  style={{
+                    backgroundColor: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-color)',
+                    padding: '8px 14px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>🏢</span> Processor Hub
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('processor_transfers')}
+                  style={{
+                    backgroundColor: 'var(--accent-blue)',
+                    color: '#fff',
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>🌍</span> Cross-Border Transfers
+                </button>
+              </div>
             </header>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -1053,7 +1077,16 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* TAB 5B: PROCESSOR CROSS-BORDER TRANSFERS */}
+        {/* TAB 5B: PROCESSOR GOVERNANCE OPERATIONAL HUB */}
+        {activeTab === 'processor_hub' && (
+          <ProcessorGovernanceHub
+            tenantId={tenantId}
+            onNavigateToTab={(tabId) => setActiveTab(tabId as TabType)}
+            onNotice={showNotice}
+          />
+        )}
+
+        {/* TAB 5C: PROCESSOR CROSS-BORDER TRANSFERS */}
         {activeTab === 'processor_transfers' && (
           <ProcessorTransfersManager tenantId={tenantId} onNotice={showNotice} />
         )}
