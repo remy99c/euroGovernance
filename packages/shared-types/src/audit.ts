@@ -31,7 +31,8 @@ export type ExportType =
   | 'processor_governance_gaps_report'
   | 'processor_review_schedule_report'
   | 'processor_system_mapping_report'
-  | 'processor_ropa_mapping_report';
+  | 'processor_ropa_mapping_report'
+  | 'certification_register_report';
 
 export type NotificationPriority = 'low' | 'medium' | 'high' | 'urgent';
 
@@ -55,7 +56,12 @@ export type NotificationType =
   | 'scc_review_due'
   | 'transfer_arrangement_review_due'
   | 'tia_review_due'
-  | 'missing_evidence_follow_up';
+  | 'missing_evidence_follow_up'
+  | 'certification_expiry_warning_90d'
+  | 'certification_expiry_warning_30d'
+  | 'certification_expired'
+  | 'certification_surveillance_audit_due'
+  | 'certification_missing_evidence_follow_up';
 
 /**
  * Immutable Audit Log Event (/tenants/{tenantId}/audit_logs/{logId})

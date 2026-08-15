@@ -14,8 +14,11 @@ import {
   TIA,
   Evidence,
   ROPAEntry,
+  Certification,
   evaluateProcessorEvidenceCompleteness,
   evaluateProcessorRiskFlags,
+  evaluateCertificationCompleteness,
+  evaluateCertificationRiskFlags,
 } from '@eurogovernance/shared-types';
 
 export interface RequestExportInput {
@@ -869,6 +872,45 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
             crossBorderRopaCount: mappings.filter((m) => m.involvesInternationalTransfer).length,
           },
           ropaProcessorMap: mappings,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'certification_register_report') {
+      const [certSnap, evSnap] = await Promise.all([
+        tenantRef.collection('certifications').get(),
+        tenantRef.collection('evidence').get(),
+      ]);
+
+      const certs = certSnap.docs.map((d) => d.data() as Certification);
+      const evidences = evSnap.docs.map((d) => d.data() as Evidence);
+
+      const enrichedCerts = certs.map((c) => {
+        const completeness = evaluateCertificationCompleteness(c, evidences, new Date(processingTime));
+        return {
+          ...c,
+          completenessSummary: completeness,
+        };
+      });
+
+      const riskEvaluation = evaluateCertificationRiskFlags(certs, evidences, new Date(processingTime));
+
+      fileName = `certification_register_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Master Certifications & External Security Assurance Register',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalCertificationsCount: certs.length,
+            activeValidCount: certs.filter((c) => c.status === 'active_valid').length,
+            expiredCount: certs.filter((c) => c.status === 'expired').length,
+            overallAssuranceRiskLevel: riskEvaluation.overallAssuranceRiskLevel,
+          },
+          certifications: enrichedCerts,
+          riskEvaluation,
         },
         null,
         2

@@ -257,3 +257,14 @@ export {
   revertTenantApplicabilityDecision,
   getTenantApplicabilityDecisionHistory,
 } from './handlers/applicability.js';
+
+// Structured Certifications & External Assurance Handlers
+export {
+  createTenantCertification,
+  updateTenantCertification,
+  deleteTenantCertification,
+  listTenantCertifications,
+  linkEvidenceToCertification,
+  getCertificationCompletenessSummary,
+  getTenantCertificationRiskDashboard,
+} from './handlers/certifications.js';

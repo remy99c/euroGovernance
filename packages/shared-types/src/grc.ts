@@ -222,6 +222,7 @@ export interface Evidence extends BaseEntity {
   processorProfileIds?: string[];
   transferArrangementIds?: string[];
   vendorIds?: string[];
+  certificationIds?: string[];
   collectedAt: string;
   reviewDueDate: string | null;
   reviewedBy: string | null;

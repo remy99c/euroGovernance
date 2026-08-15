@@ -19,6 +19,7 @@ import FrameworkCoverageDashboardTab from './framework-coverage-dashboard';
 import ProcessorTransfersManager from './processor-transfers-manager';
 import ProcessorGovernanceHub from './processor-governance-hub';
 import ProcessorInventory from './processor-inventory';
+import { CertificationsManager } from './certifications-manager';
 
 type TabType =
   | 'overview'
@@ -27,6 +28,7 @@ type TabType =
   | 'applicability_review'
   | 'controls'
   | 'evidence'
+  | 'certifications'
   | 'risks_tasks'
   | 'gdpr'
   | 'processor_inventory'
@@ -59,6 +61,7 @@ export default function DashboardPage() {
   const [membersList, setMembersList] = useState<any[]>([]);
   const [exportJobsList, setExportJobsList] = useState<any[]>([]);
   const [adoptedFrameworksList, setAdoptedFrameworksList] = useState<any[]>([]);
+  const [certificationsList, setCertificationsList] = useState<any[]>([]);
 
   const showNotice = (msg: string) => {
     setActionNotice(msg);
@@ -85,7 +88,7 @@ export default function DashboardPage() {
     const auditQuery = query(
       collection(db, 'tenants', tenantId, 'audit_logs'),
       orderBy('timestamp', 'desc'),
-      limit(10)
+      limit(25)
     );
     const unsubAudit = onSnapshot(
       auditQuery,
@@ -111,6 +114,15 @@ export default function DashboardPage() {
         setEvidenceList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       },
       (err) => console.warn('Evidence snapshot notice:', err.message)
+    );
+
+    // Certifications & Structured Assurance Records
+    const unsubCertifications = onSnapshot(
+      collection(db, 'tenants', tenantId, 'certifications'),
+      (snap) => {
+        setCertificationsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Certifications snapshot notice:', err.message)
     );
 
     // Risks
@@ -208,6 +220,7 @@ export default function DashboardPage() {
       unsubAudit();
       unsubControls();
       unsubEvidence();
+      unsubCertifications();
       unsubRisks();
       unsubIssues();
       unsubTasks();
@@ -481,6 +494,7 @@ export default function DashboardPage() {
               { id: 'applicability_review', label: '⚖️ Applicability Review' },
               { id: 'controls', label: '🛡️ Unified Controls' },
               { id: 'evidence', label: '📁 Evidence Inbox' },
+              { id: 'certifications', label: '🏆 Certifications & Assurance' },
               { id: 'risks_tasks', label: '⚠️ Risks & Tasks' },
               { id: 'gdpr', label: '🇪🇺 GDPR & Privacy' },
               { id: 'processor_inventory', label: '📋 Processor Inventory' },
@@ -957,6 +971,28 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* TAB: CERTIFICATIONS & STRUCTURED ASSURANCE */}
+        {activeTab === 'certifications' && (
+          <div>
+            <header style={{ marginBottom: '24px' }}>
+              <h1 style={{ fontSize: '22px', fontWeight: 700 }}>Structured Certifications & External Assurance</h1>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Manage accredited standard certificates (ISO 27001, ISO 42001, SOC 2, C5, Europrivacy, TISAX), surveillance audit schedules, and linked evidence artifacts.
+              </p>
+            </header>
+            <CertificationsManager
+              tenantId={tenantId}
+              userRole={userRole}
+              userId={user?.uid || 'usr_admin_01'}
+              certifications={certificationsList}
+              evidenceList={evidenceList}
+              controlsList={controlsList}
+              systemsList={aiSystemsList}
+              vendorsList={[]}
+            />
+          </div>
+        )}
+
         {/* TAB 4: RISKS & TASKS */}
         {activeTab === 'risks_tasks' && (
           <div>
@@ -1337,6 +1373,12 @@ export default function DashboardPage() {
                 style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
                 📑 Processor-to-ROPA Map
+              </button>
+              <button
+                onClick={() => handleRequestExport('certification_register_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                🏆 Master Certifications Register
               </button>
               <button
                 onClick={() => handleRequestExport('gdpr_ropa_xlsx')}

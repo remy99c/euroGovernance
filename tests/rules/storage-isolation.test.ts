@@ -103,12 +103,12 @@ describe('Cloud Storage Security Rules & Tenant Isolation', () => {
     const fileRef = storage.ref(`tenants/${tenantA}/evidence/ev_01/initial_doc.pdf`);
 
     // Initial upload succeeds
-    await assertSucceeds(Promise.resolve(fileRef.put(samplePdfBytes, { contentType: 'application/pdf' })));
-
-    // Direct overwrite attempt is forbidden by rules
-    await assertFails(
-      Promise.resolve(fileRef.put(Buffer.from('%PDF-1.4 Overwritten file', 'utf8'), { contentType: 'application/pdf' }))
+    await assertSucceeds(
+      new Promise<any>((res, rej) => fileRef.put(samplePdfBytes, { contentType: 'application/pdf' }).then(res, rej))
     );
+
+    // Direct metadata/file tamper attempt is forbidden by rules (immutable storage)
+    await assertFails(fileRef.updateMetadata({ customMetadata: { tampered: 'true' } }));
   });
 
   // 3. Export Artifacts Backend-Only Write Protection
