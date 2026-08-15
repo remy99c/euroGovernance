@@ -14,7 +14,7 @@ import {
 } from '@eurogovernance/shared-types';
 import { UIPageHeader } from './components/ui-page-header';
 import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
-import { UIBadge } from './components/ui-badge';
+import { UIBadge, UIStatusBadge, UIRiskBadge } from './components/ui-badge';
 import { UIFilterBar } from './components/ui-filter-bar';
 import { UIDataTable, ColumnDefinition } from './components/ui-data-table';
 import { UIEmptyState } from './components/ui-empty-state';
@@ -484,37 +484,19 @@ export function ProcessorAssessmentWorkspace({
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{a.respondent?.email || 'N/A'}</div>
                 </td>
                 <td>
-                  <UIBadge variant={getStatusVariant(a.status)}>
-                    {a.status.replace(/_/g, ' ')}
-                  </UIBadge>
+                  <UIStatusBadge status={a.status} domain="review" />
                 </td>
                 <td>
-                  <div className="font-tabular" style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                  <div className="font-tabular" style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: '3px' }}>
                     {a.overallScorePercent !== null && a.overallScorePercent !== undefined
                       ? `${a.overallScorePercent}%`
                       : `${score.overallScore}%`}
                   </div>
                   {a.overallRiskRating && (
-                    <span
-                      style={{
-                        fontSize: '10.5px',
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        color:
-                          a.overallRiskRating === 'critical'
-                            ? 'var(--status-critical-fg)'
-                            : a.overallRiskRating === 'high'
-                            ? 'var(--status-warning-fg)'
-                            : a.overallRiskRating === 'medium'
-                            ? 'var(--status-warning-fg)'
-                            : 'var(--status-compliant-fg)',
-                      }}
-                    >
-                      {a.overallRiskRating} Risk
-                    </span>
+                    <UIRiskBadge level={a.overallRiskRating} size="sm" />
                   )}
                   {riskFlags.length > 0 && (
-                    <div style={{ fontSize: '10px', color: 'var(--status-critical-fg)' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--status-critical-fg)', marginTop: '2px' }}>
                       ⚠️ {riskFlags.length} open gap(s)
                     </div>
                   )}
