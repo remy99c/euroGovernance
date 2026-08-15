@@ -488,6 +488,369 @@ export const VALID_ASSURANCE_STANDARD_FAMILIES: readonly AssuranceStandardFamily
   'other',
 ] as const;
 
+export type AssuranceIssuingBodyType =
+  | 'accredited_registrar'
+  | 'cpa_firm_auditor'
+  | 'regulatory_authority'
+  | 'industry_consortium'
+  | 'self_attestation'
+  | 'other';
+
+export type AssuranceCategory =
+  | 'information_security'
+  | 'privacy_dataprotection'
+  | 'business_continuity'
+  | 'ai_governance'
+  | 'cloud_security'
+  | 'industry_compliance'
+  | 'regulatory_trade'
+  | 'custom';
+
+export interface AssuranceStandardTaxonomyDefinition {
+  family: AssuranceStandardFamily;
+  displayName: string;
+  shortLabel: string;
+  defaultArtifactKind: AssuranceArtifactKind;
+  description: string;
+  issuingBodyType: AssuranceIssuingBodyType;
+  standardValidityMonths: number | null;
+  requiresReportPeriod: boolean;
+  supportsPointInTime: boolean;
+  requiresAnnualSurveillance: boolean;
+  category: AssuranceCategory;
+}
+
+export const ASSURANCE_ARTIFACT_KIND_LABELS: Record<
+  AssuranceArtifactKind,
+  { label: string; description: string; shortLabel: string }
+> = {
+  accredited_certification: {
+    label: 'Accredited Certification',
+    description: 'Formal ISO/IEC or statutory certificate issued by an accredited certification body.',
+    shortLabel: 'Certification',
+  },
+  independent_attestation_report: {
+    label: 'Independent Attestation Report',
+    description: 'Independent CPA / auditor opinion report over controls design and operating effectiveness (e.g. SOC 1, SOC 2, BSI C5).',
+    shortLabel: 'Attestation',
+  },
+  regulatory_declaration: {
+    label: 'Regulatory Declaration',
+    description: 'Statutory registration or public compliance declaration (e.g. EU-US DPF, HIPAA statement).',
+    shortLabel: 'Declaration',
+  },
+  code_of_conduct: {
+    label: 'Approved Code of Conduct',
+    description: 'Adherence to an officially approved sector-specific Code of Conduct under GDPR Article 40.',
+    shortLabel: 'Code of Conduct',
+  },
+  industry_label: {
+    label: 'Industry Trust Label',
+    description: 'Industry-recognized assurance label or assessment exchange credential (e.g. TISAX, CSA STAR, Cyber Essentials Plus).',
+    shortLabel: 'Industry Label',
+  },
+  self_assessment: {
+    label: 'Vendor Self-Assessment',
+    description: 'First-party security questionnaire, CAIQ, or vendor compliance self-attestation.',
+    shortLabel: 'Self-Assessment',
+  },
+  custom_assurance: {
+    label: 'Custom Assurance / Audit',
+    description: 'Bespoke customer security audit, penetration test summary, or custom assurance artifact.',
+    shortLabel: 'Custom Assurance',
+  },
+};
+
+export const ASSURANCE_TAXONOMY_MAP: Record<AssuranceStandardFamily, AssuranceStandardTaxonomyDefinition> = {
+  iso_27001: {
+    family: 'iso_27001',
+    displayName: 'ISO/IEC 27001:2022 (ISMS)',
+    shortLabel: 'ISO 27001',
+    defaultArtifactKind: 'accredited_certification',
+    description: 'Information Security Management System accredited certification.',
+    issuingBodyType: 'accredited_registrar',
+    standardValidityMonths: 36,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: true,
+    category: 'information_security',
+  },
+  iso_27701: {
+    family: 'iso_27701',
+    displayName: 'ISO/IEC 27701:2019 (PIMS)',
+    shortLabel: 'ISO 27701',
+    defaultArtifactKind: 'accredited_certification',
+    description: 'Privacy Information Management System accredited extension to ISO 27001.',
+    issuingBodyType: 'accredited_registrar',
+    standardValidityMonths: 36,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: true,
+    category: 'privacy_dataprotection',
+  },
+  iso_42001: {
+    family: 'iso_42001',
+    displayName: 'ISO/IEC 42001:2023 (AIMS)',
+    shortLabel: 'ISO 42001',
+    defaultArtifactKind: 'accredited_certification',
+    description: 'Artificial Intelligence Management System accredited certification.',
+    issuingBodyType: 'accredited_registrar',
+    standardValidityMonths: 36,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: true,
+    category: 'ai_governance',
+  },
+  iso_22301: {
+    family: 'iso_22301',
+    displayName: 'ISO 22301:2019 (BCMS)',
+    shortLabel: 'ISO 22301',
+    defaultArtifactKind: 'accredited_certification',
+    description: 'Security and resilience — Business continuity management systems.',
+    issuingBodyType: 'accredited_registrar',
+    standardValidityMonths: 36,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: true,
+    category: 'business_continuity',
+  },
+  soc1_type2: {
+    family: 'soc1_type2',
+    displayName: 'SOC 1 Type II (SSAE 18 / ISAE 3402)',
+    shortLabel: 'SOC 1 Type II',
+    defaultArtifactKind: 'independent_attestation_report',
+    description: 'Report on controls relevant to user entities internal control over financial reporting.',
+    issuingBodyType: 'cpa_firm_auditor',
+    standardValidityMonths: 12,
+    requiresReportPeriod: true,
+    supportsPointInTime: false,
+    requiresAnnualSurveillance: false,
+    category: 'industry_compliance',
+  },
+  soc2_type1: {
+    family: 'soc2_type1',
+    displayName: 'SOC 2 Type I (Point-in-Time Design)',
+    shortLabel: 'SOC 2 Type I',
+    defaultArtifactKind: 'independent_attestation_report',
+    description: 'Report on controls design at a specified point in time for Trust Services Criteria.',
+    issuingBodyType: 'cpa_firm_auditor',
+    standardValidityMonths: 12,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: false,
+    category: 'information_security',
+  },
+  soc2_type2: {
+    family: 'soc2_type2',
+    displayName: 'SOC 2 Type II (Operating Effectiveness)',
+    shortLabel: 'SOC 2 Type II',
+    defaultArtifactKind: 'independent_attestation_report',
+    description: 'Report on controls operating effectiveness over a testing period for Trust Services Criteria.',
+    issuingBodyType: 'cpa_firm_auditor',
+    standardValidityMonths: 12,
+    requiresReportPeriod: true,
+    supportsPointInTime: false,
+    requiresAnnualSurveillance: false,
+    category: 'information_security',
+  },
+  soc3: {
+    family: 'soc3',
+    displayName: 'SOC 3 General Use Attestation Report',
+    shortLabel: 'SOC 3',
+    defaultArtifactKind: 'independent_attestation_report',
+    description: 'Public Trust Services Report based on SOC 2 criteria.',
+    issuingBodyType: 'cpa_firm_auditor',
+    standardValidityMonths: 12,
+    requiresReportPeriod: true,
+    supportsPointInTime: false,
+    requiresAnnualSurveillance: false,
+    category: 'information_security',
+  },
+  bsi_c5: {
+    family: 'bsi_c5',
+    displayName: 'BSI C5:2020 (Cloud Computing Compliance Criteria)',
+    shortLabel: 'BSI C5',
+    defaultArtifactKind: 'independent_attestation_report',
+    description: 'German Federal Office for Information Security Cloud Computing Compliance Criteria Catalogue (Type 2).',
+    issuingBodyType: 'cpa_firm_auditor',
+    standardValidityMonths: 12,
+    requiresReportPeriod: true,
+    supportsPointInTime: false,
+    requiresAnnualSurveillance: false,
+    category: 'cloud_security',
+  },
+  tisax: {
+    family: 'tisax',
+    displayName: 'TISAX (Trusted Information Security Assessment Exchange)',
+    shortLabel: 'TISAX',
+    defaultArtifactKind: 'industry_label',
+    description: 'Automotive industry information security standard administered by ENX.',
+    issuingBodyType: 'industry_consortium',
+    standardValidityMonths: 36,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: false,
+    category: 'industry_compliance',
+  },
+  cyber_essentials_plus: {
+    family: 'cyber_essentials_plus',
+    displayName: 'Cyber Essentials Plus (NCSC UK)',
+    shortLabel: 'Cyber Essentials Plus',
+    defaultArtifactKind: 'industry_label',
+    description: 'UK National Cyber Security Centre hands-on technical verification.',
+    issuingBodyType: 'accredited_registrar',
+    standardValidityMonths: 12,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: false,
+    category: 'information_security',
+  },
+  gdpr_art42_europrivacy: {
+    family: 'gdpr_art42_europrivacy',
+    displayName: 'Europrivacy GDPR Article 42 Certification',
+    shortLabel: 'Europrivacy Art. 42',
+    defaultArtifactKind: 'accredited_certification',
+    description: 'Official EDPB-approved European Data Protection Seal under GDPR Article 42.',
+    issuingBodyType: 'accredited_registrar',
+    standardValidityMonths: 36,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: true,
+    category: 'privacy_dataprotection',
+  },
+  pci_dss_aoc: {
+    family: 'pci_dss_aoc',
+    displayName: 'PCI-DSS Attestation of Compliance (AoC v4.0)',
+    shortLabel: 'PCI-DSS AoC',
+    defaultArtifactKind: 'industry_label',
+    description: 'Payment Card Industry Data Security Standard formal Attestation of Compliance.',
+    issuingBodyType: 'cpa_firm_auditor',
+    standardValidityMonths: 12,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: false,
+    category: 'industry_compliance',
+  },
+  hipaa_security: {
+    family: 'hipaa_security',
+    displayName: 'HIPAA Security & Privacy Assessment Report',
+    shortLabel: 'HIPAA Assessment',
+    defaultArtifactKind: 'custom_assurance',
+    description: 'Health Insurance Portability and Accountability Act third-party security evaluation.',
+    issuingBodyType: 'cpa_firm_auditor',
+    standardValidityMonths: 12,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: false,
+    category: 'privacy_dataprotection',
+  },
+  dpf_self_certification: {
+    family: 'dpf_self_certification',
+    displayName: 'EU-US Data Privacy Framework (DPF) Self-Certification',
+    shortLabel: 'EU-US DPF',
+    defaultArtifactKind: 'regulatory_declaration',
+    description: 'US Department of Commerce active DPF List registration and adequacy declaration.',
+    issuingBodyType: 'regulatory_authority',
+    standardValidityMonths: 12,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: false,
+    category: 'regulatory_trade',
+  },
+  csa_star: {
+    family: 'csa_star',
+    displayName: 'CSA STAR (Cloud Security Alliance Level 1 / Level 2)',
+    shortLabel: 'CSA STAR',
+    defaultArtifactKind: 'industry_label',
+    description: 'Security Trust Assurance and Risk registry based on Cloud Controls Matrix (CCM).',
+    issuingBodyType: 'industry_consortium',
+    standardValidityMonths: 36,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: true,
+    category: 'cloud_security',
+  },
+  other: {
+    family: 'other',
+    displayName: 'Custom Third-Party Assurance / Audit Report',
+    shortLabel: 'Custom Assurance',
+    defaultArtifactKind: 'custom_assurance',
+    description: 'Bespoke third-party security assessment, penetration test, or client audit.',
+    issuingBodyType: 'other',
+    standardValidityMonths: null,
+    requiresReportPeriod: false,
+    supportsPointInTime: true,
+    requiresAnnualSurveillance: false,
+    category: 'custom',
+  },
+};
+
+/**
+ * Returns taxonomy metadata for a given assurance standard family.
+ */
+export function getAssuranceTaxonomy(family: AssuranceStandardFamily): AssuranceStandardTaxonomyDefinition {
+  return ASSURANCE_TAXONOMY_MAP[family] || ASSURANCE_TAXONOMY_MAP.other;
+}
+
+/**
+ * Returns user-facing formatted display name for an assurance standard.
+ */
+export function getAssuranceDisplayName(family: AssuranceStandardFamily, customName?: string | null): string {
+  if (family === 'other' && customName?.trim()) {
+    return customName.trim();
+  }
+  return ASSURANCE_TAXONOMY_MAP[family]?.displayName || 'Third-Party Assurance';
+}
+
+/**
+ * Returns user-facing label for an assurance artifact kind.
+ */
+export function getAssuranceArtifactKindLabel(kind: AssuranceArtifactKind): string {
+  return ASSURANCE_ARTIFACT_KIND_LABELS[kind]?.label || 'Assurance Artifact';
+}
+
+/**
+ * Validates metadata rules for an assurance artifact (e.g. period-of-time rules for SOC 2 Type II vs point-in-time certificates).
+ */
+export function validateAssuranceMetadataRules(cert: Partial<ProcessorCertification>): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (!cert.standardFamily || !VALID_ASSURANCE_STANDARD_FAMILIES.includes(cert.standardFamily)) {
+    errors.push(`standardFamily must be one of: ${VALID_ASSURANCE_STANDARD_FAMILIES.join(', ')}.`);
+    return { valid: false, errors };
+  }
+
+  const taxonomy = getAssuranceTaxonomy(cert.standardFamily);
+
+  // Custom standard validation
+  if (cert.standardFamily === 'other') {
+    if (!cert.customStandardName || typeof cert.customStandardName !== 'string' || cert.customStandardName.trim().length < 2) {
+      errors.push('customStandardName is required and must be at least 2 characters long when standardFamily is "other".');
+    }
+  }
+
+  // Report period enforcement
+  if (taxonomy.requiresReportPeriod) {
+    if (!cert.reportPeriodStart || typeof cert.reportPeriodStart !== 'string' || isNaN(new Date(cert.reportPeriodStart).getTime())) {
+      errors.push(`reportPeriodStart is required for period-of-time assurance reports (${taxonomy.displayName}).`);
+    }
+    if (!cert.reportPeriodEnd || typeof cert.reportPeriodEnd !== 'string' || isNaN(new Date(cert.reportPeriodEnd).getTime())) {
+      errors.push(`reportPeriodEnd is required for period-of-time assurance reports (${taxonomy.displayName}).`);
+    }
+  }
+
+  if (cert.reportPeriodStart && cert.reportPeriodEnd) {
+    if (new Date(cert.reportPeriodStart).getTime() > new Date(cert.reportPeriodEnd).getTime()) {
+      errors.push('reportPeriodStart cannot be after reportPeriodEnd.');
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
 export type ProcessorCertificationStatus =
   | 'active_valid'
   | 'expiring_soon'
@@ -600,6 +963,12 @@ export function validateProcessorCertification(input: unknown): ValidateProcesso
 
   if (!c.standardFamily || !VALID_ASSURANCE_STANDARD_FAMILIES.includes(c.standardFamily)) {
     errors.push(`standardFamily must be one of: ${VALID_ASSURANCE_STANDARD_FAMILIES.join(', ')}.`);
+  } else {
+    // Check specific metadata rules
+    const metaCheck = validateAssuranceMetadataRules(c);
+    if (!metaCheck.valid) {
+      errors.push(...metaCheck.errors);
+    }
   }
 
   // 3. Issuing Body & Reference Number
@@ -624,7 +993,7 @@ export function validateProcessorCertification(input: unknown): ValidateProcesso
     errors.push('validFrom date cannot be after validUntil date.');
   }
 
-  // 5. Report Period (where relevant for attestations like SOC 2 / C5)
+  // 5. Report Period Dates (where present)
   if (c.reportPeriodStart) {
     if (typeof c.reportPeriodStart !== 'string' || isNaN(new Date(c.reportPeriodStart).getTime())) {
       errors.push('reportPeriodStart must be a valid ISO date string if provided.');
@@ -637,8 +1006,10 @@ export function validateProcessorCertification(input: unknown): ValidateProcesso
     }
   }
 
-  if (c.reportPeriodStart && c.reportPeriodEnd && new Date(c.reportPeriodStart).getTime() > new Date(c.reportPeriodEnd).getTime()) {
-    errors.push('reportPeriodStart cannot be after reportPeriodEnd.');
+  if (c.reportPeriodStart && c.reportPeriodEnd) {
+    if (new Date(c.reportPeriodStart).getTime() > new Date(c.reportPeriodEnd).getTime()) {
+      errors.push('reportPeriodStart cannot be after reportPeriodEnd.');
+    }
   }
 
   // 6. Status & Scope
@@ -658,7 +1029,7 @@ export function validateProcessorCertification(input: unknown): ValidateProcesso
     errors.push('systemsOrServicesCovered must be an array of covered systems or services.');
   }
 
-  // 7. Review Governance
+  // 6. Review Governance
   if (!c.reviewOwnerUserId || typeof c.reviewOwnerUserId !== 'string' || c.reviewOwnerUserId.trim() === '') {
     errors.push('reviewOwnerUserId is required and must specify the internal review owner.');
   }
@@ -671,12 +1042,12 @@ export function validateProcessorCertification(input: unknown): ValidateProcesso
     errors.push('reviewDueDate must be a valid ISO date string or null.');
   }
 
-  // 8. Evidence Links
+  // 7. Evidence Links
   if (!Array.isArray(c.linkedEvidenceIds) || !c.linkedEvidenceIds.every(id => typeof id === 'string')) {
     errors.push('linkedEvidenceIds must be an array of string identifiers referencing Evidence records.');
   }
 
-  // 9. Deficiencies & Findings
+  // 8. Deficiencies & Findings
   if (typeof c.unresolvedFindingsCount !== 'number' || c.unresolvedFindingsCount < 0) {
     errors.push('unresolvedFindingsCount must be a non-negative integer.');
   }

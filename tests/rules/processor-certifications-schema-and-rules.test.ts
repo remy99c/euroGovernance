@@ -10,6 +10,12 @@ import {
   evaluateProcessorCertificationCompleteness,
   evaluateProcessorCertificationRiskFlags,
   evaluateProcessorCertificationReminders,
+  getAssuranceTaxonomy,
+  getAssuranceDisplayName,
+  getAssuranceArtifactKindLabel,
+  validateAssuranceMetadataRules,
+  VALID_ASSURANCE_STANDARD_FAMILIES,
+  VALID_ASSURANCE_ARTIFACT_KINDS,
   Evidence,
 } from '@eurogovernance/shared-types';
 import { getFirestoreRules } from './fixtures/test-factories.js';
@@ -444,6 +450,144 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       const reminders = evaluateProcessorCertificationReminders(certs, { asOfDate: asOf, windowDays: 90 });
       expect(reminders.some((r) => r.reminderType === 'certification_expiry_warning_30d')).toBe(true);
       expect(reminders.some((r) => r.reminderType === 'processor_annual_review_due')).toBe(true);
+    });
+  });
+
+  describe('4. Assurance Taxonomy, Display Labels & Metadata Rules Engine', () => {
+    it('supports all required minimum standards: ISO 27001, ISO 27701, SOC 2 Type II, SOC 2 Type I, ISO 22301, CSA STAR, Cyber Essentials, and custom/other', () => {
+      const requiredStandards = [
+        'iso_27001',
+        'iso_27701',
+        'soc2_type2',
+        'soc2_type1',
+        'iso_22301',
+        'csa_star',
+        'cyber_essentials_plus',
+        'other',
+      ];
+
+      for (const std of requiredStandards) {
+        expect(VALID_ASSURANCE_STANDARD_FAMILIES.includes(std as any)).toBe(true);
+        const taxonomy = getAssuranceTaxonomy(std as any);
+        expect(taxonomy).toBeDefined();
+        expect(taxonomy.displayName).toBeTruthy();
+        expect(taxonomy.shortLabel).toBeTruthy();
+        expect(taxonomy.category).toBeTruthy();
+      }
+    });
+
+    it('provides user-facing display labels for all artifact kinds', () => {
+      const allKinds = VALID_ASSURANCE_ARTIFACT_KINDS;
+      for (const kind of allKinds) {
+        const label = getAssuranceArtifactKindLabel(kind);
+        expect(label).toBeTruthy();
+        expect(typeof label).toBe('string');
+      }
+
+      expect(getAssuranceArtifactKindLabel('accredited_certification')).toBe('Accredited Certification');
+      expect(getAssuranceArtifactKindLabel('independent_attestation_report')).toBe('Independent Attestation Report');
+      expect(getAssuranceArtifactKindLabel('regulatory_declaration')).toBe('Regulatory Declaration');
+      expect(getAssuranceArtifactKindLabel('code_of_conduct')).toBe('Approved Code of Conduct');
+    });
+
+    it('enforces period-of-time report dates for SOC 2 Type II and BSI C5', () => {
+      const soc2WithoutPeriod: Partial<ProcessorCertification> = {
+        standardFamily: 'soc2_type2',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2026-01-01T00:00:00.000Z',
+      };
+
+      const result = validateAssuranceMetadataRules(soc2WithoutPeriod);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes('reportPeriodStart is required'))).toBe(true);
+      expect(result.errors.some((e) => e.includes('reportPeriodEnd is required'))).toBe(true);
+
+      const soc2WithPeriod: Partial<ProcessorCertification> = {
+        standardFamily: 'soc2_type2',
+        reportPeriodStart: '2024-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-12-31T23:59:59.000Z',
+        validFrom: '2025-01-15T00:00:00.000Z',
+        validUntil: '2026-01-14T23:59:59.000Z',
+      };
+
+      const validResult = validateAssuranceMetadataRules(soc2WithPeriod);
+      expect(validResult.valid).toBe(true);
+    });
+
+    it('allows point-in-time ISO 27001 certificates without report period', () => {
+      const isoCert: Partial<ProcessorCertification> = {
+        standardFamily: 'iso_27001',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2028-01-01T00:00:00.000Z',
+      };
+
+      const result = validateAssuranceMetadataRules(isoCert);
+      expect(result.valid).toBe(true);
+      expect(result.errors.length).toBe(0);
+    });
+
+    it('handles custom assurance types with required customStandardName', () => {
+      // Missing customStandardName
+      const customMissing: Partial<ProcessorCertification> = {
+        standardFamily: 'other',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2026-01-01T00:00:00.000Z',
+      };
+      const resultMissing = validateAssuranceMetadataRules(customMissing);
+      expect(resultMissing.valid).toBe(false);
+      expect(resultMissing.errors.some((e) => e.includes('customStandardName is required'))).toBe(true);
+
+      // Valid customStandardName
+      const customValid: Partial<ProcessorCertification> = {
+        standardFamily: 'other',
+        customStandardName: 'FinTech Custom Annual Penetration Assessment',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2026-01-01T00:00:00.000Z',
+      };
+      const resultValid = validateAssuranceMetadataRules(customValid);
+      expect(resultValid.valid).toBe(true);
+
+      // Display name formatting
+      expect(getAssuranceDisplayName('other', 'FinTech Custom Annual Penetration Assessment')).toBe(
+        'FinTech Custom Annual Penetration Assessment'
+      );
+      expect(getAssuranceDisplayName('iso_27001')).toBe('ISO/IEC 27001:2022 (ISMS)');
+    });
+
+    it('strictly rejects invalid standard family and invalid artifact kind', () => {
+      const invalidFamily = {
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_hosting',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'bogus_unsupported_standard' as any,
+        issuingBodyOrAuditor: 'TÜV',
+        certificateOrReportNumber: '123',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2026-01-01T00:00:00.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'Scope',
+        legalEntityOrRegionalScope: 'EU',
+        systemsOrServicesCovered: ['Compute'],
+        reviewOwnerUserId: 'usr_privacy_01',
+        reviewStatus: 'compliant_verified',
+        linkedEvidenceIds: [],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+      };
+
+      const resultFamily = validateProcessorCertification(invalidFamily);
+      expect(resultFamily.valid).toBe(false);
+      expect(resultFamily.errors.some((e) => e.includes('standardFamily must be one of'))).toBe(true);
+
+      const invalidKind = {
+        ...invalidFamily,
+        standardFamily: 'iso_27001' as const,
+        artifactKind: 'bogus_kind' as any,
+      };
+
+      const resultKind = validateProcessorCertification(invalidKind);
+      expect(resultKind.valid).toBe(false);
+      expect(resultKind.errors.some((e) => e.includes('artifactKind must be one of'))).toBe(true);
     });
   });
 });
