@@ -165,6 +165,175 @@ export const createTenantProcessorCertification = onCall<CreateProcessorCertific
   return { success: true, certification: record };
 });
 
+export interface UpdateProcessorCertificationInput {
+  tenantId: string;
+  certificationId: string;
+  artifactKind?: ProcessorCertification['artifactKind'];
+  standardFamily?: ProcessorCertification['standardFamily'];
+  customStandardName?: string | null;
+  issuingBodyOrAuditor?: string;
+  leadAuditorName?: string | null;
+  certificateOrReportNumber?: string;
+  reportPeriodStart?: string | null;
+  reportPeriodEnd?: string | null;
+  validFrom?: string;
+  validUntil?: string;
+  status?: ProcessorCertification['status'];
+  assuranceScopeSummary?: string;
+  legalEntityOrRegionalScope?: string;
+  systemsOrServicesCovered?: string[];
+  notes?: string | null;
+  reviewOwnerUserId?: string;
+  reviewDueDate?: string | null;
+  linkedEvidenceIds?: string[];
+  linkedControlIds?: string[];
+  linkedTransferArrangementIds?: string[];
+  unresolvedFindingsCount?: number;
+  hasMajorDeficiencies?: boolean;
+}
+
+/**
+ * Callable Function: updateTenantProcessorCertification
+ * Updates an existing processor certification or assurance report.
+ */
+export const updateTenantProcessorCertification = onCall<UpdateProcessorCertificationInput>(async (request) => {
+  const data = request.data;
+  const { tenantId, certificationId } = data;
+
+  if (!tenantId || !certificationId) {
+    throw new HttpsError('invalid-argument', 'tenantId and certificationId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+  ]);
+
+  const certRef = db.collection('tenants').doc(tenantId).collection('processor_certifications').doc(certificationId);
+  const certSnap = await certRef.get();
+  if (!certSnap.exists) {
+    throw new HttpsError('not-found', `Processor certification ${certificationId} not found.`);
+  }
+
+  const existing = certSnap.data() as ProcessorCertification;
+  if (existing.isHistoricVersion || existing.reviewStatus === 'superseded') {
+    throw new HttpsError('failed-precondition', 'Cannot directly modify a superseded historical certification record.');
+  }
+
+  const now = new Date().toISOString();
+
+  const updatedRecord: ProcessorCertification = {
+    ...existing,
+    ...(data.artifactKind !== undefined && { artifactKind: data.artifactKind }),
+    ...(data.standardFamily !== undefined && { standardFamily: data.standardFamily }),
+    ...(data.customStandardName !== undefined && { customStandardName: data.customStandardName }),
+    ...(data.issuingBodyOrAuditor !== undefined && { issuingBodyOrAuditor: data.issuingBodyOrAuditor }),
+    ...(data.leadAuditorName !== undefined && { leadAuditorName: data.leadAuditorName }),
+    ...(data.certificateOrReportNumber !== undefined && { certificateOrReportNumber: data.certificateOrReportNumber }),
+    ...(data.reportPeriodStart !== undefined && { reportPeriodStart: data.reportPeriodStart }),
+    ...(data.reportPeriodEnd !== undefined && { reportPeriodEnd: data.reportPeriodEnd }),
+    ...(data.validFrom !== undefined && { validFrom: data.validFrom }),
+    ...(data.validUntil !== undefined && { validUntil: data.validUntil }),
+    ...(data.status !== undefined && { status: data.status }),
+    ...(data.assuranceScopeSummary !== undefined && { assuranceScopeSummary: data.assuranceScopeSummary }),
+    ...(data.legalEntityOrRegionalScope !== undefined && { legalEntityOrRegionalScope: data.legalEntityOrRegionalScope }),
+    ...(data.systemsOrServicesCovered !== undefined && { systemsOrServicesCovered: data.systemsOrServicesCovered }),
+    ...(data.notes !== undefined && { notes: data.notes }),
+    ...(data.reviewOwnerUserId !== undefined && { reviewOwnerUserId: data.reviewOwnerUserId }),
+    ...(data.reviewDueDate !== undefined && { reviewDueDate: data.reviewDueDate }),
+    ...(data.linkedEvidenceIds !== undefined && { linkedEvidenceIds: data.linkedEvidenceIds }),
+    ...(data.linkedControlIds !== undefined && { linkedControlIds: data.linkedControlIds }),
+    ...(data.linkedTransferArrangementIds !== undefined && { linkedTransferArrangementIds: data.linkedTransferArrangementIds }),
+    ...(data.unresolvedFindingsCount !== undefined && { unresolvedFindingsCount: data.unresolvedFindingsCount }),
+    ...(data.hasMajorDeficiencies !== undefined && { hasMajorDeficiencies: data.hasMajorDeficiencies }),
+    updatedBy: authContext.userId,
+    updatedAt: now,
+  };
+
+  const validation = validateProcessorCertification(updatedRecord);
+  if (!validation.valid) {
+    throw new HttpsError('invalid-argument', `Validation failed: ${validation.errors.join('; ')}`);
+  }
+
+  await certRef.set(updatedRecord);
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    action: 'update',
+    entityType: 'processor_certification',
+    entityId: certificationId,
+    beforeSummary: {
+      standardFamily: existing.standardFamily,
+      certificateOrReportNumber: existing.certificateOrReportNumber,
+      status: existing.status,
+    },
+    afterSummary: {
+      standardFamily: updatedRecord.standardFamily,
+      certificateOrReportNumber: updatedRecord.certificateOrReportNumber,
+      status: updatedRecord.status,
+    },
+    source: 'cloud_function',
+    workflowContext: 'processor_certification_updated',
+  });
+
+  return { success: true, certification: updatedRecord };
+});
+
+export interface DeleteProcessorCertificationInput {
+  tenantId: string;
+  certificationId: string;
+}
+
+/**
+ * Callable Function: deleteTenantProcessorCertification
+ * Deletes a processor certification record with audit trail tracking.
+ */
+export const deleteTenantProcessorCertification = onCall<DeleteProcessorCertificationInput>(async (request) => {
+  const { tenantId, certificationId } = request.data;
+  if (!tenantId || !certificationId) {
+    throw new HttpsError('invalid-argument', 'tenantId and certificationId are required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+  ]);
+
+  const certRef = db.collection('tenants').doc(tenantId).collection('processor_certifications').doc(certificationId);
+  const certSnap = await certRef.get();
+  if (!certSnap.exists) {
+    throw new HttpsError('not-found', `Processor certification ${certificationId} not found.`);
+  }
+
+  const existing = certSnap.data() as ProcessorCertification;
+
+  await certRef.delete();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    action: 'delete',
+    entityType: 'processor_certification',
+    entityId: certificationId,
+    beforeSummary: {
+      standardFamily: existing.standardFamily,
+      certificateOrReportNumber: existing.certificateOrReportNumber,
+      processorProfileId: existing.processorProfileId,
+    },
+    source: 'cloud_function',
+    workflowContext: 'processor_certification_deleted',
+  });
+
+  return { success: true, certificationId };
+});
+
 /**
  * Callable Function: reviewProcessorCertification
  * Executes review decisions with strict attribution, state transition enforcement, and deficiency flagging.

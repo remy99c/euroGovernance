@@ -85,6 +85,8 @@ export {
 // Processor Assurance & Certification Review Handlers
 export {
   createTenantProcessorCertification,
+  updateTenantProcessorCertification,
+  deleteTenantProcessorCertification,
   reviewProcessorCertification,
   replaceProcessorCertification,
   listTenantProcessorCertifications,

@@ -27,6 +27,7 @@ import {
   ProcessorEvidenceCompleteness,
   ProcessorEvidenceRequirement,
 } from '@eurogovernance/shared-types';
+import { ProcessorCertificationFormModal } from './processor-certification-form-modal';
 
 interface ProcessorGovernanceHubProps {
   tenantId: string;
@@ -64,6 +65,9 @@ export default function ProcessorGovernanceHub({
   const [certFilter, setCertFilter] = useState<'all' | 'current' | 'attention' | 'superseded'>('current');
   const [selectedCertForModal, setSelectedCertForModal] = useState<ProcessorCertification | null>(null);
   const [showReviewModal, setShowReviewModal] = useState<boolean>(false);
+  const [showCertFormModal, setShowCertFormModal] = useState<boolean>(false);
+  const [certFormMode, setCertFormMode] = useState<'create' | 'edit' | 'replace'>('create');
+  const [selectedCertForForm, setSelectedCertForForm] = useState<ProcessorCertification | null>(null);
   const [reviewDecision, setReviewDecision] = useState<'accept' | 'reject' | 'mark_insufficient' | 'start_review'>('accept');
   const [reviewNotesInput, setReviewNotesInput] = useState<string>('');
   const [rejectionReasonInput, setRejectionReasonInput] = useState<string>('');
@@ -364,6 +368,23 @@ export default function ProcessorGovernanceHub({
       showMsg(`Error submitting review: ${err.message || 'Unknown error'}`);
     } finally {
       setSubmittingReview(false);
+    }
+  };
+
+  // Handle Certification Delete
+  const handleDeleteCert = async (certId: string) => {
+    if (!tenantId) return;
+    if (!confirm('Are you sure you want to delete this processor certification record?')) return;
+    try {
+      const deleteFn = httpsCallable(functions, 'deleteTenantProcessorCertification');
+      await deleteFn({ tenantId, certificationId: certId });
+      showMsg('Processor certification deleted.');
+      if (selectedProfileId) {
+        loadProcessorDetails(selectedProfileId);
+      }
+    } catch (err: any) {
+      console.error('Failed to delete certification:', err);
+      showMsg(`Error deleting certification: ${err.message || 'Unknown error'}`);
     }
   };
 
@@ -802,16 +823,38 @@ export default function ProcessorGovernanceHub({
                   ))}
                 </div>
 
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  Showing {
-                    certFilter === 'current'
-                      ? assuranceSynthesis.currentCerts.length
-                      : certFilter === 'attention'
-                      ? assuranceSynthesis.attentionCerts.length
-                      : certFilter === 'superseded'
-                      ? assuranceSynthesis.supersededCerts.length
-                      : certifications.length
-                  } assurance records
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Showing {
+                      certFilter === 'current'
+                        ? assuranceSynthesis.currentCerts.length
+                        : certFilter === 'attention'
+                        ? assuranceSynthesis.attentionCerts.length
+                        : certFilter === 'superseded'
+                        ? assuranceSynthesis.supersededCerts.length
+                        : certifications.length
+                    } assurance records
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setSelectedCertForForm(null);
+                      setCertFormMode('create');
+                      setShowCertFormModal(true);
+                    }}
+                    style={{
+                      padding: '6px 14px',
+                      backgroundColor: 'var(--accent-blue)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ➕ Record Assurance Artifact
+                  </button>
                 </div>
               </div>
 
@@ -970,28 +1013,86 @@ export default function ProcessorGovernanceHub({
                             </div>
 
                             {!isSuperseded && (
-                              <button
-                                onClick={() => {
-                                  setSelectedCertForModal(cert);
-                                  setReviewDecision('accept');
-                                  setReviewNotesInput(cert.reviewNotes || '');
-                                  setRejectionReasonInput(cert.rejectionReason || '');
-                                  setInsufficientRationaleInput(cert.insufficientRationale || '');
-                                  setShowReviewModal(true);
-                                }}
-                                style={{
-                                  padding: '6px 12px',
-                                  backgroundColor: 'var(--bg-primary)',
-                                  border: '1px solid var(--border-color)',
-                                  borderRadius: '6px',
-                                  fontSize: '12px',
-                                  fontWeight: 600,
-                                  color: 'var(--accent-blue)',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                ✍️ Record Review
-                              </button>
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                <button
+                                  onClick={() => {
+                                    setSelectedCertForForm(cert);
+                                    setCertFormMode('edit');
+                                    setShowCertFormModal(true);
+                                  }}
+                                  style={{
+                                    padding: '6px 10px',
+                                    backgroundColor: 'var(--bg-primary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    color: 'var(--text-primary)',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  ✏️ Maintain
+                                </button>
+
+                                <button
+                                  onClick={() => {
+                                    setSelectedCertForForm(cert);
+                                    setCertFormMode('replace');
+                                    setShowCertFormModal(true);
+                                  }}
+                                  style={{
+                                    padding: '6px 10px',
+                                    backgroundColor: 'var(--bg-primary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    color: 'var(--accent-blue)',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  🔄 Replace
+                                </button>
+
+                                <button
+                                  onClick={() => {
+                                    setSelectedCertForModal(cert);
+                                    setReviewDecision('accept');
+                                    setReviewNotesInput(cert.reviewNotes || '');
+                                    setRejectionReasonInput(cert.rejectionReason || '');
+                                    setInsufficientRationaleInput(cert.insufficientRationale || '');
+                                    setShowReviewModal(true);
+                                  }}
+                                  style={{
+                                    padding: '6px 10px',
+                                    backgroundColor: 'var(--bg-primary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    color: 'var(--status-success)',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  ✍️ Review
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteCert(cert.id)}
+                                  style={{
+                                    padding: '6px 10px',
+                                    backgroundColor: 'var(--bg-primary)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    color: 'var(--status-danger)',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  🗑️
+                                </button>
+                              </div>
                             )}
                           </div>
 
@@ -1281,6 +1382,29 @@ export default function ProcessorGovernanceHub({
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Form Modal for Create / Maintain / Replace */}
+              {showCertFormModal && (
+                <ProcessorCertificationFormModal
+                  tenantId={tenantId}
+                  processorProfileId={selectedProfileId}
+                  vendorId={activeProfile?.vendorId}
+                  existingCertification={selectedCertForForm}
+                  mode={certFormMode}
+                  evidenceList={evidenceList}
+                  availableSystems={systems}
+                  onClose={() => {
+                    setShowCertFormModal(false);
+                    setSelectedCertForForm(null);
+                  }}
+                  onSaved={() => {
+                    if (selectedProfileId) {
+                      loadProcessorDetails(selectedProfileId);
+                    }
+                  }}
+                  onNotice={showMsg}
+                />
               )}
             </div>
           )}

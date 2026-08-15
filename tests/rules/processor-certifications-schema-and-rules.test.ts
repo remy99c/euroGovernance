@@ -2104,4 +2104,345 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       expect(pimsTaxonomy.displayName).toBe('ISO/IEC 27701:2019 (PIMS)');
     });
   });
+
+  describe('11. Processor Certification UI Form Validation, Field Conditionality & Save/Update Flows', () => {
+    describe('Form Validation & Field Conditionality', () => {
+      it('validates standard certificate-style assurance record (ISO 27001)', () => {
+        const certRecord: ProcessorCertification = {
+          id: 'procert_iso_test',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          customStandardName: null,
+          issuingBodyOrAuditor: 'EY CertifyPoint',
+          certificateOrReportNumber: 'EY-2025-001',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2027-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Global cloud infrastructure data centers',
+          legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL',
+          systemsOrServicesCovered: ['Compute', 'Storage'],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'accepted',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: ['ev_doc_01'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        const result = validateProcessorCertification(certRecord);
+        expect(result.valid).toBe(true);
+        expect(result.errors).toHaveLength(0);
+      });
+
+      it('enforces report period dates on period-of-time assurance reports (SOC 2 Type II)', () => {
+        const invalidSoc2: ProcessorCertification = {
+          id: 'procert_soc2_missing_period',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'independent_attestation_report',
+          standardFamily: 'soc2_type2',
+          issuingBodyOrAuditor: 'PwC LLP',
+          certificateOrReportNumber: 'PWC-SOC2-2024',
+          reportPeriodStart: null, // Missing!
+          reportPeriodEnd: null,   // Missing!
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2025-05-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Security & Availability Trust Services Criteria',
+          legalEntityOrRegionalScope: 'AWS EMEA',
+          systemsOrServicesCovered: ['Databases'],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'pending',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: [],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        const result = validateProcessorCertification(invalidSoc2);
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes('Period-of-time assurance standard') || e.includes('reportPeriodStart'))).toBe(true);
+      });
+
+      it('enforces mandatory customStandardName when standardFamily is "other"', () => {
+        const invalidOther: ProcessorCertification = {
+          id: 'procert_other_missing_name',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'custom_assurance',
+          standardFamily: 'other',
+          customStandardName: '', // Missing!
+          issuingBodyOrAuditor: 'Internal Security Assurance',
+          certificateOrReportNumber: 'CUSTOM-2025',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2025-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Custom enterprise assurance model',
+          legalEntityOrRegionalScope: 'EU Headquarters',
+          systemsOrServicesCovered: ['Internal Auth'],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'pending',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: [],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        const result = validateProcessorCertification(invalidOther);
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes('customStandardName is required'))).toBe(true);
+      });
+
+      it('enforces rejectionReason when reviewStatus is "rejected"', () => {
+        const invalidRejection: ProcessorCertification = {
+          id: 'procert_rejected_no_reason',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'Unverified Registrar',
+          certificateOrReportNumber: 'FAKE-ISO-99',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2027-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Unverified Scope',
+          legalEntityOrRegionalScope: 'EU Headquarters',
+          systemsOrServicesCovered: [],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'rejected',
+          rejectionReason: '', // Missing!
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: [],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        const result = validateProcessorCertification(invalidRejection);
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes('rejectionReason is required'))).toBe(true);
+      });
+
+      it('enforces insufficientRationale when isInsufficient is true', () => {
+        const invalidInsufficient: ProcessorCertification = {
+          id: 'procert_insufficient_no_reason',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'TÜV Rheinland',
+          certificateOrReportNumber: 'TUV-2025-01',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2027-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'EU Cloud Facilities',
+          legalEntityOrRegionalScope: 'AWS EMEA',
+          systemsOrServicesCovered: ['Compute'],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'insufficient',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: [],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: true,
+          insufficientRationale: '', // Missing!
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        const result = validateProcessorCertification(invalidInsufficient);
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes('insufficientRationale is required'))).toBe(true);
+      });
+
+      it('enforces date chronology (validUntil >= validFrom and reportPeriodEnd >= reportPeriodStart)', () => {
+        const invalidDates: ProcessorCertification = {
+          id: 'procert_inverted_dates',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'independent_attestation_report',
+          standardFamily: 'soc2_type2',
+          issuingBodyOrAuditor: 'PwC LLP',
+          certificateOrReportNumber: 'PWC-SOC2-INVERTED',
+          reportPeriodStart: '2024-12-31T00:00:00.000Z',
+          reportPeriodEnd: '2024-01-01T00:00:00.000Z', // Inverted!
+          validFrom: '2025-01-01T00:00:00.000Z',
+          validUntil: '2024-01-01T00:00:00.000Z',     // Inverted!
+          status: 'active_valid',
+          assuranceScopeSummary: 'Inverted Scope',
+          legalEntityOrRegionalScope: 'AWS EMEA',
+          systemsOrServicesCovered: [],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'pending',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          linkedEvidenceIds: [],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        const result = validateProcessorCertification(invalidDates);
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes('validFrom date cannot be after validUntil date'))).toBe(true);
+        expect(result.errors.some((e) => e.includes('reportPeriodStart cannot be after reportPeriodEnd'))).toBe(true);
+      });
+    });
+
+    describe('Save, Update and Replace Lifecycle Flows', () => {
+      it('simulates update workflow preserving non-destructive history', () => {
+        const originalRecord: ProcessorCertification = {
+          id: 'cert_original_v1',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'EY CertifyPoint',
+          certificateOrReportNumber: 'EY-ORIGINAL-01',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2027-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'Initial Scope',
+          legalEntityOrRegionalScope: 'AWS EMEA',
+          systemsOrServicesCovered: ['Compute'],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'pending',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          isInsufficient: false,
+          versionNumber: 1,
+          isHistoricVersion: false,
+          linkedEvidenceIds: ['ev_doc_01'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        // Update fields
+        const updatedRecord: ProcessorCertification = {
+          ...originalRecord,
+          assuranceScopeSummary: 'Expanded Scope with Databases & Storage',
+          systemsOrServicesCovered: ['Compute', 'Storage', 'Databases'],
+          linkedEvidenceIds: ['ev_doc_01', 'ev_doc_02'],
+          updatedBy: 'usr_lead_dpo',
+          updatedAt: '2025-02-01T00:00:00.000Z',
+        };
+
+        const val = validateProcessorCertification(updatedRecord);
+        expect(val.valid).toBe(true);
+        expect(updatedRecord.systemsOrServicesCovered).toHaveLength(3);
+        expect(updatedRecord.linkedEvidenceIds).toHaveLength(2);
+      });
+
+      it('simulates replace workflow creating new version and linking previous version', () => {
+        const v1Cert: ProcessorCertification = {
+          id: 'cert_v1',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'EY CertifyPoint',
+          certificateOrReportNumber: 'EY-2022-01',
+          validFrom: '2021-01-01T00:00:00.000Z',
+          validUntil: '2024-01-01T00:00:00.000Z',
+          status: 'superseded',
+          assuranceScopeSummary: 'V1 Scope',
+          legalEntityOrRegionalScope: 'AWS EMEA',
+          systemsOrServicesCovered: ['Compute'],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'superseded',
+          reviewDueDate: '2023-12-01T00:00:00.000Z',
+          replacedByCertificationId: 'cert_v2',
+          versionNumber: 1,
+          isHistoricVersion: true,
+          linkedEvidenceIds: ['ev_doc_01'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2021-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        const v2Cert: ProcessorCertification = {
+          id: 'cert_v2',
+          tenantId: 'tenant_eurocorp_de',
+          processorProfileId: 'prof_aws_infra',
+          artifactKind: 'accredited_certification',
+          standardFamily: 'iso_27001',
+          issuingBodyOrAuditor: 'EY CertifyPoint',
+          certificateOrReportNumber: 'EY-2025-01',
+          validFrom: '2024-01-01T00:00:00.000Z',
+          validUntil: '2027-01-01T00:00:00.000Z',
+          status: 'active_valid',
+          assuranceScopeSummary: 'V2 Recertified Scope',
+          legalEntityOrRegionalScope: 'AWS EMEA',
+          systemsOrServicesCovered: ['Compute', 'Storage', 'Databases'],
+          reviewOwnerUserId: 'usr_compliance_lead',
+          reviewStatus: 'pending',
+          reviewDueDate: '2025-01-01T00:00:00.000Z',
+          replacesCertificationId: 'cert_v1',
+          versionNumber: 2,
+          isHistoricVersion: false,
+          linkedEvidenceIds: ['ev_doc_02'],
+          unresolvedFindingsCount: 0,
+          hasMajorDeficiencies: false,
+          isInsufficient: false,
+          ownerId: 'usr_compliance_lead',
+          createdBy: 'usr_compliance_lead',
+          updatedBy: 'usr_compliance_lead',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        };
+
+        expect(v1Cert.isHistoricVersion).toBe(true);
+        expect(v1Cert.replacedByCertificationId).toBe('cert_v2');
+        expect(v2Cert.isHistoricVersion).toBe(false);
+        expect(v2Cert.replacesCertificationId).toBe('cert_v1');
+        expect(v2Cert.versionNumber).toBe(2);
+
+        const v1Validation = validateProcessorCertification(v1Cert);
+        const v2Validation = validateProcessorCertification(v2Cert);
+        expect(v1Validation.valid).toBe(true);
+        expect(v2Validation.valid).toBe(true);
+      });
+    });
+  });
 });
