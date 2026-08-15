@@ -4,6 +4,7 @@ import {
   AssessmentRiskTier,
   AssessmentRecurrenceCadence,
 } from './processor-assessments.js';
+import { AssessmentQuestionType } from './questionnaire-engine.js';
 
 // =============================================================================
 // 1. QUESTIONNAIRE TEMPLATES, SECTIONS & QUESTIONS
@@ -30,16 +31,6 @@ export type QuestionnaireTargetScope =
   | 'existing_processor'       // Recurring / active data processors
   | 'subprocessor'             // Onward third-party subprocessors
   | 'any';                     // Applicable to any supplier type
-
-export type AssessmentQuestionType =
-  | 'single_select'
-  | 'multi_select'
-  | 'boolean'
-  | 'text'
-  | 'textarea'
-  | 'number'
-  | 'rating_scale'
-  | 'file_upload';
 
 export interface QuestionnaireQuestion {
   id: string;
