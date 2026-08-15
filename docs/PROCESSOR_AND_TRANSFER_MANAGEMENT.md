@@ -178,6 +178,14 @@ Seven specialized, tenant-scoped export jobs compile structured audit packages v
 | `processor_review_schedule_report` | **Review Calendar & Schedule** | Chronological schedule grouping reviews by overdue, due in 30 days, due in 90 days, and on-track. |
 | `processor_system_mapping_report` | **System Dependency Map** | Infrastructure mapping linking processors to system assets, environments, and relationship types. |
 | `processor_ropa_mapping_report` | **Article 30 to Processor Traceability** | Article 30 ROPA activities mapped to linked processors, cross-border transfers, and compliance verification. |
+| `processor_assurance_register` | **Processor Assurance Register** | Full registry of processor certifications, SOC reports, validity dates, review attribution, and gaps. |
+| `processor_expiring_certifications_report` | **Expiring Certifications Report** | Proactive renewal tracking of assurance records expiring within 60 days. |
+| `processor_expired_insufficient_assurance_report` | **Deficient Assurance Report** | Exception report of expired, rejected, and insufficient processor assurance. |
+| `processor_by_certification_type_matrix` | **Processor Certification Matrix** | Standard-by-standard cross-tabulation across ISO 27001, SOC 2, CSA STAR, PCI-DSS, etc. |
+| `processor_assurance_coverage_by_systems` | **Assurance by Linked Systems** | System asset dependency evaluation with overall assurance health status. |
+| `critical_processors_missing_assurance` | **Critical Processors Missing Assurance** | Risk escalation report isolating critical processors with assurance gaps. |
+
+For full technical specifications on processor certification tracking, refer to [`docs/PROCESSOR_CERTIFICATIONS_AND_ASSURANCE.md`](file:///Users/remon/Documents/euroGovernance/docs/PROCESSOR_CERTIFICATIONS_AND_ASSURANCE.md).
 
 All export artifacts are:
 1. Generated in tenant-isolated Cloud Storage paths (`tenants/{tenantId}/exports/{jobId}/...`).
