@@ -17,6 +17,9 @@ import {
   AssessmentRiskTier,
   Vendor,
   VendorRiskTier,
+  Risk,
+  DynamicQuestionnaireSection,
+  analyzeSubmissionRiskPosture,
   validateThirdPartyAssessmentRequest,
   isValidRequestStateTransition,
 } from '@eurogovernance/shared-types';
@@ -1025,6 +1028,185 @@ export const linkAssessmentToVendorOrProcessor = onCall<LinkAssessmentToVendorOr
       vendorId: finalVendorId,
       processorProfileId,
       converted: !!convertProspectToVendor,
+    };
+  }
+);
+
+// -----------------------------------------------------------------------------
+// 6. SYNC DERIVED ASSESSMENT RISKS TO RISK REGISTER (Compliance / Admin)
+// -----------------------------------------------------------------------------
+
+export interface SyncAssessmentRisksToRegisterInput {
+  tenantId: string;
+  requestId: string;
+  submissionId?: string;
+  riskCodesToSync?: string[];
+}
+
+export const syncAssessmentRisksToRegister = onCall<SyncAssessmentRisksToRegisterInput>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const { tenantId, requestId, submissionId: providedSubmissionId, riskCodesToSync } = data;
+    if (!tenantId || !requestId) {
+      throw new HttpsError('invalid-argument', 'tenantId and requestId are required.');
+    }
+
+    const authContext = await requireTenantMember(request, tenantId, [
+      'tenant_admin',
+      'compliance_manager',
+      'privacy_manager',
+      'security_manager',
+      'approver',
+    ]);
+
+    const reqRef = db.collection('tenants').doc(tenantId).collection('assessment_requests').doc(requestId);
+    const reqSnap = await reqRef.get();
+
+    if (!reqSnap.exists) {
+      throw new HttpsError('not-found', 'Assessment request not found.');
+    }
+
+    const reqData = reqSnap.data() as ThirdPartyAssessmentRequest;
+    const submissionId = providedSubmissionId || reqData.activeSubmissionId || `sub_${requestId}`;
+
+    const subRef = db.collection('tenants').doc(tenantId).collection('assessment_submissions').doc(submissionId);
+    const subSnap = await subRef.get();
+
+    if (!subSnap.exists) {
+      throw new HttpsError('not-found', 'Assessment submission not found.');
+    }
+
+    const subData = subSnap.data() as { answers: Record<string, any> };
+
+    // Get Sections from template snapshot or live template
+    let sections: DynamicQuestionnaireSection[] = [];
+    if (reqData.templateSnapshot?.sections && reqData.templateSnapshot.sections.length > 0) {
+      sections = reqData.templateSnapshot.sections as unknown as DynamicQuestionnaireSection[];
+    } else {
+      const tmplRef = db.collection('tenants').doc(tenantId).collection('questionnaire_templates').doc(reqData.templateId);
+      const tmplSnap = await tmplRef.get();
+      if (tmplSnap.exists) {
+        sections = ((tmplSnap.data() as any).sections || []) as DynamicQuestionnaireSection[];
+      }
+    }
+
+    const postureAnalysis = analyzeSubmissionRiskPosture(sections, subData.answers, {
+      passingScoreThreshold: reqData.templateSnapshot?.passingScoreThreshold || 70,
+      thirdPartyName: reqData.thirdPartyName,
+      vendorId: reqData.vendorId,
+    });
+
+    const nowIso = new Date().toISOString();
+    const batch = db.batch();
+
+    const createdRiskIds: string[] = [];
+    const updatedRiskIds: string[] = [];
+
+    const existingLinkedRiskIds = new Set<string>(reqData.linkedRiskIds || []);
+
+    for (const entry of postureAnalysis.recommendedRegisterEntries) {
+      if (riskCodesToSync && !riskCodesToSync.includes(entry.code)) {
+        continue;
+      }
+
+      // Check deduplication key in tenant risk register
+      const existingRiskSnap = await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('risks')
+        .where('deduplicationKey', '==', entry.deduplicationKey)
+        .limit(1)
+        .get();
+
+      if (!existingRiskSnap.empty && existingRiskSnap.docs[0]) {
+        const existingDoc = existingRiskSnap.docs[0];
+        const existingId = existingDoc.id;
+        batch.update(existingDoc.ref, {
+          sourceEntityId: requestId,
+          inherentScore: entry.inherentScore,
+          treatmentPlan: entry.treatmentPlan,
+          updatedAt: nowIso,
+          updatedBy: authContext.userId,
+        });
+        updatedRiskIds.push(existingId);
+        existingLinkedRiskIds.add(existingId);
+      } else {
+        const riskId = `risk_${crypto.randomBytes(8).toString('hex')}`;
+        const newRisk: Risk = {
+          id: riskId,
+          tenantId,
+          code: entry.code,
+          title: entry.title,
+          description: entry.description,
+          category: 'third_party',
+          status: 'identified',
+          inherentLikelihood: entry.inherentLikelihood,
+          inherentImpact: entry.inherentImpact,
+          inherentScore: entry.inherentScore,
+          residualLikelihood: entry.inherentLikelihood,
+          residualImpact: entry.inherentImpact,
+          residualScore: entry.inherentScore,
+          treatmentStrategy: entry.treatmentStrategy,
+          treatmentPlan: entry.treatmentPlan,
+          mitigatingControlIds: [],
+          affectedAssetIds: reqData.linkedSystemAssetIds || [],
+          vendorIds: reqData.vendorId ? [reqData.vendorId] : [],
+          processorProfileIds: reqData.processorProfileId ? [reqData.processorProfileId] : [],
+          sourceEntityType: 'third_party_assessment',
+          sourceEntityId: requestId,
+          derivedRuleCode: entry.code,
+          deduplicationKey: entry.deduplicationKey,
+          ownerId: authContext.userId,
+          createdBy: authContext.userId,
+          updatedBy: authContext.userId,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+
+        const riskRef = db.collection('tenants').doc(tenantId).collection('risks').doc(riskId);
+        batch.set(riskRef, newRisk);
+        createdRiskIds.push(riskId);
+        existingLinkedRiskIds.add(riskId);
+      }
+    }
+
+    batch.update(reqRef, {
+      linkedRiskIds: Array.from(existingLinkedRiskIds),
+      overallRiskRating: postureAnalysis.overallRiskTier,
+      updatedAt: nowIso,
+      updatedBy: authContext.userId,
+    });
+
+    await batch.commit();
+
+    await recordAuditLog({
+      tenantId,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.role,
+      entityType: 'processor_assessment',
+      entityId: requestId,
+      action: 'update',
+      afterSummary: {
+        action: 'assessment_risks_synced_to_register',
+        createdRiskCount: createdRiskIds.length,
+        updatedRiskCount: updatedRiskIds.length,
+        overallRiskTier: postureAnalysis.overallRiskTier,
+      },
+      source: 'cloud_function',
+      workflowContext: 'third_party_assessment_risk_sync',
+    });
+
+    return {
+      success: true,
+      requestId,
+      createdRiskIds,
+      updatedRiskIds,
+      postureAnalysis,
     };
   }
 );

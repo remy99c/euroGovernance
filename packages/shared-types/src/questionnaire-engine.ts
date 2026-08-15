@@ -563,6 +563,283 @@ export function evaluateQuestionRiskFlags(
 }
 
 // =============================================================================
+// 10. RISK DERIVATION & POSTURE ANALYSIS ENGINE
+// =============================================================================
+
+export interface RiskFactorExplanation {
+  factorCode: string;
+  category:
+    | 'score_threshold'
+    | 'critical_finding'
+    | 'missing_mandatory_evidence'
+    | 'unanswered_critical_questions'
+    | 'statutory_gap';
+  severity: AssessmentRiskTier;
+  title: string;
+  reason: string;
+  impactOnPosture: string;
+  remediationAdvice: string;
+  sourceQuestionCode?: string;
+  statutoryCitation?: string;
+}
+
+export interface RecommendedRiskRegisterEntry {
+  code: string;
+  title: string;
+  description: string;
+  category: 'security' | 'privacy' | 'legal_compliance' | 'third_party' | 'operational';
+  inherentLikelihood: number;
+  inherentImpact: number;
+  inherentScore: number;
+  treatmentStrategy: 'mitigate' | 'accept' | 'transfer' | 'avoid';
+  treatmentPlan: string;
+  deduplicationKey: string;
+  statutoryCitation?: string;
+}
+
+export interface SubmissionRiskPostureAnalysis {
+  overallRiskTier: AssessmentRiskTier;
+  overallScorePercent: number;
+  isCompliant: boolean;
+  requiresReviewFollowUp: boolean;
+  postureSummaryText: string;
+  explanations: RiskFactorExplanation[];
+  triggeredFlags: TriggeredRiskFlag[];
+  deduplicatedRiskCodes: string[];
+  sectionBreakdown: Record<
+    string,
+    {
+      sectionId: string;
+      sectionTitle: string;
+      scorePercent: number;
+      riskTier: AssessmentRiskTier;
+      flagCount: number;
+      missingEvidenceCount: number;
+    }
+  >;
+  recommendedRegisterEntries: RecommendedRiskRegisterEntry[];
+}
+
+/**
+ * Evaluates full questionnaire responses against sections, scoring thresholds,
+ * risk triggers, and missing evidence requirements to produce an explainable
+ * posture analysis with deduplicated risk flags.
+ */
+export function analyzeSubmissionRiskPosture(
+  sections: DynamicQuestionnaireSection[],
+  answers: Record<string, QuestionnaireAnswer | AssessmentAnswerItem>,
+  options: {
+    passingScoreThreshold?: number;
+    thirdPartyName?: string;
+    vendorId?: string | null;
+  } = {}
+): SubmissionRiskPostureAnalysis {
+  const passingScoreThreshold = options.passingScoreThreshold ?? 70;
+  const thirdPartyName = options.thirdPartyName || 'Third Party';
+  const vendorPrefix = options.vendorId || thirdPartyName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+
+  let totalEarnedPoints = 0;
+  let totalPossiblePoints = 0;
+  const allTriggeredFlags: TriggeredRiskFlag[] = [];
+  const explanations: RiskFactorExplanation[] = [];
+  const sectionBreakdown: SubmissionRiskPostureAnalysis['sectionBreakdown'] = {};
+
+  // 1. Process Sections & Questions
+  for (const sec of sections) {
+    let secEarned = 0;
+    let secPossible = 0;
+    let secFlagCount = 0;
+    let secMissingEvidence = 0;
+
+    for (const q of sec.questions) {
+      const vis = evaluateQuestionVisibility(q, answers as Record<string, QuestionnaireAnswer>);
+      if (!vis.isVisible) continue;
+
+      const qWeight = q.scoring?.weight || 1;
+      secPossible += 100 * qWeight;
+
+      const ans = answers[q.id];
+      if (ans) {
+        const scoreRes = evaluateQuestionScore(q, ans as QuestionnaireAnswer);
+        secEarned += scoreRes.scorePercent * qWeight;
+
+        // Evaluate question risk flags
+        const qFlags = evaluateQuestionRiskFlags(q, ans as QuestionnaireAnswer);
+        for (const flag of qFlags) {
+          allTriggeredFlags.push(flag);
+          secFlagCount++;
+        }
+
+        // Check missing evidence on question
+        if (q.requiresEvidence) {
+          const hasEvidence =
+            (ans.attachedEvidenceIds && ans.attachedEvidenceIds.length > 0) ||
+            (ans.attachedFileMetadata && ans.attachedFileMetadata.length > 0);
+          if (!hasEvidence) {
+            secMissingEvidence++;
+          }
+        }
+      } else if (vis.isRequired) {
+        if (q.requiresEvidence) secMissingEvidence++;
+      }
+    }
+
+    totalEarnedPoints += secEarned;
+    totalPossiblePoints += secPossible;
+
+    const secScorePercent = secPossible > 0 ? Math.round((secEarned / secPossible) * 100) : 100;
+    let secRiskTier: AssessmentRiskTier = 'low';
+    if (secScorePercent < 50 || secFlagCount > 1) {
+      secRiskTier = 'critical';
+    } else if (secScorePercent < passingScoreThreshold || secFlagCount === 1) {
+      secRiskTier = 'high';
+    } else if (secScorePercent < 85) {
+      secRiskTier = 'medium';
+    }
+
+    sectionBreakdown[sec.id] = {
+      sectionId: sec.id,
+      sectionTitle: sec.title,
+      scorePercent: secScorePercent,
+      riskTier: secRiskTier,
+      flagCount: secFlagCount,
+      missingEvidenceCount: secMissingEvidence,
+    };
+  }
+
+  // 2. Compute Overall Score
+  const overallScorePercent =
+    totalPossiblePoints > 0 ? Math.round((totalEarnedPoints / totalPossiblePoints) * 100) : 100;
+  const isCompliant = overallScorePercent >= passingScoreThreshold;
+
+  // 3. Deduplicate Triggered Flags
+  const seenRiskCodes = new Set<string>();
+  const deduplicatedFlags: TriggeredRiskFlag[] = [];
+
+  for (const flag of allTriggeredFlags) {
+    if (!seenRiskCodes.has(flag.riskCode)) {
+      seenRiskCodes.add(flag.riskCode);
+      deduplicatedFlags.push(flag);
+    }
+  }
+
+  const deduplicatedRiskCodes = Array.from(seenRiskCodes);
+
+  // 4. Derive Overall Risk Tier & Explainability
+  let overallRiskTier: AssessmentRiskTier = 'low';
+  const hasCriticalFlags = deduplicatedFlags.some((f) => f.riskSeverity === 'critical');
+  const hasHighFlags = deduplicatedFlags.some((f) => f.riskSeverity === 'high');
+  const hasMediumFlags = deduplicatedFlags.some((f) => f.riskSeverity === 'medium');
+
+  if (hasCriticalFlags || overallScorePercent < 50) {
+    overallRiskTier = 'critical';
+  } else if (hasHighFlags || !isCompliant) {
+    overallRiskTier = 'high';
+  } else if (hasMediumFlags || overallScorePercent < 85) {
+    overallRiskTier = 'medium';
+  }
+
+  // 5. Generate Transparent Explanations
+  if (overallScorePercent < passingScoreThreshold) {
+    explanations.push({
+      factorCode: 'SCORE_BELOW_PASSING_THRESHOLD',
+      category: 'score_threshold',
+      severity: overallScorePercent < 50 ? 'critical' : 'high',
+      title: 'Overall Score Below Compliance Threshold',
+      reason: `The third party scored ${overallScorePercent}%, which is below the mandatory passing threshold of ${passingScoreThreshold}%.`,
+      impactOnPosture: 'Indicates widespread gaps across technical, organizational, or privacy security assurances.',
+      remediationAdvice: 'Require corrective action plan or reject engagement until deficient controls are remediated.',
+    });
+  }
+
+  for (const flag of deduplicatedFlags) {
+    explanations.push({
+      factorCode: flag.riskCode,
+      category: flag.statutoryCitation ? 'statutory_gap' : 'critical_finding',
+      severity: flag.riskSeverity,
+      title: flag.riskTitle,
+      reason: `Triggered by response to question ${flag.questionCode}.`,
+      impactOnPosture: `Direct operational vulnerability with ${flag.riskSeverity.toUpperCase()} risk severity.`,
+      remediationAdvice: flag.suggestedRemediation,
+      sourceQuestionCode: flag.questionCode,
+      statutoryCitation: flag.statutoryCitation,
+    });
+  }
+
+  // 6. Check Missing Evidence Indicators
+  const missingEvResult = evaluateMissingEvidenceRequirements(sections, answers);
+  if (missingEvResult.hasMissingEvidence) {
+    explanations.push({
+      factorCode: 'MISSING_MANDATORY_EVIDENCE',
+      category: 'missing_mandatory_evidence',
+      severity: missingEvResult.missingEvidenceCount > 2 ? 'high' : 'medium',
+      title: 'Missing Required Assurance Evidence',
+      reason: `${missingEvResult.missingEvidenceCount} question(s) require supporting evidence documents which have not yet been provided.`,
+      impactOnPosture: 'Self-attested answers cannot be verified against certified audit standards without documentation.',
+      remediationAdvice: 'Request submission of mandatory certificates, audit reports, or DPAs.',
+    });
+  }
+
+  const requiresReviewFollowUp =
+    overallRiskTier === 'critical' ||
+    overallRiskTier === 'high' ||
+    !isCompliant ||
+    deduplicatedFlags.length > 0 ||
+    missingEvResult.hasMissingEvidence;
+
+  // 7. Summary Posture Narrative
+  let postureSummaryText = `${thirdPartyName} demonstrates a ${overallRiskTier.toUpperCase()} risk posture with a weighted compliance score of ${overallScorePercent}%.`;
+  if (requiresReviewFollowUp) {
+    postureSummaryText += ` Internal review follow-up is required due to ${deduplicatedFlags.length} triggered risk flag(s) and ${missingEvResult.missingEvidenceCount} missing evidence attachment(s).`;
+  } else {
+    postureSummaryText += ` All mandatory questions, assurance controls, and evidence attachments meet compliance standards.`;
+  }
+
+  // 8. Recommended Risk Register Entries with Deduplication Keys
+  const recommendedRegisterEntries: RecommendedRiskRegisterEntry[] = deduplicatedFlags.map((flag) => {
+    let inherentLikelihood = 3;
+    let inherentImpact = 3;
+    if (flag.riskSeverity === 'critical') {
+      inherentLikelihood = 4;
+      inherentImpact = 5;
+    } else if (flag.riskSeverity === 'high') {
+      inherentLikelihood = 3;
+      inherentImpact = 4;
+    } else if (flag.riskSeverity === 'medium') {
+      inherentLikelihood = 3;
+      inherentImpact = 2;
+    }
+
+    return {
+      code: flag.riskCode,
+      title: `${flag.riskTitle} (${thirdPartyName})`,
+      description: `Risk identified from external assessment response on question ${flag.questionCode}. ${flag.suggestedRemediation}`,
+      category: flag.riskCategory,
+      inherentLikelihood,
+      inherentImpact,
+      inherentScore: inherentLikelihood * inherentImpact,
+      treatmentStrategy: flag.riskSeverity === 'critical' ? 'avoid' : 'mitigate',
+      treatmentPlan: flag.suggestedRemediation,
+      deduplicationKey: `TP_RISK_${vendorPrefix}_${flag.riskCode}`.toUpperCase(),
+      statutoryCitation: flag.statutoryCitation,
+    };
+  });
+
+  return {
+    overallRiskTier,
+    overallScorePercent,
+    isCompliant,
+    requiresReviewFollowUp,
+    postureSummaryText,
+    explanations,
+    triggeredFlags: deduplicatedFlags,
+    deduplicatedRiskCodes,
+    sectionBreakdown,
+    recommendedRegisterEntries,
+  };
+}
+
+// =============================================================================
 // 11. SCHEMA & ANSWER VALIDATORS
 // =============================================================================
 
