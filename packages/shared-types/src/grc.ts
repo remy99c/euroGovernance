@@ -301,8 +301,12 @@ export interface Risk extends BaseEntity {
   affectedAssetIds: string[];
   processorProfileIds?: string[];
   transferArrangementIds?: string[];
+  processorCertificationIds?: string[];
   vendorIds?: string[];
   derivedRuleCode?: string | null;
+  deduplicationKey?: string | null;
+  sourceEntityType?: string | null;
+  sourceEntityId?: string | null;
 }
 
 /**

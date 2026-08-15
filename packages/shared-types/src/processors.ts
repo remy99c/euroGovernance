@@ -1343,8 +1343,8 @@ export interface ProcessorCertificationRiskFlag {
   id: string;
   certificationId: string;
   processorProfileId: string;
-  standardFamily: AssuranceStandardFamily;
-  certificateOrReportNumber: string;
+  standardFamily?: AssuranceStandardFamily;
+  certificateOrReportNumber?: string;
   ruleCode: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
   title: string;
@@ -1352,22 +1352,85 @@ export interface ProcessorCertificationRiskFlag {
   suggestedTreatment: string;
   inherentScore: number;
   isActionable: boolean;
+  dedupKey: string;
+}
+
+export interface EvaluateProcessorCertificationRiskFlagsOptions {
+  evidenceDocs?: Evidence[];
+  processorProfiles?: ProcessorProfile[];
+  requiredSystemsMap?: Record<string, string[]>;
+  asOfDate?: Date;
 }
 
 /**
- * Evaluates risk flags across all processor certifications for a tenant or processor profile.
+ * Evaluates risk flags across processor certifications and profiles:
+ * - Critical processor with no certification/assurance record
+ * - Certification expired (with criticality multiplier)
+ * - Certification expiring soon with no replacement in progress
+ * - Report rejected or marked insufficient
+ * - Processor claims assurance but has no evidence attached
+ * - Assurance scope does not cover linked service/system
  */
 export function evaluateProcessorCertificationRiskFlags(
   certs: ProcessorCertification[],
-  evidenceDocs: Evidence[] = [],
+  evidenceDocsOrOptions: Evidence[] | EvaluateProcessorCertificationRiskFlagsOptions = [],
   asOfDate: Date = new Date()
 ): ProcessorCertificationRiskFlag[] {
+  let evidenceDocs: Evidence[] = [];
+  let processorProfiles: ProcessorProfile[] = [];
+  let requiredSystemsMap: Record<string, string[]> = {};
+  let asOf = asOfDate;
+
+  if (Array.isArray(evidenceDocsOrOptions)) {
+    evidenceDocs = evidenceDocsOrOptions;
+  } else if (evidenceDocsOrOptions && typeof evidenceDocsOrOptions === 'object') {
+    evidenceDocs = evidenceDocsOrOptions.evidenceDocs || [];
+    processorProfiles = evidenceDocsOrOptions.processorProfiles || [];
+    requiredSystemsMap = evidenceDocsOrOptions.requiredSystemsMap || {};
+    asOf = evidenceDocsOrOptions.asOfDate || asOfDate;
+  }
+
+  const nowMillis = asOf.getTime();
   const flags: ProcessorCertificationRiskFlag[] = [];
+  const profileMap = new Map<string, ProcessorProfile>();
+  for (const p of processorProfiles) {
+    profileMap.set(p.id, p);
+  }
 
+  // 1. Evaluate Individual Certification Gaps & Rules
   for (const cert of certs) {
-    const completeness = evaluateProcessorCertificationCompleteness(cert, evidenceDocs, asOfDate);
+    if (cert.isHistoricVersion || cert.reviewStatus === 'superseded') {
+      continue;
+    }
 
+    const completeness = evaluateProcessorCertificationCompleteness(cert, evidenceDocs, asOf);
+    const profile = profileMap.get(cert.processorProfileId);
+    const isCriticalProcessor = profile?.criticality === 'critical';
+    const isHighCriticalProcessor = profile?.criticality === 'high';
+
+    // A. Completeness Gaps (Expired, Review Overdue, Insufficient, Rejected, Missing Evidence)
     for (const gap of completeness.gaps) {
+      let severity = gap.severity;
+      let score = gap.severity === 'critical' ? 20 : gap.severity === 'high' ? 12 : 6;
+
+      if (isCriticalProcessor) {
+        if (gap.code === 'PROCESSOR_CERT_EXPIRED' || gap.code === 'PROCESSOR_CERT_REJECTED' || gap.code === 'PROCESSOR_CERT_INSUFFICIENT') {
+          severity = 'critical';
+          score = 25;
+        } else if (gap.code === 'PROCESSOR_CERT_MISSING_EVIDENCE') {
+          severity = 'high';
+          score = 18;
+        }
+      } else if (isHighCriticalProcessor) {
+        if (gap.code === 'PROCESSOR_CERT_EXPIRED' || gap.code === 'PROCESSOR_CERT_REJECTED' || gap.code === 'PROCESSOR_CERT_INSUFFICIENT') {
+          severity = 'high';
+          score = 20;
+        } else if (gap.code === 'PROCESSOR_CERT_MISSING_EVIDENCE') {
+          severity = 'high';
+          score = 16;
+        }
+      }
+
       flags.push({
         id: `flag_${cert.id}_${gap.code.toLowerCase()}`,
         certificationId: cert.id,
@@ -1375,13 +1438,112 @@ export function evaluateProcessorCertificationRiskFlags(
         standardFamily: cert.standardFamily,
         certificateOrReportNumber: cert.certificateOrReportNumber,
         ruleCode: gap.code,
-        severity: gap.severity,
+        severity,
         title: `${gap.code.replace(/_/g, ' ')}: ${cert.certificateOrReportNumber}`,
         description: gap.description,
         suggestedTreatment: gap.suggestedAction,
-        inherentScore: gap.severity === 'critical' ? 20 : gap.severity === 'high' ? 12 : 6,
+        inherentScore: score,
         isActionable: true,
+        dedupKey: `${cert.tenantId}_risk_${gap.code}_${cert.processorProfileId}_${cert.id}`,
       });
+    }
+
+    // B. Expiring Soon with No Replacement in Progress
+    if (completeness.isExpiringSoon) {
+      const hasReplacement = certs.some(
+        (c) =>
+          c.id !== cert.id &&
+          c.processorProfileId === cert.processorProfileId &&
+          (c.replacesCertificationId === cert.id ||
+            c.status === 'active_valid' ||
+            c.reviewStatus === 'in_review' ||
+            c.reviewStatus === 'pending')
+      );
+
+      if (!hasReplacement && !cert.replacedByCertificationId) {
+        flags.push({
+          id: `flag_${cert.id}_expiring_unreplaced`,
+          certificationId: cert.id,
+          processorProfileId: cert.processorProfileId,
+          standardFamily: cert.standardFamily,
+          certificateOrReportNumber: cert.certificateOrReportNumber,
+          ruleCode: 'PROCESSOR_CERT_EXPIRING_SOON_UNREPLACED',
+          severity: isCriticalProcessor ? 'high' : 'medium',
+          title: `Assurance Expiring Soon Without Replacement: ${cert.certificateOrReportNumber}`,
+          description: `Assurance artifact (${cert.standardFamily.toUpperCase()}) expires in ${completeness.daysUntilExpiry} days on ${cert.validUntil} with no renewal or replacement report on file.`,
+          suggestedTreatment: 'Request current audit renewal package from vendor.',
+          inherentScore: isCriticalProcessor ? 18 : 10,
+          isActionable: true,
+          dedupKey: `${cert.tenantId}_risk_expiring_unreplaced_${cert.processorProfileId}_${cert.id}`,
+        });
+      }
+    }
+
+    // C. Scope Mismatch against Required Systems/Services
+    const requiredSystems = requiredSystemsMap[cert.processorProfileId] || [];
+    if (requiredSystems.length > 0 && Array.isArray(cert.systemsOrServicesCovered) && cert.systemsOrServicesCovered.length > 0) {
+      const coversAll = cert.systemsOrServicesCovered.some(
+        (s) => s.toLowerCase().includes('all') || s.toLowerCase().includes('global') || s.toLowerCase().includes('commercial')
+      );
+
+      if (!coversAll) {
+        const coveredLower = cert.systemsOrServicesCovered.map((s) => s.toLowerCase());
+        const missingSystems = requiredSystems.filter(
+          (req) => !coveredLower.some((c) => c.includes(req.toLowerCase()) || req.toLowerCase().includes(c))
+        );
+
+        if (missingSystems.length > 0) {
+          flags.push({
+            id: `flag_${cert.id}_scope_mismatch`,
+            certificationId: cert.id,
+            processorProfileId: cert.processorProfileId,
+            standardFamily: cert.standardFamily,
+            certificateOrReportNumber: cert.certificateOrReportNumber,
+            ruleCode: 'PROCESSOR_CERT_SCOPE_MISMATCH',
+            severity: isCriticalProcessor ? 'high' : 'medium',
+            title: `Assurance Scope Mismatch: ${cert.certificateOrReportNumber}`,
+            description: `Certified assurance scope (${cert.systemsOrServicesCovered.join(', ')}) does not explicitly cover engaged systems/services: ${missingSystems.join(', ')}.`,
+            suggestedTreatment: 'Request SOC 2 / ISO scope expansion or supplementary third-party attestation covering all engaged services.',
+            inherentScore: isCriticalProcessor ? 16 : 10,
+            isActionable: true,
+            dedupKey: `${cert.tenantId}_risk_scope_mismatch_${cert.processorProfileId}_${cert.id}`,
+          });
+        }
+      }
+    }
+  }
+
+  // 2. Evaluate Processor-Level Assurance Absence (Critical Processors with No Valid Assurance)
+  for (const profile of processorProfiles) {
+    if (profile.criticality === 'critical' || profile.criticality === 'high') {
+      const validCerts = certs.filter(
+        (c) =>
+          c.processorProfileId === profile.id &&
+          !c.isHistoricVersion &&
+          c.reviewStatus !== 'superseded' &&
+          c.reviewStatus !== 'rejected' &&
+          !c.isInsufficient &&
+          c.status !== 'expired' &&
+          c.status !== 'revoked' &&
+          new Date(c.validUntil).getTime() > nowMillis
+      );
+
+      if (validCerts.length === 0) {
+        const isCritical = profile.criticality === 'critical';
+        flags.push({
+          id: `flag_${profile.id}_missing_assurance`,
+          certificationId: 'none',
+          processorProfileId: profile.id,
+          ruleCode: 'CRITICAL_PROCESSOR_MISSING_ASSURANCE',
+          severity: isCritical ? 'critical' : 'high',
+          title: `Critical Processor Missing External Assurance: ${profile.engagementName || profile.id}`,
+          description: `Processor profile has criticality "${profile.criticality}" but possesses zero valid, unexpired third-party security or privacy certifications.`,
+          suggestedTreatment: 'Obtain accredited ISO 27001 certificate or SOC 2 Type II attestation report from vendor as a mandatory supply chain control.',
+          inherentScore: isCritical ? 25 : 18,
+          isActionable: true,
+          dedupKey: `${profile.tenantId}_risk_missing_assurance_${profile.id}`,
+        });
+      }
     }
   }
 

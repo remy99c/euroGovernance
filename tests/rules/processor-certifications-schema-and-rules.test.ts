@@ -22,6 +22,7 @@ import {
   VALID_ASSURANCE_ARTIFACT_KINDS,
   VALID_EVIDENCE_CATEGORIES,
   Evidence,
+  ProcessorProfile,
 } from '@eurogovernance/shared-types';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -1297,6 +1298,340 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       });
 
       expect(reminders.length).toBe(0); // Zero active alerts generated
+    });
+  });
+
+  describe('8. Risk Module Integration, Derived Indicators & Deduplication', () => {
+    const mockProfiles: ProcessorProfile[] = [
+      {
+        id: 'prof_critical_payments',
+        tenantId: 'tenant_eurocorp_de',
+        vendorId: 'vnd_stripe_eu',
+        engagementName: 'Stripe Payment Processing',
+        processorRole: 'data_processor',
+        serviceDescription: 'Primary payment gateway integration for EU customer transactions.',
+        dataCategories: ['Payment Data', 'Customer Billing Info'],
+        dataSubjects: ['EU Customers'],
+        isSpecialCategoryData: true,
+        specialCategoryTypes: ['financial_and_billing'],
+        jurisdictions: ['DE', 'IE'],
+        linkedSystemAssetIds: [],
+        criticality: 'critical', // Critical supply chain asset
+        ownerUserId: 'usr_compliance_01',
+        reviewCadence: 'annually',
+        lastReviewDate: '2024-01-01T00:00:00.000Z',
+        nextReviewDate: '2025-01-01T00:00:00.000Z',
+        status: 'active',
+        notes: null,
+        dpaSigned: true,
+        dpaDate: '2024-01-01T00:00:00.000Z',
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'prof_low_blog',
+        tenantId: 'tenant_eurocorp_de',
+        vendorId: 'vnd_medium_corp',
+        engagementName: 'Company Blog Hosting',
+        processorRole: 'data_processor',
+        serviceDescription: 'Public company engineering blog and marketing news host.',
+        dataCategories: ['Public Articles'],
+        dataSubjects: ['Visitors'],
+        isSpecialCategoryData: false,
+        jurisdictions: ['US', 'EU'],
+        linkedSystemAssetIds: [],
+        criticality: 'low',
+        ownerUserId: 'usr_compliance_01',
+        reviewCadence: 'annually',
+        lastReviewDate: '2024-01-01T00:00:00.000Z',
+        nextReviewDate: '2025-01-01T00:00:00.000Z',
+        status: 'active',
+        notes: null,
+        dpaSigned: true,
+        dpaDate: '2024-01-01T00:00:00.000Z',
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ];
+
+    it('triggers CRITICAL_PROCESSOR_MISSING_ASSURANCE when critical processor has zero valid assurance records', () => {
+      // No certs provided for critical payment processor
+      const flags = evaluateProcessorCertificationRiskFlags([], {
+        processorProfiles: mockProfiles,
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      const missingAssuranceFlag = flags.find(
+        (f) => f.ruleCode === 'CRITICAL_PROCESSOR_MISSING_ASSURANCE' && f.processorProfileId === 'prof_critical_payments'
+      );
+      expect(missingAssuranceFlag).toBeDefined();
+      expect(missingAssuranceFlag?.severity).toBe('critical');
+      expect(missingAssuranceFlag?.inherentScore).toBe(25); // Max inherent score for critical processor
+      expect(missingAssuranceFlag?.title).toContain('Stripe Payment Processing');
+
+      // Low criticality processor does NOT trigger CRITICAL_PROCESSOR_MISSING_ASSURANCE
+      const lowProcessorFlag = flags.find(
+        (f) => f.ruleCode === 'CRITICAL_PROCESSOR_MISSING_ASSURANCE' && f.processorProfileId === 'prof_low_blog'
+      );
+      expect(lowProcessorFlag).toBeUndefined();
+    });
+
+    it('triggers PROCESSOR_CERT_EXPIRED with severity and score elevated for critical processor', () => {
+      const expiredCert: ProcessorCertification = {
+        id: 'cert_stripe_iso_expired',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_critical_payments',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27001',
+        issuingBodyOrAuditor: 'BSI Group',
+        certificateOrReportNumber: 'ISO-27001-2024',
+        validFrom: '2024-01-01T00:00:00.000Z',
+        validUntil: '2025-01-01T00:00:00.000Z', // Expired
+        status: 'expired',
+        assuranceScopeSummary: 'Cardholder Data Environment',
+        legalEntityOrRegionalScope: 'Global',
+        systemsOrServicesCovered: ['Payment Gateway'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2024-12-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_pci_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const flags = evaluateProcessorCertificationRiskFlags([expiredCert], {
+        processorProfiles: mockProfiles,
+        evidenceDocs: [{ id: 'ev_pci_pdf', status: 'valid' } as any],
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      const expiredFlag = flags.find((f) => f.ruleCode === 'PROCESSOR_CERT_EXPIRED');
+      expect(expiredFlag).toBeDefined();
+      expect(expiredFlag?.severity).toBe('critical'); // Scaled to critical due to critical processor
+      expect(expiredFlag?.inherentScore).toBe(25);
+    });
+
+    it('triggers PROCESSOR_CERT_EXPIRING_SOON_UNREPLACED when cert is expiring soon and has no active replacement in progress', () => {
+      const expiringCert: ProcessorCertification = {
+        id: 'cert_stripe_soc2_expiring',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_critical_payments',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'PwC',
+        certificateOrReportNumber: 'SOC2-EXPIRING-2025',
+        reportPeriodStart: '2024-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-12-31T23:59:59.000Z',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2025-05-20T00:00:00.000Z', // 19 days remaining relative to 2025-05-01 (<= 60d window)
+        status: 'active_valid',
+        assuranceScopeSummary: 'Payment API',
+        legalEntityOrRegionalScope: 'Global',
+        systemsOrServicesCovered: ['Payment Gateway'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2025-04-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_soc2_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      };
+
+      const flags = evaluateProcessorCertificationRiskFlags([expiringCert], {
+        processorProfiles: mockProfiles,
+        evidenceDocs: [{ id: 'ev_soc2_pdf', status: 'valid' } as any],
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      const expiringUnreplaced = flags.find((f) => f.ruleCode === 'PROCESSOR_CERT_EXPIRING_SOON_UNREPLACED');
+      expect(expiringUnreplaced).toBeDefined();
+      expect(expiringUnreplaced?.severity).toBe('high'); // Scaled for critical processor
+      expect(expiringUnreplaced?.suggestedTreatment).toContain('Request current audit renewal package');
+    });
+
+    it('triggers PROCESSOR_CERT_REJECTED and PROCESSOR_CERT_INSUFFICIENT with clear treatment rationale', () => {
+      const rejectedCert: ProcessorCertification = {
+        id: 'cert_rejected',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_critical_payments',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27001',
+        issuingBodyOrAuditor: 'Unaccredited Audit Org',
+        certificateOrReportNumber: 'ISO-REJECTED-01',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2027-01-01T00:00:00.000Z',
+        status: 'under_review',
+        assuranceScopeSummary: 'Unknown scope',
+        legalEntityOrRegionalScope: 'Local',
+        systemsOrServicesCovered: ['General'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'rejected',
+        rejectionReason: 'Issuing body is unaccredited by IAF/DAkkS and scope excludes payment processing databases.',
+        reviewedBy: 'usr_lead_dpo',
+        reviewedAt: '2025-02-01T00:00:00.000Z',
+        reviewDueDate: '2025-01-15T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_rej_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: true,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-02-01T00:00:00.000Z',
+      };
+
+      const flags = evaluateProcessorCertificationRiskFlags([rejectedCert], {
+        processorProfiles: mockProfiles,
+        evidenceDocs: [{ id: 'ev_rej_pdf', status: 'valid' } as any],
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      const rejFlag = flags.find((f) => f.ruleCode === 'PROCESSOR_CERT_REJECTED');
+      expect(rejFlag).toBeDefined();
+      expect(rejFlag?.severity).toBe('critical');
+      expect(rejFlag?.description).toContain('Issuing body is unaccredited');
+    });
+
+    it('triggers PROCESSOR_CERT_MISSING_EVIDENCE when structural assurance claims exist without attached files', () => {
+      const certNoFiles: ProcessorCertification = {
+        id: 'cert_no_file',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_critical_payments',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27001',
+        issuingBodyOrAuditor: 'BSI Group',
+        certificateOrReportNumber: 'ISO-NO-EVIDENCE-01',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2027-01-01T00:00:00.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'Full IT Infrastructure',
+        legalEntityOrRegionalScope: 'Global',
+        systemsOrServicesCovered: ['All Commercial Services'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2026-01-01T00:00:00.000Z',
+        linkedEvidenceIds: [], // Missing evidence!
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      };
+
+      const flags = evaluateProcessorCertificationRiskFlags([certNoFiles], {
+        processorProfiles: mockProfiles,
+        evidenceDocs: [],
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      const missingEvFlag = flags.find((f) => f.ruleCode === 'PROCESSOR_CERT_MISSING_EVIDENCE');
+      expect(missingEvFlag).toBeDefined();
+      expect(missingEvFlag?.severity).toBe('high');
+      expect(missingEvFlag?.suggestedTreatment).toContain('Upload formal PDF report or certificate');
+    });
+
+    it('triggers PROCESSOR_CERT_SCOPE_MISMATCH when certified scope excludes engaged systems/services', () => {
+      const certLimitedScope: ProcessorCertification = {
+        id: 'cert_limited_scope',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_critical_payments',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'EY LLP',
+        certificateOrReportNumber: 'SOC2-LIMITED-01',
+        reportPeriodStart: '2024-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2024-12-31T23:59:59.000Z',
+        validFrom: '2025-01-01T00:00:00.000Z',
+        validUntil: '2026-01-01T00:00:00.000Z',
+        status: 'active_valid',
+        assuranceScopeSummary: 'Corporate Marketing Website Only',
+        legalEntityOrRegionalScope: 'Global',
+        systemsOrServicesCovered: ['Marketing Website CMS'], // Excludes Payment Gateway & Cardholder DB!
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2025-10-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_soc2_pdf'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      };
+
+      const flags = evaluateProcessorCertificationRiskFlags([certLimitedScope], {
+        processorProfiles: mockProfiles,
+        evidenceDocs: [{ id: 'ev_soc2_pdf', status: 'valid' } as any],
+        requiredSystemsMap: {
+          prof_critical_payments: ['Payment Gateway Engine', 'Cardholder Vault DB'],
+        },
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      const scopeMismatchFlag = flags.find((f) => f.ruleCode === 'PROCESSOR_CERT_SCOPE_MISMATCH');
+      expect(scopeMismatchFlag).toBeDefined();
+      expect(scopeMismatchFlag?.severity).toBe('high');
+      expect(scopeMismatchFlag?.description).toContain('Payment Gateway Engine');
+      expect(scopeMismatchFlag?.suggestedTreatment).toContain('Request SOC 2 / ISO scope expansion');
+    });
+
+    it('produces deterministic deduplication keys across all risk indicators to prevent risk spam', () => {
+      const cert: ProcessorCertification = {
+        id: 'cert_dedup_test',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_critical_payments',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27001',
+        issuingBodyOrAuditor: 'TUV Rheinland',
+        certificateOrReportNumber: 'ISO-DEDUP-01',
+        validFrom: '2024-01-01T00:00:00.000Z',
+        validUntil: '2024-12-31T23:59:59.000Z', // Expired
+        status: 'expired',
+        assuranceScopeSummary: 'Full IT',
+        legalEntityOrRegionalScope: 'Global',
+        systemsOrServicesCovered: ['All'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2024-11-01T00:00:00.000Z',
+        linkedEvidenceIds: [],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      };
+
+      const flags = evaluateProcessorCertificationRiskFlags([cert], {
+        processorProfiles: mockProfiles,
+        asOfDate: new Date('2025-05-01T00:00:00.000Z'),
+      });
+
+      expect(flags.length).toBeGreaterThanOrEqual(2);
+      for (const flag of flags) {
+        expect(flag.dedupKey).toBeDefined();
+        expect(flag.dedupKey.startsWith('tenant_eurocorp_de_risk_')).toBe(true);
+        expect(flag.dedupKey).toContain(cert.processorProfileId);
+      }
     });
   });
 });

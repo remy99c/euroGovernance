@@ -6,9 +6,13 @@ import { createNotification } from '../lib/notifications.js';
 import {
   ProcessorCertification,
   ProcessorCertificationReviewStatus,
+  ProcessorProfile,
+  Evidence,
+  Risk,
   validateProcessorCertification,
   validateProcessorCertificationReviewTransition,
   evaluateProcessorCertificationReminders,
+  evaluateProcessorCertificationRiskFlags,
 } from '@eurogovernance/shared-types';
 
 export interface CreateProcessorCertificationInput {
@@ -600,5 +604,234 @@ export const dispatchProcessorCertificationReminders = onCall<DispatchProcessorC
     dispatchedCount: dryRun ? candidateReminders.length : dispatchedNotifications.length,
     suppressedCount: dryRun ? 0 : actualSuppressed,
     notificationIds: dispatchedNotifications,
+  };
+});
+
+export interface GetProcessorCertificationRiskIndicatorsInput {
+  tenantId: string;
+  processorProfileId?: string;
+  requiredSystems?: string[];
+}
+
+/**
+ * Callable Function: getProcessorCertificationRiskIndicators
+ * Computes live, explainable derived risk flags for processor assurance artifacts.
+ */
+export const getProcessorCertificationRiskIndicators = onCall<GetProcessorCertificationRiskIndicatorsInput>(async (request) => {
+  const { tenantId, processorProfileId, requiredSystems } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  // Fetch relevant processor profiles, certs, and evidence
+  const [profilesSnap, certsSnap, evSnap] = await Promise.all([
+    db.collection('tenants').doc(tenantId).collection('processor_profiles').get(),
+    db.collection('tenants').doc(tenantId).collection('processor_certifications').get(),
+    db.collection('tenants').doc(tenantId).collection('evidence').get(),
+  ]);
+
+  let profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+  let certs = certsSnap.docs.map((d) => d.data() as ProcessorCertification);
+  const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
+
+  if (processorProfileId) {
+    profiles = profiles.filter((p) => p.id === processorProfileId);
+    certs = certs.filter((c) => c.processorProfileId === processorProfileId);
+  }
+
+  const requiredSystemsMap: Record<string, string[]> = {};
+  if (processorProfileId && requiredSystems) {
+    requiredSystemsMap[processorProfileId] = requiredSystems;
+  }
+
+  const flags = evaluateProcessorCertificationRiskFlags(certs, {
+    evidenceDocs,
+    processorProfiles: profiles,
+    requiredSystemsMap,
+    asOfDate: new Date(),
+  });
+
+  return {
+    success: true,
+    totalFlags: flags.length,
+    flags,
+  };
+});
+
+export interface SyncProcessorCertificationDerivedRisksInput {
+  tenantId: string;
+  processorProfileId?: string;
+  dryRun?: boolean;
+}
+
+/**
+ * Callable Function: syncProcessorCertificationDerivedRisks
+ * Materializes derived risk indicators into the tenant's central Risk Register (/tenants/{tenantId}/risks)
+ * with deterministic deduplication keys and automatic resolution of remediated risks.
+ */
+export const syncProcessorCertificationDerivedRisks = onCall<SyncProcessorCertificationDerivedRisksInput>(async (request) => {
+  const { tenantId, processorProfileId, dryRun = false } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+  ]);
+
+  // Fetch relevant collections
+  const [profilesSnap, certsSnap, evSnap, risksSnap] = await Promise.all([
+    db.collection('tenants').doc(tenantId).collection('processor_profiles').get(),
+    db.collection('tenants').doc(tenantId).collection('processor_certifications').get(),
+    db.collection('tenants').doc(tenantId).collection('evidence').get(),
+    db.collection('tenants').doc(tenantId).collection('risks').where('sourceEntityType', '==', 'processor_certification').get(),
+  ]);
+
+  let profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+  let certs = certsSnap.docs.map((d) => d.data() as ProcessorCertification);
+  const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
+  const existingRisks = risksSnap.docs.map((d) => ({ docId: d.id, ...(d.data() as Risk) }));
+
+  if (processorProfileId) {
+    profiles = profiles.filter((p) => p.id === processorProfileId);
+    certs = certs.filter((c) => c.processorProfileId === processorProfileId);
+  }
+
+  const flags = evaluateProcessorCertificationRiskFlags(certs, {
+    evidenceDocs,
+    processorProfiles: profiles,
+    asOfDate: new Date(),
+  });
+
+  const now = new Date().toISOString();
+  const batch = db.batch();
+  let createdCount = 0;
+  let updatedCount = 0;
+  let resolvedCount = 0;
+  let suppressedCount = 0;
+
+  const activeDedupKeys = new Set<string>();
+
+  for (const flag of flags) {
+    activeDedupKeys.add(flag.dedupKey);
+
+    const existing = existingRisks.find((r) => r.deduplicationKey === flag.dedupKey);
+
+    const likelihood = flag.severity === 'critical' ? 5 : flag.severity === 'high' ? 4 : 3;
+    const impact = flag.severity === 'critical' ? 5 : flag.severity === 'high' ? 4 : 3;
+    const resLikelihood = flag.severity === 'critical' ? 4 : 3;
+    const resImpact = flag.severity === 'critical' ? 4 : 3;
+
+    if (!existing) {
+      createdCount++;
+      if (!dryRun) {
+        const riskRef = db.collection('tenants').doc(tenantId).collection('risks').doc();
+        const newRisk: Risk = {
+          id: riskRef.id,
+          tenantId,
+          code: `RSK-PROCERT-${Date.now().toString(36).substring(4).toUpperCase()}`,
+          title: flag.title,
+          description: flag.description,
+          category: 'third_party',
+          status: 'identified',
+          inherentLikelihood: likelihood,
+          inherentImpact: impact,
+          inherentScore: flag.inherentScore,
+          residualLikelihood: resLikelihood,
+          residualImpact: resImpact,
+          residualScore: resLikelihood * resImpact,
+          treatmentStrategy: 'mitigate',
+          treatmentPlan: flag.suggestedTreatment,
+          mitigatingControlIds: [],
+          affectedAssetIds: [],
+          processorProfileIds: [flag.processorProfileId],
+          processorCertificationIds: flag.certificationId !== 'none' ? [flag.certificationId] : [],
+          derivedRuleCode: flag.ruleCode,
+          deduplicationKey: flag.dedupKey,
+          sourceEntityType: 'processor_certification',
+          sourceEntityId: flag.certificationId !== 'none' ? flag.certificationId : flag.processorProfileId,
+          ownerId: authContext.userId,
+          createdBy: authContext.userId,
+          updatedBy: authContext.userId,
+          createdAt: now,
+          updatedAt: now,
+        };
+        batch.set(riskRef, newRisk);
+      }
+    } else {
+      if (existing.status === 'closed') {
+        // Reopen if condition recurred
+        updatedCount++;
+        if (!dryRun) {
+          const riskRef = db.collection('tenants').doc(tenantId).collection('risks').doc(existing.docId);
+          batch.update(riskRef, {
+            status: 'identified',
+            inherentScore: flag.inherentScore,
+            treatmentPlan: flag.suggestedTreatment,
+            updatedAt: now,
+            updatedBy: authContext.userId,
+          });
+        }
+      } else {
+        suppressedCount++;
+      }
+    }
+  }
+
+  // Auto-resolve risks whose underlying gap/flag is no longer active
+  for (const existing of existingRisks) {
+    if (existing.status !== 'closed' && existing.deduplicationKey && !activeDedupKeys.has(existing.deduplicationKey)) {
+      if (processorProfileId && !existing.processorProfileIds?.includes(processorProfileId)) {
+        continue;
+      }
+      resolvedCount++;
+      if (!dryRun) {
+        const riskRef = db.collection('tenants').doc(tenantId).collection('risks').doc(existing.docId);
+        batch.update(riskRef, {
+          status: 'closed',
+          treatmentPlan: 'Automatically resolved: valid assurance or supporting evidence verified.',
+          updatedAt: now,
+          updatedBy: 'system_auto_sync',
+        });
+      }
+    }
+  }
+
+  if (!dryRun && (createdCount > 0 || updatedCount > 0 || resolvedCount > 0)) {
+    await batch.commit();
+
+    await recordAuditLog({
+      tenantId,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.role,
+      entityType: 'risk',
+      entityId: `sync_procert_${Date.now()}`,
+      action: 'update',
+      afterSummary: {
+        createdCount,
+        updatedCount,
+        resolvedCount,
+        suppressedCount,
+        processorProfileId: processorProfileId || 'all',
+      },
+      source: 'cloud_function',
+      workflowContext: 'processor_certification_risk_sync',
+    });
+  }
+
+  return {
+    success: true,
+    dryRun,
+    activeFlagsCount: flags.length,
+    createdCount,
+    updatedCount,
+    resolvedCount,
+    suppressedCount,
   };
 });

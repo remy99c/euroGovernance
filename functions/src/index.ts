@@ -89,6 +89,8 @@ export {
   replaceProcessorCertification,
   getProcessorCertificationReminders,
   dispatchProcessorCertificationReminders,
+  getProcessorCertificationRiskIndicators,
+  syncProcessorCertificationDerivedRisks,
 } from './handlers/processor-certifications.js';
 
 // GDPR Phase 1 Module Handlers
