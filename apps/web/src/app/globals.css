@@ -1,63 +1,123 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* =============================================================================
+   euroGovernance Sovereign GRC Design Token System (Dark Mode Baseline)
+   ============================================================================= */
 
 :root {
-  /* =========================================================================
-     Sovereign European GRC Design System (Drata/Vanta Inspired)
-     ========================================================================= */
+  /* ---------------------------------------------------------------------------
+     1. Surface Hierarchy (Strict 3-Tier Layering)
+     --------------------------------------------------------------------------- */
+  --surface-l1-canvas: #080c14;      /* Deep midnight background */
+  --surface-l2-card: #0f172a;        /* Default card, table & panel surface */
+  --surface-l3-elevated: #1a2336;    /* Modals, popovers, dropdowns & toolbars */
 
-  /* Surface & Canvas Hierarchy (Calm Dark Palette) */
-  --bg-canvas: #090d16;
-  --bg-canvas-subtle: #0d1322;
-  --bg-surface: #111827;
-  --bg-surface-elevated: #1a2234;
-  --bg-surface-hover: #222d42;
-  --bg-surface-active: #2a3752;
+  /* Interactive Surface States */
+  --surface-hover: #1e2a40;          /* Hover highlight on rows and list items */
+  --surface-active: #25334c;         /* Active / pressed background */
+  --surface-subtle: #0b1120;         /* Table headers & inner wells */
 
-  /* Border & Dividers */
-  --border-subtle: #1e293b;
-  --border-default: #283548;
-  --border-focus: #3b82f6;
-  --border-accent: #2563eb;
+  /* ---------------------------------------------------------------------------
+     2. Border & Divider Tokens
+     --------------------------------------------------------------------------- */
+  --border-subtle: #192438;          /* Low-contrast table row dividers */
+  --border-default: #233148;         /* Standard card and container borders */
+  --border-hover: #334664;           /* Interactive container hover outline */
+  --border-focus: #3b82f6;           /* High-contrast focus state */
 
-  /* High-Contrast Typography */
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --text-disabled: #475569;
-
-  /* Brand Accents */
+  /* ---------------------------------------------------------------------------
+     3. Single Primary Brand Accent (Sovereign Cobalt)
+     --------------------------------------------------------------------------- */
   --accent-primary: #2563eb;
   --accent-primary-hover: #1d4ed8;
-  --accent-primary-glow: rgba(37, 99, 235, 0.15);
+  --accent-primary-active: #1e40af;
+  --accent-primary-glow: rgba(37, 99, 235, 0.2);
+  --accent-primary-subtle: rgba(37, 99, 235, 0.1);
 
-  /* Semantic Compliance Signals */
+  /* ---------------------------------------------------------------------------
+     4. High-Contrast Accessible Typography
+     --------------------------------------------------------------------------- */
+  --text-primary: #f8fafc;           /* Primary headlines, values, table text (Contrast > 15:1) */
+  --text-secondary: #94a3b8;         /* Subtitles, field labels, descriptions (Contrast > 7:1) */
+  --text-muted: #64748b;             /* Timestamps, metadata, hints (Contrast > 4.5:1) */
+  --text-disabled: #475569;          /* Disabled states and non-interactive text */
+
+  /* ---------------------------------------------------------------------------
+     5. Semantic Status Signals (WCAG-Compliant Tints & Tokens)
+     --------------------------------------------------------------------------- */
+  /* Compliant / Satisfied (Emerald) */
   --status-compliant-bg: rgba(16, 185, 129, 0.12);
   --status-compliant-fg: #34d399;
   --status-compliant-border: rgba(16, 185, 129, 0.25);
   --status-compliant-dot: #10b981;
 
+  /* Warning / Attention Needed (Amber) */
   --status-warning-bg: rgba(245, 158, 11, 0.12);
   --status-warning-fg: #fbbf24;
   --status-warning-border: rgba(245, 158, 11, 0.25);
   --status-warning-dot: #f59e0b;
 
+  /* Critical / Non-Compliant (Rose) */
   --status-critical-bg: rgba(244, 63, 94, 0.12);
   --status-critical-fg: #fb7185;
   --status-critical-border: rgba(244, 63, 94, 0.25);
   --status-critical-dot: #f43f5e;
 
+  /* Review / In Progress (Cobalt) */
   --status-review-bg: rgba(59, 130, 246, 0.12);
   --status-review-fg: #60a5fa;
   --status-review-border: rgba(59, 130, 246, 0.25);
   --status-review-dot: #3b82f6;
 
+  /* Neutral / Scoped Out (Slate) */
   --status-neutral-bg: rgba(100, 116, 139, 0.12);
   --status-neutral-fg: #cbd5e1;
   --status-neutral-border: rgba(100, 116, 139, 0.25);
   --status-neutral-dot: #94a3b8;
 
-  /* Backward Compatibility Variables */
-  --bg-primary: var(--bg-canvas);
+  /* ---------------------------------------------------------------------------
+     6. Spacing Scale
+     --------------------------------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---------------------------------------------------------------------------
+     7. Radius Scale
+     --------------------------------------------------------------------------- */
+  --radius-sm: 4px;                  /* Micro-badges, code chips */
+  --radius-md: 6px;                  /* Buttons, inputs, row highlights */
+  --radius-lg: 10px;                 /* Cards, stat tiles, panels */
+  --radius-xl: 14px;                 /* Modals, drawers, major containers */
+  --radius-full: 9999px;             /* Pills, status dots, circular badges */
+
+  /* ---------------------------------------------------------------------------
+     8. Shadow & Elevation Rules
+     --------------------------------------------------------------------------- */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
+
+  /* ---------------------------------------------------------------------------
+     9. Font Families
+     --------------------------------------------------------------------------- */
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Backward Compatibility Aliases */
+  --bg-canvas: var(--surface-l1-canvas);
+  --bg-canvas-subtle: var(--surface-subtle);
+  --bg-surface: var(--surface-l2-card);
+  --bg-surface-elevated: var(--surface-l3-elevated);
+  --bg-surface-hover: var(--surface-hover);
+  --bg-primary: var(--surface-l1-canvas);
   --border-color: var(--border-subtle);
   --accent-blue: var(--accent-primary);
   --accent-blue-hover: var(--accent-primary-hover);
@@ -65,15 +125,11 @@
   --status-warning: #f59e0b;
   --status-danger: #ef4444;
   --status-info: #3b82f6;
-
-  /* Typography & Layout */
-  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
 }
 
-/* =========================================================================
+/* =============================================================================
    Global Reset & Baseline Styles
-   ========================================================================= */
+   ============================================================================= */
 
 * {
   box-sizing: border-box;
@@ -82,7 +138,7 @@
 }
 
 html, body {
-  background-color: var(--bg-canvas);
+  background-color: var(--surface-l1-canvas);
   color: var(--text-primary);
   font-family: var(--font-sans);
   min-height: 100vh;
@@ -117,22 +173,81 @@ input, select, textarea {
   font-feature-settings: "tnum";
 }
 
-/* =========================================================================
-   Standardized UI Utility Classes
-   ========================================================================= */
+/* =============================================================================
+   Typography Scale Utilities
+   ============================================================================= */
+
+.text-page-title {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+}
+
+.text-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+}
+
+.text-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.text-body {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.text-body-muted {
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.text-caption {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.text-overline {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* =============================================================================
+   Component Utility Classes
+   ============================================================================= */
 
 /* Cards & Surfaces */
 .card-modern {
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  padding: 20px;
+  background-color: var(--surface-l2-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .card-interactive:hover {
-  border-color: var(--border-focus);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-md);
 }
 
 /* Buttons */
@@ -140,17 +255,18 @@ input, select, textarea {
   background-color: var(--accent-primary);
   color: #ffffff;
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: background-color 0.15s ease, transform 0.05s ease;
+  transition: background-color 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
 }
 
 .btn-primary:hover {
   background-color: var(--accent-primary-hover);
+  box-shadow: 0 0 12px var(--accent-primary-glow);
 }
 
 .btn-primary:active {
@@ -158,11 +274,11 @@ input, select, textarea {
 }
 
 .btn-secondary {
-  background-color: var(--bg-surface-elevated);
+  background-color: var(--surface-l3-elevated);
   border: 1px solid var(--border-default);
   color: var(--text-primary);
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 600;
   display: inline-flex;
@@ -172,15 +288,15 @@ input, select, textarea {
 }
 
 .btn-secondary:hover {
-  background-color: var(--bg-surface-hover);
-  border-color: var(--border-focus);
+  background-color: var(--surface-hover);
+  border-color: var(--border-hover);
 }
 
 .btn-success {
   background-color: var(--status-success);
   color: #ffffff;
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 600;
   display: inline-flex;
@@ -193,24 +309,24 @@ input, select, textarea {
 }
 
 .btn-danger {
-  background-color: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #f87171;
+  background-color: var(--status-critical-bg);
+  border: 1px solid var(--status-critical-border);
+  color: var(--status-critical-fg);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   font-weight: 600;
 }
 
 .btn-danger:hover {
-  background-color: rgba(239, 68, 68, 0.25);
+  background-color: rgba(244, 63, 94, 0.2);
 }
 
 /* Inputs & Form Controls */
 .input-modern {
-  background-color: var(--bg-canvas-subtle);
+  background-color: var(--surface-subtle);
   border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   color: var(--text-primary);
   font-size: 13px;
@@ -228,8 +344,8 @@ input, select, textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border-radius: 9999px;
+  padding: 2.5px 9px;
+  border-radius: var(--radius-full);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -276,7 +392,7 @@ input, select, textarea {
 }
 
 .table-modern th {
-  background-color: var(--bg-canvas-subtle);
+  background-color: var(--surface-subtle);
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
@@ -291,14 +407,14 @@ input, select, textarea {
 }
 
 .table-modern td {
-  padding: 12px 14px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   vertical-align: middle;
 }
 
 .table-modern tr:hover td {
-  background-color: var(--bg-surface-hover);
+  background-color: var(--surface-hover);
 }
 
 /* Custom Scrollbar */
@@ -313,7 +429,7 @@ input, select, textarea {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-default);
-  border-radius: 9999px;
+  border-radius: var(--radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
