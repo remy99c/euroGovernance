@@ -24,7 +24,14 @@ export type ExportType =
   | 'adopted_frameworks_summary'
   | 'applicability_decisions_report'
   | 'tenant_control_coverage_report'
-  | 'framework_gap_report';
+  | 'framework_gap_report'
+  | 'processor_inventory_report'
+  | 'restricted_transfers_register'
+  | 'transfer_mechanisms_report'
+  | 'processor_governance_gaps_report'
+  | 'processor_review_schedule_report'
+  | 'processor_system_mapping_report'
+  | 'processor_ropa_mapping_report';
 
 export type NotificationPriority = 'low' | 'medium' | 'high' | 'urgent';
 

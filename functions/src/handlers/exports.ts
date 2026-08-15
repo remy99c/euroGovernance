@@ -3,7 +3,20 @@ import { db, storage } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
 import { createNotification } from '../lib/notifications.js';
-import { ExportJob, ExportType, ExportJobStatus } from '@eurogovernance/shared-types';
+import {
+  ExportJob,
+  ExportType,
+  ExportJobStatus,
+  ProcessorProfile,
+  TransferArrangement,
+  SystemAsset,
+  Vendor,
+  TIA,
+  Evidence,
+  ROPAEntry,
+  evaluateProcessorEvidenceCompleteness,
+  evaluateProcessorRiskFlags,
+} from '@eurogovernance/shared-types';
 
 export interface RequestExportInput {
   tenantId: string;
@@ -259,6 +272,603 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
           scopeStatements: scopesSnap.docs.map((d) => d.data()),
           soaEntries: soaSnap.docs.map((d) => d.data()),
           internalAudits: auditsSnap.docs.map((d) => d.data()),
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'processor_inventory_report') {
+      const [profilesSnap, vendorsSnap, transfersSnap, assetsSnap, evidenceSnap] = await Promise.all([
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+        tenantRef.collection('transfer_arrangements').get(),
+        tenantRef.collection('system_assets').get(),
+        tenantRef.collection('evidence').get(),
+      ]);
+
+      const vendorsMap = new Map<string, Vendor>();
+      vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+      const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const transfers = transfersSnap.docs.map((d) => d.data() as TransferArrangement);
+      const assets = assetsSnap.docs.map((d) => d.data() as SystemAsset);
+      const evidence = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+      const items = profiles.map((p) => {
+        const v = p.vendorId ? vendorsMap.get(p.vendorId) : null;
+        const procTransfers = transfers.filter((t) => t.processorProfileId === p.id);
+        const procAssets = assets.filter((a) => a.processorProfileIds?.includes(p.id) || p.linkedSystemAssetIds?.includes(a.id));
+        const procEvidence = evidence.filter((e) => e.processorProfileIds?.includes(p.id) || (p.vendorId && e.vendorIds?.includes(p.vendorId)));
+        const evCompleteness = evaluateProcessorEvidenceCompleteness(p, procEvidence);
+        const riskEval = evaluateProcessorRiskFlags(p, procTransfers, procEvidence);
+
+        return {
+          processorProfileId: p.id,
+          engagementName: p.engagementName,
+          processorRole: p.processorRole,
+          criticality: p.criticality,
+          status: p.status,
+          serviceDescription: p.serviceDescription,
+          isSpecialCategoryData: p.isSpecialCategoryData,
+          dataCategories: p.dataCategories,
+          dataSubjects: p.dataSubjects,
+          jurisdictions: p.jurisdictions,
+          vendor: v
+            ? {
+                vendorId: v.id,
+                name: v.name,
+                category: v.category,
+                riskTier: v.riskTier,
+                countryOfIncorporation: v.countryOfIncorporation,
+              }
+            : null,
+          dpaStatus: {
+            signed: p.dpaSigned,
+            date: p.dpaDate,
+            linkedEvidenceId: p.linkedDpaEvidenceId,
+          },
+          reviewCadence: p.reviewCadence,
+          lastReviewDate: p.lastReviewDate,
+          nextReviewDate: p.nextReviewDate,
+          transferArrangementsCount: procTransfers.length,
+          supportedSystemsCount: procAssets.length,
+          evidenceStatus: {
+            isComplete: evCompleteness.isComplete,
+            missingCount: evCompleteness.missingCount,
+            missingCategories: evCompleteness.requirements
+              .filter((r) => r.status === 'missing' || r.status === 'expired')
+              .map((r) => r.category),
+          },
+          governanceRiskLevel: riskEval.overallRiskLevel,
+          openRiskFlagsCount: riskEval.flags.length,
+        };
+      });
+
+      fileName = `processor_inventory_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Third-Party Processor Register & Governance Inventory (GDPR Art. 28)',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalProcessorsCount: items.length,
+            activeCount: items.filter((i) => i.status === 'active').length,
+            underReviewCount: items.filter((i) => i.status === 'under_review').length,
+            criticalRiskCount: items.filter((i) => i.governanceRiskLevel === 'critical' || i.criticality === 'critical').length,
+          },
+          processorInventory: items,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'restricted_transfers_register') {
+      const [transfersSnap, profilesSnap, vendorsSnap, tiasSnap] = await Promise.all([
+        tenantRef.collection('transfer_arrangements').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+        tenantRef.collection('tia_assessments').get(),
+      ]);
+
+      const profilesMap = new Map<string, ProcessorProfile>();
+      profilesSnap.docs.forEach((d) => profilesMap.set(d.id, d.data() as ProcessorProfile));
+
+      const vendorsMap = new Map<string, Vendor>();
+      vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+      const tiasMap = new Map<string, TIA>();
+      tiasSnap.docs.forEach((d) => tiasMap.set(d.id, d.data() as TIA));
+
+      const allTransfers = transfersSnap.docs.map((d) => d.data() as TransferArrangement);
+      const restrictedTransfers = allTransfers.filter((t) => t.restrictedTransfer === true);
+
+      const entries = restrictedTransfers.map((t) => {
+        const p = profilesMap.get(t.processorProfileId);
+        const v = t.vendorId ? vendorsMap.get(t.vendorId) : p?.vendorId ? vendorsMap.get(p.vendorId) : null;
+        const tia = t.linkedTiaId ? tiasMap.get(t.linkedTiaId) : null;
+
+        return {
+          transferArrangementId: t.id,
+          name: t.name,
+          processorProfileId: t.processorProfileId,
+          processorEngagementName: p?.engagementName || null,
+          vendorName: v?.name || null,
+          restrictedTransfer: t.restrictedTransfer,
+          destinationCountries: t.destinationCountries,
+          eeaStatus: t.eeaStatus,
+          transferScopes: t.transferScopes,
+          transferScopeDescription: t.transferScopeDescription,
+          transferMechanismType: t.transferMechanismType,
+          transferMechanismStatus: t.transferMechanismStatus,
+          effectiveDate: t.effectiveDate,
+          reviewDueDate: t.reviewDueDate,
+          supplementaryMeasuresSummary: t.supplementaryMeasuresSummary,
+          subprocessorInvolvement: t.subprocessorInvolvement,
+          subprocessorsInvolved: t.subprocessorsInvolved || [],
+          tiaAssessment: tia
+            ? {
+                tiaId: tia.id,
+                code: tia.code,
+                title: tia.title,
+                status: tia.status,
+                residualRiskLevel: tia.residualRiskLevel,
+              }
+            : null,
+          linkedEvidenceIds: t.linkedEvidenceIds || [],
+          rationale: t.rationale,
+        };
+      });
+
+      fileName = `restricted_transfers_register_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'International & Restricted Data Transfer Register (GDPR Chapter V)',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalRestrictedTransfersCount: entries.length,
+            uniqueDestinationCountries: Array.from(new Set(entries.flatMap((e) => e.destinationCountries))),
+          },
+          restrictedTransfersRegister: entries,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'transfer_mechanisms_report') {
+      const [transfersSnap, profilesSnap, vendorsSnap] = await Promise.all([
+        tenantRef.collection('transfer_arrangements').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('vendors').get(),
+      ]);
+
+      const profilesMap = new Map<string, ProcessorProfile>();
+      profilesSnap.docs.forEach((d) => profilesMap.set(d.id, d.data() as ProcessorProfile));
+
+      const vendorsMap = new Map<string, Vendor>();
+      vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+      const transfers = transfersSnap.docs.map((d) => d.data() as TransferArrangement);
+
+      const countsByMechanism = {
+        standard_contractual_clauses: transfers.filter((t) => t.transferMechanismType === 'standard_contractual_clauses').length,
+        adequacy_decision: transfers.filter((t) => t.transferMechanismType === 'adequacy_decision').length,
+        binding_corporate_rules: transfers.filter((t) => t.transferMechanismType === 'binding_corporate_rules').length,
+        derogation_art49: transfers.filter((t) => t.transferMechanismType === 'derogation_art49').length,
+        intra_group_agreement: transfers.filter((t) => t.transferMechanismType === 'intra_group_agreement').length,
+        no_mechanism_selected: transfers.filter((t) => t.transferMechanismType === 'no_mechanism_selected').length,
+      };
+
+      const entries = transfers.map((t) => {
+        const p = profilesMap.get(t.processorProfileId);
+        const v = t.vendorId ? vendorsMap.get(t.vendorId) : p?.vendorId ? vendorsMap.get(p.vendorId) : null;
+
+        return {
+          transferArrangementId: t.id,
+          name: t.name,
+          processorProfileId: t.processorProfileId,
+          processorEngagementName: p?.engagementName || null,
+          vendorName: v?.name || null,
+          transferMechanismType: t.transferMechanismType,
+          transferMechanismStatus: t.transferMechanismStatus,
+          destinationCountries: t.destinationCountries,
+          restrictedTransfer: t.restrictedTransfer,
+          effectiveDate: t.effectiveDate,
+          reviewDueDate: t.reviewDueDate,
+          linkedEvidenceIds: t.linkedEvidenceIds || [],
+          linkedTiaId: t.linkedTiaId,
+          rationale: t.rationale,
+        };
+      });
+
+      fileName = `transfer_mechanisms_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Legal Transfer Mechanisms Distribution & Status Breakdown (GDPR Art. 45-49)',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalTransferArrangementsCount: transfers.length,
+            mechanismBreakdown: countsByMechanism,
+          },
+          mechanismEntries: entries,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'processor_governance_gaps_report') {
+      const [profilesSnap, transfersSnap, tiasSnap, evidenceSnap, vendorsSnap] = await Promise.all([
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('transfer_arrangements').get(),
+        tenantRef.collection('tia_assessments').get(),
+        tenantRef.collection('evidence').get(),
+        tenantRef.collection('vendors').get(),
+      ]);
+
+      const vendorsMap = new Map<string, Vendor>();
+      vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+      const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const transfers = transfersSnap.docs.map((d) => d.data() as TransferArrangement);
+      const tias = tiasSnap.docs.map((d) => d.data() as TIA);
+      const evidence = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+      const now = new Date();
+      const nowMillis = now.getTime();
+      const gaps: any[] = [];
+
+      for (const p of profiles) {
+        const v = p.vendorId ? vendorsMap.get(p.vendorId) : null;
+        const procTransfers = transfers.filter((t) => t.processorProfileId === p.id);
+        const procEvidence = evidence.filter((e) => e.processorProfileIds?.includes(p.id) || (p.vendorId && e.vendorIds?.includes(p.vendorId)));
+        const evCompleteness = evaluateProcessorEvidenceCompleteness(p, procEvidence);
+
+        // Gap 1: Missing DPA for active processor
+        if (p.status === 'active' && !p.dpaSigned) {
+          gaps.push({
+            gapId: `gap_missing_dpa_${p.id}`,
+            severity: 'critical',
+            gapType: 'missing_dpa_contract',
+            regulatoryCitation: 'GDPR Article 28(3)',
+            processorProfileId: p.id,
+            engagementName: p.engagementName,
+            vendorName: v?.name || null,
+            finding: `Active processor profile "${p.engagementName}" does not have a signed Data Processing Agreement recorded.`,
+            remediation: 'Execute and upload Article 28 compliant Data Processing Addendum / Clauses.',
+          });
+        }
+
+        // Gap 2: Overdue Processor Review
+        if (p.nextReviewDate && new Date(p.nextReviewDate).getTime() < nowMillis) {
+          gaps.push({
+            gapId: `gap_overdue_review_${p.id}`,
+            severity: p.criticality === 'critical' ? 'high' : 'medium',
+            gapType: 'overdue_processor_review',
+            regulatoryCitation: 'GDPR Article 28(1) & ISO 27001 A.15',
+            processorProfileId: p.id,
+            engagementName: p.engagementName,
+            vendorName: v?.name || null,
+            finding: `Periodic supplier governance review was due on ${p.nextReviewDate.slice(0, 10)} and is currently OVERDUE.`,
+            remediation: 'Conduct supplier security re-assessment and update next review milestone.',
+          });
+        }
+
+        // Gap 3: Missing Required Evidence Documents
+        for (const req of evCompleteness.requirements) {
+          if (req.status === 'missing' || req.status === 'expired') {
+            gaps.push({
+              gapId: `gap_evidence_${p.id}_${req.category}`,
+              severity: req.category === 'dpa' || req.category === 'scc' ? 'high' : 'medium',
+              gapType: req.status === 'expired' ? 'expired_evidence' : 'missing_evidence',
+              regulatoryCitation: 'GDPR Article 28 & Principle of Accountability',
+              processorProfileId: p.id,
+              engagementName: p.engagementName,
+              vendorName: v?.name || null,
+              finding: `Required evidence category "${req.category}" is ${req.status} for processor "${p.engagementName}".`,
+              remediation: `Obtain and attach valid ${req.category} compliance artifact.`,
+            });
+          }
+        }
+
+        // Gap 4: Restricted Transfers without TIA or Evidence
+        for (const t of procTransfers) {
+          if (t.restrictedTransfer) {
+            const hasTia = t.linkedTiaId && tias.some((tia) => tia.id === t.linkedTiaId && tia.status === 'approved');
+            if (!hasTia) {
+              gaps.push({
+                gapId: `gap_missing_tia_${t.id}`,
+                severity: 'critical',
+                gapType: 'missing_schrems_tia',
+                regulatoryCitation: 'GDPR Chapter V & Schrems II CJEU Ruling',
+                processorProfileId: p.id,
+                transferArrangementId: t.id,
+                transferName: t.name,
+                destinationCountries: t.destinationCountries,
+                engagementName: p.engagementName,
+                vendorName: v?.name || null,
+                finding: `Restricted transfer "${t.name}" to ${t.destinationCountries.join(', ')} lacks an approved Transfer Impact Assessment (TIA).`,
+                remediation: 'Perform Schrems II legal risk analysis and document supplementary safeguards.',
+              });
+            }
+
+            if (t.transferMechanismType === 'no_mechanism_selected') {
+              gaps.push({
+                gapId: `gap_no_mechanism_${t.id}`,
+                severity: 'critical',
+                gapType: 'unauthorized_restricted_transfer',
+                regulatoryCitation: 'GDPR Article 44 & 46',
+                processorProfileId: p.id,
+                transferArrangementId: t.id,
+                transferName: t.name,
+                destinationCountries: t.destinationCountries,
+                engagementName: p.engagementName,
+                vendorName: v?.name || null,
+                finding: `Restricted cross-border transfer "${t.name}" has no valid Chapter V transfer mechanism configured.`,
+                remediation: 'Select and execute standard contractual clauses, adequacy, or other valid legal mechanism.',
+              });
+            }
+          }
+        }
+      }
+
+      fileName = `processor_governance_gaps_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Processor Governance & International Transfer Compliance Gap Analysis',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalIdentifiedGapsCount: gaps.length,
+            criticalGapsCount: gaps.filter((g) => g.severity === 'critical').length,
+            highGapsCount: gaps.filter((g) => g.severity === 'high').length,
+            mediumGapsCount: gaps.filter((g) => g.severity === 'medium').length,
+          },
+          complianceGaps: gaps,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'processor_review_schedule_report') {
+      const [profilesSnap, transfersSnap, evidenceSnap, vendorsSnap] = await Promise.all([
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('transfer_arrangements').get(),
+        tenantRef.collection('evidence').get(),
+        tenantRef.collection('vendors').get(),
+      ]);
+
+      const vendorsMap = new Map<string, Vendor>();
+      vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+      const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const transfers = transfersSnap.docs.map((d) => d.data() as TransferArrangement);
+      const evidence = evidenceSnap.docs.map((d) => d.data() as Evidence);
+
+      const now = new Date();
+      const nowMillis = now.getTime();
+      const thirtyDaysMillis = 30 * 24 * 60 * 60 * 1000;
+      const ninetyDaysMillis = 90 * 24 * 60 * 60 * 1000;
+
+      const scheduleItems: any[] = [];
+
+      for (const p of profiles) {
+        const v = p.vendorId ? vendorsMap.get(p.vendorId) : null;
+        if (p.nextReviewDate) {
+          const revMillis = new Date(p.nextReviewDate).getTime();
+          const isOverdue = revMillis < nowMillis;
+          const dueIn30d = !isOverdue && revMillis - nowMillis <= thirtyDaysMillis;
+          const dueIn90d = !isOverdue && revMillis - nowMillis <= ninetyDaysMillis;
+
+          scheduleItems.push({
+            itemId: `rev_proc_${p.id}`,
+            itemType: 'processor_governance_review',
+            entityId: p.id,
+            entityName: p.engagementName,
+            vendorName: v?.name || null,
+            criticality: p.criticality,
+            cadence: p.reviewCadence,
+            lastReviewDate: p.lastReviewDate,
+            nextDueDate: p.nextReviewDate,
+            isOverdue,
+            statusBucket: isOverdue ? 'overdue' : dueIn30d ? 'due_soon_30d' : dueIn90d ? 'due_soon_90d' : 'on_track',
+            assignedOwnerId: p.ownerUserId || p.ownerId,
+          });
+        }
+      }
+
+      for (const t of transfers) {
+        if (t.reviewDueDate) {
+          const revMillis = new Date(t.reviewDueDate).getTime();
+          const isOverdue = revMillis < nowMillis;
+          const dueIn30d = !isOverdue && revMillis - nowMillis <= thirtyDaysMillis;
+          const dueIn90d = !isOverdue && revMillis - nowMillis <= ninetyDaysMillis;
+
+          scheduleItems.push({
+            itemId: `rev_trans_${t.id}`,
+            itemType: 'transfer_mechanism_review',
+            entityId: t.id,
+            entityName: t.name,
+            processorProfileId: t.processorProfileId,
+            mechanismType: t.transferMechanismType,
+            nextDueDate: t.reviewDueDate,
+            isOverdue,
+            statusBucket: isOverdue ? 'overdue' : dueIn30d ? 'due_soon_30d' : dueIn90d ? 'due_soon_90d' : 'on_track',
+          });
+        }
+      }
+
+      for (const ev of evidence) {
+        if (ev.reviewDueDate) {
+          const revMillis = new Date(ev.reviewDueDate).getTime();
+          const isOverdue = revMillis < nowMillis;
+          const dueIn30d = !isOverdue && revMillis - nowMillis <= thirtyDaysMillis;
+
+          scheduleItems.push({
+            itemId: `rev_ev_${ev.id}`,
+            itemType: 'evidence_renewal',
+            entityId: ev.id,
+            entityName: ev.title,
+            category: ev.category,
+            nextDueDate: ev.reviewDueDate,
+            isOverdue,
+            statusBucket: isOverdue ? 'overdue' : dueIn30d ? 'due_soon_30d' : 'on_track',
+          });
+        }
+      }
+
+      scheduleItems.sort((a, b) => new Date(a.nextDueDate).getTime() - new Date(b.nextDueDate).getTime());
+
+      fileName = `processor_review_schedule_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Processor & Transfer Mechanism Review Schedule and Calendar',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalReviewItemsCount: scheduleItems.length,
+            overdueCount: scheduleItems.filter((i) => i.isOverdue).length,
+            dueSoon30dCount: scheduleItems.filter((i) => i.statusBucket === 'due_soon_30d').length,
+          },
+          reviewSchedule: scheduleItems,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'processor_system_mapping_report') {
+      const [profilesSnap, assetsSnap, vendorsSnap] = await Promise.all([
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('system_assets').get(),
+        tenantRef.collection('vendors').get(),
+      ]);
+
+      const vendorsMap = new Map<string, Vendor>();
+      vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+      const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+      const assets = assetsSnap.docs.map((d) => d.data() as SystemAsset);
+
+      const mappings = profiles.map((p) => {
+        const v = p.vendorId ? vendorsMap.get(p.vendorId) : null;
+        const linkedAssets = assets.filter((a) => a.processorProfileIds?.includes(p.id) || p.linkedSystemAssetIds?.includes(a.id));
+
+        return {
+          processorProfileId: p.id,
+          engagementName: p.engagementName,
+          processorRole: p.processorRole,
+          criticality: p.criticality,
+          vendor: v ? { vendorId: v.id, name: v.name, riskTier: v.riskTier } : null,
+          linkedSystems: linkedAssets.map((a) => {
+            const rel = a.processorRelationships?.find((r) => r.processorProfileId === p.id);
+            return {
+              systemAssetId: a.id,
+              name: a.name,
+              assetType: a.assetType,
+              criticality: a.criticality,
+              dataClassification: a.dataClassification,
+              hostingLocation: a.hostingLocation,
+              relationshipType: rel?.relationshipType || 'hosting',
+              relationshipDescription: rel?.relationshipDescription || null,
+            };
+          }),
+        };
+      });
+
+      fileName = `processor_system_mapping_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Processor-to-System Architecture & Infrastructure Dependency Map',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalProcessorsCount: mappings.length,
+            totalSystemAssetsCount: assets.length,
+          },
+          processorToSystemMap: mappings,
+        },
+        null,
+        2
+      );
+    } else if (job.exportType === 'processor_ropa_mapping_report') {
+      const [ropaSnap, profilesSnap, transfersSnap, vendorsSnap] = await Promise.all([
+        tenantRef.collection('ropa_entries').get(),
+        tenantRef.collection('processor_profiles').get(),
+        tenantRef.collection('transfer_arrangements').get(),
+        tenantRef.collection('vendors').get(),
+      ]);
+
+      const profilesMap = new Map<string, ProcessorProfile>();
+      profilesSnap.docs.forEach((d) => profilesMap.set(d.id, d.data() as ProcessorProfile));
+
+      const transfersMap = new Map<string, TransferArrangement>();
+      transfersSnap.docs.forEach((d) => transfersMap.set(d.id, d.data() as TransferArrangement));
+
+      const vendorsMap = new Map<string, Vendor>();
+      vendorsSnap.docs.forEach((d) => vendorsMap.set(d.id, d.data() as Vendor));
+
+      const ropaEntries = ropaSnap.docs.map((d) => d.data() as ROPAEntry);
+
+      const mappings = ropaEntries.map((r) => {
+        const linkedProfiles = (r.processorProfileIds || []).map((id) => {
+          const p = profilesMap.get(id);
+          const v = p?.vendorId ? vendorsMap.get(p.vendorId) : null;
+          return {
+            processorProfileId: id,
+            engagementName: p?.engagementName || id,
+            processorRole: p?.processorRole || null,
+            vendorName: v?.name || null,
+            dpaSigned: p?.dpaSigned || false,
+          };
+        });
+
+        const linkedTransfers = (r.transferArrangementIds || []).map((id) => {
+          const t = transfersMap.get(id);
+          return {
+            transferArrangementId: id,
+            name: t?.name || id,
+            destinationCountries: t?.destinationCountries || [],
+            transferMechanismType: t?.transferMechanismType || null,
+            restrictedTransfer: t?.restrictedTransfer || false,
+            linkedTiaId: t?.linkedTiaId || null,
+          };
+        });
+
+        return {
+          ropaId: r.id,
+          activityCode: r.activityCode,
+          activityName: r.activityName,
+          legalBasis: r.legalBasis,
+          retentionPeriodMonths: r.retentionPeriodMonths,
+          personalDataCategories: r.personalDataCategories || [],
+          dataSubjectCategories: r.dataSubjectCategories || [],
+          involvesInternationalTransfer: r.involvesInternationalTransfer || false,
+          destinationCountries: r.destinationCountries || [],
+          linkedProcessors: linkedProfiles,
+          linkedTransferArrangements: linkedTransfers,
+          isArticle28Compliant: linkedProfiles.every((p) => p.dpaSigned),
+        };
+      });
+
+      fileName = `processor_ropa_mapping_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(
+        {
+          exportHeader: {
+            tenantId,
+            exportType: job.exportType,
+            title: 'Article 30 ROPA to Processor & Cross-Border Transfer Traceability Map',
+            generatedAt: processingTime,
+            requestedBy: job.requestedBy,
+            totalRopaActivitiesCount: mappings.length,
+            crossBorderRopaCount: mappings.filter((m) => m.involvesInternationalTransfer).length,
+          },
+          ropaProcessorMap: mappings,
         },
         null,
         2

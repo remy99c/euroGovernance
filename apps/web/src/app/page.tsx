@@ -1297,6 +1297,48 @@ export default function DashboardPage() {
                 ⚠️ Multi-Framework Gap Report
               </button>
               <button
+                onClick={() => handleRequestExport('processor_inventory_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                🏢 Processor Inventory
+              </button>
+              <button
+                onClick={() => handleRequestExport('restricted_transfers_register')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                🌍 Restricted Transfers Register
+              </button>
+              <button
+                onClick={() => handleRequestExport('transfer_mechanisms_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📜 Transfer Mechanisms (SCCs)
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_governance_gaps_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                ⚠️ Processor Gaps (Missing TIA/Evidence)
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_review_schedule_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📅 Processor Review Schedule
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_system_mapping_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                🗺️ Processor-to-System Map
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_ropa_mapping_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📑 Processor-to-ROPA Map
+              </button>
+              <button
                 onClick={() => handleRequestExport('gdpr_ropa_xlsx')}
                 style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
