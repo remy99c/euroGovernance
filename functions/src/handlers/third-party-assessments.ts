@@ -11,6 +11,10 @@ import {
   AssessmentRecurrenceCadence,
   QuestionnaireTemplate,
   AssessmentAccessToken,
+  SubmissionReview,
+  SubmissionReviewDecision,
+  QuestionReviewFinding,
+  AssessmentRiskTier,
   validateThirdPartyAssessmentRequest,
   isValidRequestStateTransition,
 } from '@eurogovernance/shared-types';
@@ -555,6 +559,252 @@ export const cancelThirdPartyAssessmentRequest = onCall<CancelThirdPartyAssessme
       success: true,
       requestId,
       status: 'canceled',
+    };
+  }
+);
+
+// -----------------------------------------------------------------------------
+// 4. REVIEW THIRD-PARTY ASSESSMENT SUBMISSION (Compliance / Admin / Approver)
+// -----------------------------------------------------------------------------
+
+export interface ReviewThirdPartyAssessmentSubmissionInput {
+  tenantId: string;
+  requestId: string;
+  submissionId?: string;
+  decision: SubmissionReviewDecision;
+  determinedRiskTier?: AssessmentRiskTier;
+  isCompliant?: boolean;
+  reviewerNotes?: string;
+  rejectionReason?: string;
+  revisionInstructions?: string;
+  questionFindings?: Record<string, QuestionReviewFinding>;
+  remediationActionPlan?: string;
+  reissueQuestionnaire?: boolean;
+  validityDays?: number;
+}
+
+export const reviewThirdPartyAssessmentSubmission = onCall<ReviewThirdPartyAssessmentSubmissionInput>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const {
+      tenantId,
+      requestId,
+      submissionId: providedSubmissionId,
+      decision,
+      determinedRiskTier = 'low',
+      isCompliant = decision === 'accept',
+      reviewerNotes = '',
+      rejectionReason = null,
+      revisionInstructions = null,
+      questionFindings = {},
+      remediationActionPlan = null,
+      reissueQuestionnaire = false,
+      validityDays = 14,
+    } = data;
+
+    if (!tenantId || !requestId || !decision) {
+      throw new HttpsError('invalid-argument', 'tenantId, requestId, and decision are required.');
+    }
+
+    const authContext = await requireTenantMember(request, tenantId, [
+      'tenant_admin',
+      'compliance_manager',
+      'privacy_manager',
+      'security_manager',
+      'approver',
+    ]);
+
+    const reqRef = db.collection('tenants').doc(tenantId).collection('assessment_requests').doc(requestId);
+    const reqSnap = await reqRef.get();
+
+    if (!reqSnap.exists) {
+      throw new HttpsError('not-found', 'Assessment request not found.');
+    }
+
+    const reqData = reqSnap.data() as ThirdPartyAssessmentRequest;
+    const submissionId = providedSubmissionId || reqData.activeSubmissionId || `sub_${requestId}`;
+
+    const subRef = db.collection('tenants').doc(tenantId).collection('assessment_submissions').doc(submissionId);
+    const subSnap = await subRef.get();
+
+    const nowIso = new Date().toISOString();
+    const batch = db.batch();
+
+    const reviewId = `rev_${crypto.randomBytes(12).toString('hex')}`;
+
+    const reviewDoc: SubmissionReview = {
+      id: reviewId,
+      tenantId,
+      status: 'completed',
+      submissionId,
+      requestId,
+      vendorId: reqData.vendorId || null,
+      processorProfileId: reqData.processorProfileId || null,
+      thirdPartyName: reqData.thirdPartyName,
+      decision,
+      finalScorePercent: reqData.finalScorePercent || 0,
+      determinedRiskTier,
+      isCompliant,
+      rejectionReason: decision === 'reject' ? rejectionReason || reviewerNotes : null,
+      revisionInstructions: decision === 'request_revision' ? revisionInstructions || reviewerNotes : null,
+      internalNotes: reviewerNotes || null,
+      remediationActionPlan: remediationActionPlan || null,
+      questionFindings,
+      derivedRiskFlagIds: [],
+      generatedEvidenceIds: [],
+      reviewerUserId: authContext.userId,
+      reviewerEmail: authContext.email,
+      reviewedAt: nowIso,
+      ownerId: authContext.userId,
+      createdBy: authContext.userId,
+      updatedBy: authContext.userId,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const reviewRef = db.collection('tenants').doc(tenantId).collection('submission_reviews').doc(reviewId);
+    batch.set(reviewRef, reviewDoc);
+
+    // Update Submission Status while preserving full answer and document history
+    if (subSnap.exists) {
+      batch.update(subRef, {
+        status: decision === 'request_revision' ? 'revision_pending' : 'reviewed',
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      });
+    }
+
+    let nextRequestStatus = reqData.status;
+    let reissuedToken: string | undefined;
+    let reissuedAccessUrl: string | undefined;
+
+    if (decision === 'accept') {
+      nextRequestStatus = 'accepted';
+      batch.update(reqRef, {
+        status: 'accepted',
+        reviewedBy: authContext.userId,
+        reviewedAt: nowIso,
+        isCompliant: true,
+        overallRiskRating: determinedRiskTier,
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      });
+    } else if (decision === 'reject') {
+      nextRequestStatus = 'rejected';
+      batch.update(reqRef, {
+        status: 'rejected',
+        reviewedBy: authContext.userId,
+        reviewedAt: nowIso,
+        isCompliant: false,
+        overallRiskRating: determinedRiskTier || 'high',
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      });
+    } else if (decision === 'request_revision') {
+      nextRequestStatus = 'revision_requested';
+      const updateReq: Partial<ThirdPartyAssessmentRequest> = {
+        status: 'revision_requested',
+        reviewedBy: authContext.userId,
+        reviewedAt: nowIso,
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      };
+
+      if (reissueQuestionnaire) {
+        const { rawToken, tokenHash } = generateTokenPair();
+        const newTokenId = `tok_${crypto.randomBytes(12).toString('hex')}`;
+        const tokenExpiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000).toISOString();
+
+        const tokenRecord: AssessmentAccessToken = {
+          id: newTokenId,
+          tenantId,
+          requestId,
+          templateId: reqData.templateId,
+          recipientEmail: reqData.respondent.email,
+          recipientName: reqData.respondent.name,
+          thirdPartyName: reqData.thirdPartyName,
+          tokenHash,
+          tokenType: 'multi_use_session',
+          status: 'active',
+          maxUses: 50,
+          useCount: 0,
+          expiresAt: tokenExpiresAt,
+          lastAccessedAt: null,
+          lastAccessedIpMasked: null,
+          revokedAt: null,
+          revokedBy: null,
+          revocationReason: null,
+          requireEmailVerificationCode: false,
+          issuedByUserId: authContext.userId,
+          issuedAt: nowIso,
+          ownerId: authContext.userId,
+          createdBy: authContext.userId,
+          updatedBy: authContext.userId,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+
+        const tokenRef = db.collection('tenants').doc(tenantId).collection('assessment_access_tokens').doc(newTokenId);
+        batch.set(tokenRef, tokenRecord);
+
+        const globalTokenRef = db.collection('assessment_access_tokens').doc(newTokenId);
+        batch.set(globalTokenRef, {
+          tokenId: newTokenId,
+          tenantId,
+          requestId,
+          tokenHash,
+          status: 'active',
+          expiresAt: tokenExpiresAt,
+          updatedAt: nowIso,
+        });
+
+        updateReq.accessTokenHash = tokenHash;
+        updateReq.tokenExpiresAt = tokenExpiresAt;
+        updateReq.status = 'sent';
+        nextRequestStatus = 'sent';
+
+        reissuedToken = rawToken;
+        reissuedAccessUrl = `https://app.eurogovernance.eu/portal/assessments/${requestId}?tokenId=${newTokenId}&token=${rawToken}`;
+      }
+
+      batch.update(reqRef, updateReq);
+    }
+
+    await batch.commit();
+
+    await recordAuditLog({
+      tenantId,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.role,
+      entityType: 'processor_assessment',
+      entityId: requestId,
+      action: 'update',
+      afterSummary: {
+        action: 'assessment_review_completed',
+        reviewId,
+        submissionId,
+        decision,
+        determinedRiskTier,
+        isCompliant,
+        reissueQuestionnaire,
+        reviewerNotes,
+      },
+      source: 'cloud_function',
+      workflowContext: 'third_party_assessment_review',
+    });
+
+    return {
+      success: true,
+      reviewId,
+      decision,
+      requestStatus: nextRequestStatus,
+      reissuedToken,
+      reissuedAccessUrl,
     };
   }
 );

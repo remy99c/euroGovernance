@@ -315,4 +315,5 @@ export {
   createThirdPartyAssessmentRequest,
   sendThirdPartyAssessmentRequest,
   cancelThirdPartyAssessmentRequest,
+  reviewThirdPartyAssessmentSubmission,
 } from './handlers/third-party-assessments.js';
