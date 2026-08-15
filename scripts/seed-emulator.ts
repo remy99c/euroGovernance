@@ -55,26 +55,55 @@ export async function seedEmulatorData() {
     await db.doc(`applicability_rules/${rule.id}`).set(rule);
   }
 
-  // 3. Seed Tenant Organization
-  console.log('🏢 Seeding Tenant Organization & Memberships...');
-  await db.doc(`tenants/${tenantId}`).set({
-    id: tenantId,
-    name: 'EuroCorp Technologies SE',
-    slug: 'eurocorp-de',
-    tier: 'enterprise',
-    status: 'active',
-    country: 'DE',
-    primaryContactEmail: 'security@eurocorp.de',
-    selectedFrameworkIds: ['gdpr', 'eu_ai_act', 'iso_27001'],
-    dataResidencyRegion: 'europe-west3',
-    maxUsers: 50,
-    activeUserCount: 4,
-    createdAt: now,
-    updatedAt: now,
-    createdBy: 'usr_admin_01',
-  });
+  // 3. Seed Tenant Organizations
+  console.log('🏢 Seeding Tenant Organizations & Memberships...');
+  const tenantList = [
+    {
+      id: 'tenant_eurocorp_de',
+      name: 'EuroCorp Technologies SE',
+      slug: 'eurocorp-de',
+      country: 'DE',
+      primaryContactEmail: 'security@eurocorp.de',
+      selectedFrameworkIds: ['gdpr', 'eu_ai_act', 'iso_27001'],
+    },
+    {
+      id: 'tenant_medtech_fr',
+      name: 'MedTech France SAS',
+      slug: 'medtech-fr',
+      country: 'FR',
+      primaryContactEmail: 'dpo@medtech.fr',
+      selectedFrameworkIds: ['gdpr', 'iso_27001'],
+    },
+    {
+      id: 'tenant_nordic_se',
+      name: 'Nordic AI Health AB',
+      slug: 'nordic-ai-se',
+      country: 'SE',
+      primaryContactEmail: 'ai-lead@nordichealth.se',
+      selectedFrameworkIds: ['gdpr', 'eu_ai_act'],
+    },
+  ];
 
-  // 4. Seed Memberships & Auth Users
+  for (const t of tenantList) {
+    await db.doc(`tenants/${t.id}`).set({
+      id: t.id,
+      name: t.name,
+      slug: t.slug,
+      tier: 'enterprise',
+      status: 'active',
+      country: t.country,
+      primaryContactEmail: t.primaryContactEmail,
+      selectedFrameworkIds: t.selectedFrameworkIds,
+      dataResidencyRegion: 'europe-west3',
+      maxUsers: 50,
+      activeUserCount: 8,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: 'usr_admin_01',
+    });
+  }
+
+  // 4. Seed Memberships & Auth Users across all tenants
   const members = [
     { userId: 'usr_admin_01', email: 'admin@eurocorp.de', displayName: 'Marcus Vance (Admin)', role: 'tenant_admin' },
     { userId: 'usr_compliance_01', email: 'compliance@eurocorp.de', displayName: 'Elena Rostova (Compliance)', role: 'compliance_manager' },
@@ -98,16 +127,18 @@ export async function seedEmulatorData() {
       // User might already exist in Auth emulator
     }
 
-    await db.doc(`tenants/${tenantId}/memberships/${m.userId}`).set({
-      userId: m.userId,
-      tenantId,
-      email: m.email,
-      displayName: m.displayName,
-      role: m.role,
-      status: 'active',
-      joinedAt: now,
-      lastLoginAt: now,
-    });
+    for (const t of tenantList) {
+      await db.doc(`tenants/${t.id}/memberships/${m.userId}`).set({
+        userId: m.userId,
+        tenantId: t.id,
+        email: m.email,
+        displayName: m.displayName,
+        role: m.role,
+        status: 'active',
+        joinedAt: now,
+        lastLoginAt: now,
+      });
+    }
   }
 
   // 5. Seed Controls
