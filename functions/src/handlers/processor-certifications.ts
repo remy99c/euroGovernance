@@ -9,10 +9,13 @@ import {
   ProcessorProfile,
   Evidence,
   Risk,
+  Control,
   validateProcessorCertification,
   validateProcessorCertificationReviewTransition,
   evaluateProcessorCertificationReminders,
   evaluateProcessorCertificationRiskFlags,
+  evaluateControlProcessorAssuranceSupport,
+  mapProcessorsToControlsAssuranceMatrix,
 } from '@eurogovernance/shared-types';
 
 export interface CreateProcessorCertificationInput {
@@ -833,5 +836,188 @@ export const syncProcessorCertificationDerivedRisks = onCall<SyncProcessorCertif
     updatedCount,
     resolvedCount,
     suppressedCount,
+  };
+});
+
+export interface GetControlProcessorAssuranceSupportInput {
+  tenantId: string;
+  controlId: string;
+}
+
+/**
+ * Callable Function: getControlProcessorAssuranceSupport
+ * Returns third-party processor assurance and supporting evidence context for a specific Control.
+ */
+export const getControlProcessorAssuranceSupport = onCall<GetControlProcessorAssuranceSupportInput>(async (request) => {
+  const { tenantId, controlId } = request.data;
+  if (!tenantId || !controlId) {
+    throw new HttpsError('invalid-argument', 'tenantId and controlId are required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const controlRef = db.collection('tenants').doc(tenantId).collection('controls').doc(controlId);
+  const controlSnap = await controlRef.get();
+
+  if (!controlSnap.exists) {
+    throw new HttpsError('not-found', `Control "${controlId}" not found in tenant.`);
+  }
+
+  const control = controlSnap.data() as Control;
+
+  const [certsSnap, evSnap, profilesSnap] = await Promise.all([
+    db.collection('tenants').doc(tenantId).collection('processor_certifications').get(),
+    db.collection('tenants').doc(tenantId).collection('evidence').get(),
+    db.collection('tenants').doc(tenantId).collection('processor_profiles').get(),
+  ]);
+
+  const certs = certsSnap.docs.map((d) => d.data() as ProcessorCertification);
+  const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
+  const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+
+  const support = evaluateControlProcessorAssuranceSupport(control, certs, evidenceDocs, profiles, new Date());
+
+  return {
+    success: true,
+    support,
+  };
+});
+
+export interface GetProcessorsToControlsAssuranceMatrixInput {
+  tenantId: string;
+}
+
+/**
+ * Callable Function: getProcessorsToControlsAssuranceMatrix
+ * Generates an end-to-end matrix showing which third-party processors support which tenant controls.
+ */
+export const getProcessorsToControlsAssuranceMatrix = onCall<GetProcessorsToControlsAssuranceMatrixInput>(async (request) => {
+  const { tenantId } = request.data;
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'tenantId is required.');
+  }
+
+  await requireTenantMember(request, tenantId);
+
+  const [profilesSnap, certsSnap, controlsSnap, evSnap] = await Promise.all([
+    db.collection('tenants').doc(tenantId).collection('processor_profiles').get(),
+    db.collection('tenants').doc(tenantId).collection('processor_certifications').get(),
+    db.collection('tenants').doc(tenantId).collection('controls').get(),
+    db.collection('tenants').doc(tenantId).collection('evidence').get(),
+  ]);
+
+  const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
+  const certs = certsSnap.docs.map((d) => d.data() as ProcessorCertification);
+  const controls = controlsSnap.docs.map((d) => d.data() as Control);
+  const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
+
+  const matrix = mapProcessorsToControlsAssuranceMatrix(profiles, certs, controls, evidenceDocs, new Date());
+
+  return {
+    success: true,
+    totalProcessors: profiles.length,
+    totalControls: controls.length,
+    matrix,
+  };
+});
+
+export interface LinkProcessorCertificationToControlsInput {
+  tenantId: string;
+  certificationId: string;
+  controlIds: string[];
+  operation: 'add' | 'remove' | 'set';
+}
+
+/**
+ * Callable Function: linkProcessorCertificationToControls
+ * Updates bi-directional links between a ProcessorCertification and tenant Controls.
+ */
+export const linkProcessorCertificationToControls = onCall<LinkProcessorCertificationToControlsInput>(async (request) => {
+  const { tenantId, certificationId, controlIds, operation } = request.data;
+  if (!tenantId || !certificationId || !Array.isArray(controlIds) || !operation) {
+    throw new HttpsError(
+      'invalid-argument',
+      'tenantId, certificationId, controlIds array, and operation (add|remove|set) are required.'
+    );
+  }
+
+  const authContext = await requireTenantMember(request, tenantId, [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+  ]);
+
+  const certRef = db.collection('tenants').doc(tenantId).collection('processor_certifications').doc(certificationId);
+  const certSnap = await certRef.get();
+
+  if (!certSnap.exists) {
+    throw new HttpsError('not-found', `Processor certification "${certificationId}" not found.`);
+  }
+
+  const cert = certSnap.data() as ProcessorCertification;
+  const currentLinkedControls = new Set<string>(cert.linkedControlIds || []);
+
+  if (operation === 'add') {
+    for (const cId of controlIds) currentLinkedControls.add(cId);
+  } else if (operation === 'remove') {
+    for (const cId of controlIds) currentLinkedControls.delete(cId);
+  } else if (operation === 'set') {
+    currentLinkedControls.clear();
+    for (const cId of controlIds) currentLinkedControls.add(cId);
+  }
+
+  const updatedControlIds = Array.from(currentLinkedControls);
+  const now = new Date().toISOString();
+
+  const batch = db.batch();
+
+  // 1. Update Certification record
+  batch.update(certRef, {
+    linkedControlIds: updatedControlIds,
+    updatedAt: now,
+    updatedBy: authContext.userId,
+  });
+
+  // 2. Update Control records bi-directionally
+  for (const ctlId of controlIds) {
+    const ctlRef = db.collection('tenants').doc(tenantId).collection('controls').doc(ctlId);
+    const ctlSnap = await ctlRef.get();
+    if (ctlSnap.exists) {
+      const ctl = ctlSnap.data() as Control;
+      const ctlCertIds = new Set<string>(ctl.processorCertificationIds || []);
+      if (operation === 'add' || operation === 'set') {
+        ctlCertIds.add(certificationId);
+      } else if (operation === 'remove') {
+        ctlCertIds.delete(certificationId);
+      }
+      batch.update(ctlRef, {
+        processorCertificationIds: Array.from(ctlCertIds),
+        updatedAt: now,
+        updatedBy: authContext.userId,
+      });
+    }
+  }
+
+  await batch.commit();
+
+  await recordAuditLog({
+    tenantId,
+    actorId: authContext.userId,
+    actorEmail: authContext.email,
+    actorRole: authContext.role,
+    entityType: 'processor_certification',
+    entityId: certificationId,
+    action: 'link',
+    beforeSummary: { linkedControlIds: cert.linkedControlIds || [] },
+    afterSummary: { linkedControlIds: updatedControlIds, operation, affectedControlIds: controlIds },
+    source: 'cloud_function',
+    workflowContext: 'processor_certification_control_linkage',
+  });
+
+  return {
+    success: true,
+    certificationId,
+    linkedControlIds: updatedControlIds,
   };
 });

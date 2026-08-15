@@ -23,6 +23,11 @@ import {
   VALID_EVIDENCE_CATEGORIES,
   Evidence,
   ProcessorProfile,
+  Control,
+  findProcessorCertificationsForControl,
+  findControlsForProcessorCertification,
+  evaluateControlProcessorAssuranceSupport,
+  mapProcessorsToControlsAssuranceMatrix,
 } from '@eurogovernance/shared-types';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -1632,6 +1637,318 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
         expect(flag.dedupKey.startsWith('tenant_eurocorp_de_risk_')).toBe(true);
         expect(flag.dedupKey).toContain(cert.processorProfileId);
       }
+    });
+  });
+
+  describe('9. Control Implementation, Third-Party Assurance & Evidence Traceability', () => {
+    const mockControls: Control[] = [
+      {
+        id: 'ctl_vendor_mgmt_01',
+        tenantId: 'tenant_eurocorp_de',
+        masterControlId: 'mctl_iso_a15_1',
+        code: 'SEC-VEN-01',
+        title: 'Third-Party Supplier Security Review & Assurance',
+        description: 'Ensure critical cloud processors maintain accredited security certifications.',
+        domain: 'Supply Chain Governance',
+        frameworkIds: ['iso_27001_2022', 'soc_2'],
+        requirementIds: ['req_a15_1_1', 'req_cc9_2'],
+        status: 'implemented',
+        healthScore: 95,
+        enforcementMechanism: 'hybrid',
+        reviewFrequencyDays: 365,
+        lastReviewDate: '2024-01-01T00:00:00.000Z',
+        nextReviewDate: '2025-01-01T00:00:00.000Z',
+        implementationNotes: 'Annual ISO 27001 / SOC 2 collection and audit review.',
+        processorCertificationIds: ['cert_aws_iso_2025'], // Direct FK from Control
+        processorProfileIds: ['prof_aws_infra'],
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'ctl_encryption_transit',
+        tenantId: 'tenant_eurocorp_de',
+        masterControlId: 'mctl_iso_a10_1',
+        code: 'SEC-CRY-02',
+        title: 'Data-in-Transit Encryption (TLS 1.3)',
+        description: 'Mandate modern encryption protocols across internal and third-party APIs.',
+        domain: 'Cryptography',
+        frameworkIds: ['iso_27001_2022', 'gdpr_art32'],
+        requirementIds: ['req_a10_1_2'],
+        status: 'implemented',
+        healthScore: 100,
+        enforcementMechanism: 'automated',
+        reviewFrequencyDays: 180,
+        lastReviewDate: '2024-01-01T00:00:00.000Z',
+        nextReviewDate: '2024-07-01T00:00:00.000Z',
+        implementationNotes: 'Enforced via API gateways and verified in third-party SOC 2 Type II reports.',
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ];
+
+    const mockProfiles: ProcessorProfile[] = [
+      {
+        id: 'prof_aws_infra',
+        tenantId: 'tenant_eurocorp_de',
+        vendorId: 'vnd_aws_emea',
+        engagementName: 'AWS EMEA Cloud Hosting',
+        processorRole: 'data_processor',
+        serviceDescription: 'Primary EU production hosting and compute workloads.',
+        dataCategories: ['Personal Identifiers', 'System Logs'],
+        dataSubjects: ['EU Customers'],
+        isSpecialCategoryData: false,
+        jurisdictions: ['DE', 'IE'],
+        linkedSystemAssetIds: ['sys_prod_k8s'],
+        criticality: 'critical',
+        ownerUserId: 'usr_compliance_01',
+        reviewCadence: 'annually',
+        lastReviewDate: '2024-01-01T00:00:00.000Z',
+        nextReviewDate: '2025-01-01T00:00:00.000Z',
+        status: 'active',
+        notes: null,
+        dpaSigned: true,
+        dpaDate: '2024-01-01T00:00:00.000Z',
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'prof_snowflake_dw',
+        tenantId: 'tenant_eurocorp_de',
+        vendorId: 'vnd_snowflake_eu',
+        engagementName: 'Snowflake Analytics Warehouse',
+        processorRole: 'data_processor',
+        serviceDescription: 'Cloud data warehousing and BI aggregation.',
+        dataCategories: ['Analytics Data'],
+        dataSubjects: ['Customers'],
+        isSpecialCategoryData: false,
+        jurisdictions: ['DE'],
+        linkedSystemAssetIds: ['sys_dw_cluster'],
+        criticality: 'high',
+        ownerUserId: 'usr_compliance_01',
+        reviewCadence: 'annually',
+        lastReviewDate: '2024-01-01T00:00:00.000Z',
+        nextReviewDate: '2025-01-01T00:00:00.000Z',
+        status: 'active',
+        notes: null,
+        dpaSigned: true,
+        dpaDate: '2024-01-01T00:00:00.000Z',
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ];
+
+    const mockEvidence: Evidence[] = [
+      {
+        id: 'ev_aws_iso_pdf',
+        tenantId: 'tenant_eurocorp_de',
+        title: 'AWS ISO 27001 Certificate 2025-2027',
+        category: 'iso_certificate',
+        status: 'valid',
+        storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_aws_iso.pdf',
+        fileHashSha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        fileSizeBytes: 1048576,
+        mimeType: 'application/pdf',
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'ev_snowflake_soc2_pdf',
+        tenantId: 'tenant_eurocorp_de',
+        title: 'Snowflake SOC 2 Type II Report 2024',
+        category: 'soc_report',
+        status: 'valid',
+        storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_snowflake_soc2.pdf',
+        fileHashSha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+        fileSizeBytes: 4194304,
+        mimeType: 'application/pdf',
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ] as unknown as Evidence[];
+
+    const mockCerts: ProcessorCertification[] = [
+      {
+        id: 'cert_aws_iso_2025',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_aws_infra',
+        artifactKind: 'accredited_certification',
+        standardFamily: 'iso_27001',
+        issuingBodyOrAuditor: 'EY CertifyPoint',
+        certificateOrReportNumber: 'EY-AWS-ISO27001-2025',
+        validFrom: '2024-01-01T00:00:00.000Z',
+        validUntil: '2027-01-01T00:00:00.000Z', // Active valid
+        status: 'active_valid',
+        assuranceScopeSummary: 'All AWS Global Infrastructure & European Regions',
+        legalEntityOrRegionalScope: 'Amazon Web Services EMEA SARL',
+        systemsOrServicesCovered: ['Compute', 'Storage', 'Networking', 'Databases'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2025-01-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_aws_iso_pdf'],
+        linkedControlIds: ['ctl_vendor_mgmt_01', 'ctl_encryption_transit'], // Dual linked
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'cert_snowflake_soc2_2024',
+        tenantId: 'tenant_eurocorp_de',
+        processorProfileId: 'prof_snowflake_dw',
+        artifactKind: 'independent_attestation_report',
+        standardFamily: 'soc2_type2',
+        issuingBodyOrAuditor: 'Schellman & Company',
+        certificateOrReportNumber: 'SCH-SNOWFLAKE-2024',
+        reportPeriodStart: '2023-01-01T00:00:00.000Z',
+        reportPeriodEnd: '2023-12-31T23:59:59.000Z',
+        validFrom: '2024-01-01T00:00:00.000Z',
+        validUntil: '2024-12-31T23:59:59.000Z', // Expired relative to 2025-05-01
+        status: 'expired',
+        assuranceScopeSummary: 'Snowflake Data Cloud Platform',
+        legalEntityOrRegionalScope: 'Snowflake Inc. / EMEA',
+        systemsOrServicesCovered: ['Data Warehouse Engine'],
+        reviewOwnerUserId: 'usr_compliance_01',
+        reviewStatus: 'accepted',
+        reviewDueDate: '2024-11-01T00:00:00.000Z',
+        linkedEvidenceIds: ['ev_snowflake_soc2_pdf'],
+        linkedControlIds: ['ctl_vendor_mgmt_01'],
+        unresolvedFindingsCount: 0,
+        hasMajorDeficiencies: false,
+        ownerId: 'usr_compliance_01',
+        createdBy: 'usr_compliance_01',
+        updatedBy: 'usr_compliance_01',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ];
+
+    it('bi-directionally resolves links between ProcessorCertifications and Controls', () => {
+      // 1. Find certs for ctl_encryption_transit (linked via cert.linkedControlIds)
+      const certsForTransit = findProcessorCertificationsForControl('ctl_encryption_transit', mockCerts);
+      expect(certsForTransit.length).toBe(1);
+      expect(certsForTransit[0]!.id).toBe('cert_aws_iso_2025');
+
+      // 2. Find certs for ctl_vendor_mgmt_01 (linked via both cert.linkedControlIds and ctl.processorCertificationIds)
+      const certsForVendorMgmt = findProcessorCertificationsForControl(mockControls[0]!, mockCerts);
+      expect(certsForVendorMgmt.length).toBe(2);
+      expect(certsForVendorMgmt.map((c) => c.id)).toContain('cert_aws_iso_2025');
+      expect(certsForVendorMgmt.map((c) => c.id)).toContain('cert_snowflake_soc2_2024');
+
+      // 3. Reverse lookup controls for cert_aws_iso_2025
+      const controlsForAwsCert = findControlsForProcessorCertification(mockCerts[0]!, mockControls);
+      expect(controlsForAwsCert.length).toBe(2);
+      expect(controlsForAwsCert.map((c) => c.id)).toContain('ctl_vendor_mgmt_01');
+      expect(controlsForAwsCert.map((c) => c.id)).toContain('ctl_encryption_transit');
+    });
+
+    it('evaluates control third-party assurance support with attached evidence details and coverage scoring', () => {
+      // Test control with single 100% valid supporting certification
+      const support = evaluateControlProcessorAssuranceSupport(
+        mockControls[1]!, // ctl_encryption_transit
+        mockCerts,
+        mockEvidence,
+        mockProfiles,
+        new Date('2025-05-01T00:00:00.000Z')
+      );
+
+      expect(support.controlId).toBe('ctl_encryption_transit');
+      expect(support.controlCode).toBe('SEC-CRY-02');
+      expect(support.totalLinkedCertifications).toBe(1);
+      expect(support.validAssuranceCount).toBe(1);
+      expect(support.expiredAssuranceCount).toBe(0);
+      expect(support.hasSufficientAssurance).toBe(true);
+      expect(support.assuranceCoverageScore).toBe(100);
+
+      // Verify item details and attached evidence traceability
+      expect(support.items.length).toBe(1);
+      const awsItem = support.items[0]!;
+      expect(awsItem.processorName).toBe('AWS EMEA Cloud Hosting');
+      expect(awsItem.standardDisplayName).toBe('ISO/IEC 27001:2022 (ISMS)');
+      expect(awsItem.certificateOrReportNumber).toBe('EY-AWS-ISO27001-2025');
+      expect(awsItem.isCurrent).toBe(true);
+      expect(awsItem.isSufficient).toBe(true);
+      expect(awsItem.hasAttachedEvidence).toBe(true);
+      expect(awsItem.evidenceDocuments.length).toBe(1);
+      expect(awsItem.evidenceDocuments[0]!.fileHashSha256).toBe(
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+      );
+    });
+
+    it('evaluates mixed valid and expired processor certifications supporting a vendor management control', () => {
+      // Test ctl_vendor_mgmt_01 which has 1 active AWS cert and 1 expired Snowflake cert as of 2025-05-01
+      const support = evaluateControlProcessorAssuranceSupport(
+        mockControls[0]!,
+        mockCerts,
+        mockEvidence,
+        mockProfiles,
+        new Date('2025-05-01T00:00:00.000Z')
+      );
+
+      expect(support.totalLinkedCertifications).toBe(2);
+      expect(support.validAssuranceCount).toBe(1);
+      expect(support.expiredAssuranceCount).toBe(1);
+      expect(support.hasSufficientAssurance).toBe(false); // Mixed assurance -> not 100% sufficient
+      expect(support.assuranceCoverageScore).toBe(50); // 1 out of 2 valid = 50%
+      expect(support.supportingProcessorsCount).toBe(2);
+
+      const awsGroup = support.supportingProcessors.find((p) => p.processorProfileId === 'prof_aws_infra');
+      expect(awsGroup?.hasCurrentAssurance).toBe(true);
+      expect(awsGroup?.criticality).toBe('critical');
+
+      const snowflakeGroup = support.supportingProcessors.find((p) => p.processorProfileId === 'prof_snowflake_dw');
+      expect(snowflakeGroup?.hasCurrentAssurance).toBe(false); // Expired cert
+    });
+
+    it('generates the complete processor-to-controls assurance matrix with gap indicators', () => {
+      const matrix = mapProcessorsToControlsAssuranceMatrix(
+        mockProfiles,
+        mockCerts,
+        mockControls,
+        mockEvidence,
+        new Date('2025-05-01T00:00:00.000Z')
+      );
+
+      expect(matrix.length).toBe(2);
+
+      // 1. AWS Matrix Entry
+      const awsEntry = matrix.find((m) => m.processorProfileId === 'prof_aws_infra');
+      expect(awsEntry).toBeDefined();
+      expect(awsEntry?.criticality).toBe('critical');
+      expect(awsEntry?.supportedControlsCount).toBe(2);
+      expect(awsEntry?.validControlsCount).toBe(2);
+      expect(awsEntry?.gapsCount).toBe(0);
+      expect(awsEntry?.controlSupportMap['ctl_vendor_mgmt_01']?.hasCurrentAssurance).toBe(true);
+      expect(awsEntry?.controlSupportMap['ctl_encryption_transit']?.hasCurrentAssurance).toBe(true);
+
+      // 2. Snowflake Matrix Entry
+      const snowflakeEntry = matrix.find((m) => m.processorProfileId === 'prof_snowflake_dw');
+      expect(snowflakeEntry).toBeDefined();
+      expect(snowflakeEntry?.criticality).toBe('high');
+      expect(snowflakeEntry?.supportedControlsCount).toBe(1);
+      expect(snowflakeEntry?.validControlsCount).toBe(0);
+      expect(snowflakeEntry?.gapsCount).toBe(1); // Flagged as assurance gap due to expired SOC 2 report
+      expect(snowflakeEntry?.controlSupportMap['ctl_vendor_mgmt_01']?.hasCurrentAssurance).toBe(false);
     });
   });
 });

@@ -1,5 +1,5 @@
 import { BaseEntity, UserRole } from './core.js';
-import { Evidence, EvidenceCategory, EvidenceStatus, ProcessorSystemRelationshipType, SystemAsset } from './grc.js';
+import { Evidence, EvidenceCategory, EvidenceStatus, ProcessorSystemRelationshipType, SystemAsset, Control } from './grc.js';
 import { PersonalDataBreach, BreachReportingSource, BreachSeverity, BreachStatus } from './gdpr.js';
 import { NotificationType, NotificationPriority } from './audit.js';
 
@@ -3149,4 +3149,285 @@ export interface ProcessorInventoryResponse {
   count: number;
   total: number;
   items: ProcessorInventoryItem[];
+}
+
+// -----------------------------------------------------------------------------
+// 8. CONTROL IMPLEMENTATION & THIRD-PARTY ASSURANCE INTEGRATION
+// -----------------------------------------------------------------------------
+
+/**
+ * Finds all processor certifications linked to a specific Control.
+ * Checks both `cert.linkedControlIds` and `control.processorCertificationIds`.
+ */
+export function findProcessorCertificationsForControl(
+  controlOrId: Control | string,
+  certs: ProcessorCertification[]
+): ProcessorCertification[] {
+  const controlId = typeof controlOrId === 'string' ? controlOrId : controlOrId.id;
+  const directLinkedCertIds = typeof controlOrId === 'object' && Array.isArray(controlOrId.processorCertificationIds)
+    ? controlOrId.processorCertificationIds
+    : [];
+
+  return certs.filter(
+    (c) =>
+      Boolean(c.linkedControlIds?.includes(controlId)) ||
+      directLinkedCertIds.includes(c.id)
+  );
+}
+
+/**
+ * Finds all Controls linked to a specific ProcessorCertification.
+ * Checks both `cert.linkedControlIds` and `control.processorCertificationIds`.
+ */
+export function findControlsForProcessorCertification(
+  certOrId: ProcessorCertification | string,
+  controls: Control[]
+): Control[] {
+  const certId = typeof certOrId === 'string' ? certOrId : certOrId.id;
+  const directLinkedControlIds = typeof certOrId === 'object' && Array.isArray(certOrId.linkedControlIds)
+    ? certOrId.linkedControlIds
+    : [];
+
+  return controls.filter(
+    (ctl) =>
+      directLinkedControlIds.includes(ctl.id) ||
+      Boolean(ctl.processorCertificationIds?.includes(certId))
+  );
+}
+
+export interface ControlProcessorAssuranceItem {
+  certificationId: string;
+  processorProfileId: string;
+  processorName: string;
+  standardFamily: AssuranceStandardFamily;
+  standardDisplayName: string;
+  certificateOrReportNumber: string;
+  status: ProcessorCertificationStatus;
+  reviewStatus: ProcessorCertificationReviewStatus;
+  validFrom: string;
+  validUntil: string;
+  isCurrent: boolean;
+  isSufficient: boolean;
+  hasAttachedEvidence: boolean;
+  evidenceDocuments: Array<{
+    id: string;
+    title: string;
+    category: EvidenceCategory;
+    fileHashSha256: string | null;
+  }>;
+  unresolvedFindingsCount: number;
+  hasMajorDeficiencies: boolean;
+}
+
+export interface SupportingProcessorAssuranceGroup {
+  processorProfileId: string;
+  engagementName: string;
+  criticality: ProcessorCriticality;
+  hasCurrentAssurance: boolean;
+  certifications: ControlProcessorAssuranceItem[];
+}
+
+export interface ControlProcessorAssuranceSupport {
+  controlId: string;
+  controlCode: string;
+  controlTitle: string;
+  totalLinkedCertifications: number;
+  validAssuranceCount: number;
+  expiredAssuranceCount: number;
+  hasSufficientAssurance: boolean;
+  assuranceCoverageScore: number; // 0-100%
+  supportingProcessorsCount: number;
+  supportingProcessors: SupportingProcessorAssuranceGroup[];
+  items: ControlProcessorAssuranceItem[];
+}
+
+/**
+ * Evaluates the third-party assurance and evidence support context for a specific Control.
+ * Calculates whether the control's vendor assurance expectations are satisfied by active, non-expired certifications.
+ */
+export function evaluateControlProcessorAssuranceSupport(
+  control: Control,
+  certs: ProcessorCertification[],
+  evidenceDocs: Evidence[] = [],
+  profiles: ProcessorProfile[] = [],
+  asOfDate: Date = new Date()
+): ControlProcessorAssuranceSupport {
+  const nowMillis = asOfDate.getTime();
+  const linkedCerts = findProcessorCertificationsForControl(control, certs);
+
+  const profileMap = new Map<string, ProcessorProfile>();
+  for (const p of profiles) {
+    profileMap.set(p.id, p);
+  }
+
+  const items: ControlProcessorAssuranceItem[] = [];
+  let validAssuranceCount = 0;
+  let expiredAssuranceCount = 0;
+
+  for (const cert of linkedCerts) {
+    if (cert.isHistoricVersion || cert.reviewStatus === 'superseded') {
+      continue;
+    }
+
+    const taxonomy = getAssuranceTaxonomy(cert.standardFamily);
+    const profile = profileMap.get(cert.processorProfileId);
+    const processorName = profile?.engagementName || cert.processorProfileId;
+
+    const expiryMillis = new Date(cert.validUntil).getTime();
+    const isCurrent = cert.status === 'active_valid' && expiryMillis > nowMillis;
+    const isSufficient = !cert.isInsufficient && cert.reviewStatus === 'accepted' && !cert.hasMajorDeficiencies;
+
+    if (isCurrent && isSufficient) {
+      validAssuranceCount++;
+    } else {
+      expiredAssuranceCount++;
+    }
+
+    const attachedEvidences = (cert.linkedEvidenceIds || [])
+      .map((evId) => evidenceDocs.find((e) => e.id === evId))
+      .filter((e): e is Evidence => e !== undefined && e !== null && e.status === 'valid')
+      .map((e) => ({
+        id: e.id,
+        title: e.title,
+        category: e.category,
+        fileHashSha256: e.fileHashSha256 || null,
+      }));
+
+    items.push({
+      certificationId: cert.id,
+      processorProfileId: cert.processorProfileId,
+      processorName,
+      standardFamily: cert.standardFamily,
+      standardDisplayName: taxonomy.displayName,
+      certificateOrReportNumber: cert.certificateOrReportNumber,
+      status: cert.status,
+      reviewStatus: cert.reviewStatus,
+      validFrom: cert.validFrom,
+      validUntil: cert.validUntil,
+      isCurrent,
+      isSufficient,
+      hasAttachedEvidence: attachedEvidences.length > 0,
+      evidenceDocuments: attachedEvidences,
+      unresolvedFindingsCount: cert.unresolvedFindingsCount || 0,
+      hasMajorDeficiencies: cert.hasMajorDeficiencies || false,
+    });
+  }
+
+  // Group by processor
+  const processorGroupMap = new Map<string, ControlProcessorAssuranceItem[]>();
+  for (const item of items) {
+    if (!processorGroupMap.has(item.processorProfileId)) {
+      processorGroupMap.set(item.processorProfileId, []);
+    }
+    processorGroupMap.get(item.processorProfileId)!.push(item);
+  }
+
+  const supportingProcessors: SupportingProcessorAssuranceGroup[] = [];
+  for (const [pId, groupItems] of processorGroupMap.entries()) {
+    const profile = profileMap.get(pId);
+    const hasCurrent = groupItems.some((i) => i.isCurrent && i.isSufficient);
+    supportingProcessors.push({
+      processorProfileId: pId,
+      engagementName: profile?.engagementName || pId,
+      criticality: profile?.criticality || 'medium',
+      hasCurrentAssurance: hasCurrent,
+      certifications: groupItems,
+    });
+  }
+
+  const totalLinked = items.length;
+  const coverageScore = totalLinked > 0 ? Math.round((validAssuranceCount / totalLinked) * 100) : 0;
+  const hasSufficientAssurance = validAssuranceCount > 0 && validAssuranceCount === totalLinked;
+
+  return {
+    controlId: control.id,
+    controlCode: control.code,
+    controlTitle: control.title,
+    totalLinkedCertifications: totalLinked,
+    validAssuranceCount,
+    expiredAssuranceCount,
+    hasSufficientAssurance,
+    assuranceCoverageScore: coverageScore,
+    supportingProcessorsCount: supportingProcessors.length,
+    supportingProcessors,
+    items,
+  };
+}
+
+export interface ProcessorControlMatrixEntry {
+  processorProfileId: string;
+  engagementName: string;
+  criticality: ProcessorCriticality;
+  supportedControlsCount: number;
+  validControlsCount: number;
+  gapsCount: number;
+  controlSupportMap: Record<
+    string,
+    {
+      controlCode: string;
+      controlTitle: string;
+      hasCurrentAssurance: boolean;
+      certificationIds: string[];
+      standardFamilies: AssuranceStandardFamily[];
+    }
+  >;
+}
+
+/**
+ * Builds a multi-processor to controls assurance matrix.
+ * Visualizes which third-party processors provide verified assurance backing for each adopted tenant control.
+ */
+export function mapProcessorsToControlsAssuranceMatrix(
+  profiles: ProcessorProfile[],
+  certs: ProcessorCertification[],
+  controls: Control[],
+  evidenceDocs: Evidence[] = [],
+  asOfDate: Date = new Date()
+): ProcessorControlMatrixEntry[] {
+  const matrix: ProcessorControlMatrixEntry[] = [];
+
+  for (const profile of profiles) {
+    const profileCerts = certs.filter(
+      (c) => c.processorProfileId === profile.id && !c.isHistoricVersion && c.reviewStatus !== 'superseded'
+    );
+
+    const controlSupportMap: ProcessorControlMatrixEntry['controlSupportMap'] = {};
+    let validControlsCount = 0;
+    let gapsCount = 0;
+
+    for (const ctl of controls) {
+      const matchingCerts = findProcessorCertificationsForControl(ctl, profileCerts);
+
+      if (matchingCerts.length > 0) {
+        const support = evaluateControlProcessorAssuranceSupport(ctl, matchingCerts, evidenceDocs, [profile], asOfDate);
+        const hasCurrent = support.validAssuranceCount > 0;
+
+        if (hasCurrent) {
+          validControlsCount++;
+        } else {
+          gapsCount++;
+        }
+
+        controlSupportMap[ctl.id] = {
+          controlCode: ctl.code,
+          controlTitle: ctl.title,
+          hasCurrentAssurance: hasCurrent,
+          certificationIds: matchingCerts.map((c) => c.id),
+          standardFamilies: matchingCerts.map((c) => c.standardFamily),
+        };
+      }
+    }
+
+    matrix.push({
+      processorProfileId: profile.id,
+      engagementName: profile.engagementName || profile.id,
+      criticality: profile.criticality,
+      supportedControlsCount: Object.keys(controlSupportMap).length,
+      validControlsCount,
+      gapsCount,
+      controlSupportMap,
+    });
+  }
+
+  return matrix;
 }

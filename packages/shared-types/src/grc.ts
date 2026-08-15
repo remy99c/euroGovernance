@@ -147,6 +147,8 @@ export interface Control extends BaseEntity {
   lastReviewDate: string | null;
   nextReviewDate: string | null;
   implementationNotes: string;
+  processorCertificationIds?: string[]; // FKs to /tenants/{tenantId}/processor_certifications/{certId}
+  processorProfileIds?: string[]; // FKs to /tenants/{tenantId}/processor_profiles/{profileId}
 }
 
 /**
