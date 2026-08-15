@@ -289,6 +289,7 @@ export interface RecurringAssessmentSchedule extends BaseEntity {
   lastAssessmentCompletedAt?: string | null;
   nextScheduledDispatchDate: string; // ISO date
   nextAssessmentDueDate: string;     // ISO date
+  linkedControlIds?: string[];       // Foreign Keys to /tenants/{tenantId}/controls/{controlId}
   ownerUserId: string;
   createdBy: string;
   updatedBy: string;
@@ -568,4 +569,196 @@ export function validateSubmissionReview(input: unknown): ValidationResult {
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+// =============================================================================
+// 6. CONTROL SATISFACTION & TRACEABILITY ENGINE
+// =============================================================================
+
+export type ControlAssessmentSatisfactionStatus =
+  | 'satisfied'
+  | 'expired'
+  | 'missing'
+  | 'non_compliant'
+  | 'under_review';
+
+export interface ControlAssessmentSatisfactionResult {
+  controlId: string;
+  isSatisfied: boolean;
+  satisfactionStatus: ControlAssessmentSatisfactionStatus;
+  latestAssessmentRequestId?: string | null;
+  latestAssessmentTitle?: string | null;
+  latestAssessmentScorePercent?: number | null;
+  latestAssessmentCompletedAt?: string | null;
+  daysSinceAssessment?: number | null;
+  daysUntilExpiry?: number | null;
+  isExpired: boolean;
+  supportingVendorNames: string[];
+  supportingEvidenceIds: string[];
+  explanation: string;
+}
+
+export interface ControlAssessmentTraceabilityRecord {
+  controlId: string;
+  controlCode: string;
+  controlTitle: string;
+  recurringScheduleId?: string | null;
+  recurringCadence?: AssessmentRecurrenceCadence | null;
+  assessmentRequestId: string;
+  assessmentTitle: string;
+  thirdPartyName: string;
+  vendorId?: string | null;
+  processorProfileId?: string | null;
+  submissionId: string;
+  submissionDate: string;
+  reviewId?: string | null;
+  reviewDecision?: SubmissionReviewDecision | null;
+  reviewerEmail?: string | null;
+  reviewedAt?: string | null;
+  evidenceIds: string[];
+  isCompliant: boolean;
+  finalScorePercent: number;
+  satisfactionStatus: ControlAssessmentSatisfactionStatus;
+}
+
+/**
+ * Evaluates whether a control is satisfied by linked third-party assessment requests.
+ * Evaluates review acceptance, compliance score, and validity window.
+ */
+export function evaluateControlAssessmentSatisfaction(
+  controlId: string,
+  linkedRequests: ThirdPartyAssessmentRequest[],
+  options: {
+    maxValidityDays?: number; // e.g. 365 days for annual review
+    nowDate?: Date;
+  } = {}
+): ControlAssessmentSatisfactionResult {
+  const maxValidityDays = options.maxValidityDays ?? 365;
+  const now = options.nowDate ? options.nowDate.getTime() : Date.now();
+
+  const matchingRequests = linkedRequests.filter((r) =>
+    r.linkedControlIds?.includes(controlId)
+  );
+
+  if (matchingRequests.length === 0) {
+    return {
+      controlId,
+      isSatisfied: false,
+      satisfactionStatus: 'missing',
+      supportingVendorNames: [],
+      supportingEvidenceIds: [],
+      isExpired: false,
+      explanation: 'No third-party assessment request is linked to this control.',
+    };
+  }
+
+  // Sort by reviewedAt / updatedAt descending
+  const sorted = [...matchingRequests].sort((a, b) => {
+    const timeA = a.reviewedAt || a.submittedAt || a.updatedAt;
+    const timeB = b.reviewedAt || b.submittedAt || b.updatedAt;
+    return new Date(timeB).getTime() - new Date(timeA).getTime();
+  });
+
+  const latest = sorted[0];
+  if (!latest) {
+    return {
+      controlId,
+      isSatisfied: false,
+      satisfactionStatus: 'missing',
+      supportingVendorNames: [],
+      supportingEvidenceIds: [],
+      isExpired: false,
+      explanation: 'No assessments available.',
+    };
+  }
+
+  const completionIso = latest.reviewedAt || latest.submittedAt;
+  const completionTime = completionIso ? new Date(completionIso).getTime() : null;
+
+  let daysSinceAssessment: number | null = null;
+  let daysUntilExpiry: number | null = null;
+  let isExpired = false;
+
+  if (completionTime) {
+    daysSinceAssessment = Math.floor((now - completionTime) / (1000 * 60 * 60 * 24));
+    daysUntilExpiry = maxValidityDays - daysSinceAssessment;
+    isExpired = daysSinceAssessment > maxValidityDays;
+  }
+
+  const allSupportingVendorNames = Array.from(
+    new Set(matchingRequests.map((r) => r.thirdPartyName).filter(Boolean))
+  );
+  const allSupportingEvidenceIds = Array.from(
+    new Set(matchingRequests.flatMap((r) => r.linkedEvidenceIds || []))
+  );
+
+  if (latest.status === 'submitted' || latest.status === 'under_review') {
+    return {
+      controlId,
+      isSatisfied: false,
+      satisfactionStatus: 'under_review',
+      latestAssessmentRequestId: latest.id,
+      latestAssessmentTitle: latest.title,
+      latestAssessmentScorePercent: latest.finalScorePercent || null,
+      latestAssessmentCompletedAt: completionIso,
+      daysSinceAssessment,
+      daysUntilExpiry,
+      isExpired: false,
+      supportingVendorNames: allSupportingVendorNames,
+      supportingEvidenceIds: allSupportingEvidenceIds,
+      explanation: `Latest assessment for '${latest.thirdPartyName}' was submitted on ${completionIso?.substring(0, 10)} and is pending internal compliance review.`,
+    };
+  }
+
+  if (latest.status !== 'accepted') {
+    return {
+      controlId,
+      isSatisfied: false,
+      satisfactionStatus: 'non_compliant',
+      latestAssessmentRequestId: latest.id,
+      latestAssessmentTitle: latest.title,
+      latestAssessmentScorePercent: latest.finalScorePercent || null,
+      latestAssessmentCompletedAt: completionIso,
+      daysSinceAssessment,
+      daysUntilExpiry,
+      isExpired: false,
+      supportingVendorNames: allSupportingVendorNames,
+      supportingEvidenceIds: allSupportingEvidenceIds,
+      explanation: `Latest assessment for '${latest.thirdPartyName}' was not accepted (status: ${latest.status}).`,
+    };
+  }
+
+  if (isExpired) {
+    return {
+      controlId,
+      isSatisfied: false,
+      satisfactionStatus: 'expired',
+      latestAssessmentRequestId: latest.id,
+      latestAssessmentTitle: latest.title,
+      latestAssessmentScorePercent: latest.finalScorePercent || null,
+      latestAssessmentCompletedAt: completionIso,
+      daysSinceAssessment,
+      daysUntilExpiry,
+      isExpired: true,
+      supportingVendorNames: allSupportingVendorNames,
+      supportingEvidenceIds: allSupportingEvidenceIds,
+      explanation: `Latest accepted assessment was completed ${daysSinceAssessment} days ago (exceeds ${maxValidityDays}-day review validity). Re-assessment renewal required.`,
+    };
+  }
+
+  return {
+    controlId,
+    isSatisfied: true,
+    satisfactionStatus: 'satisfied',
+    latestAssessmentRequestId: latest.id,
+    latestAssessmentTitle: latest.title,
+    latestAssessmentScorePercent: latest.finalScorePercent || null,
+    latestAssessmentCompletedAt: completionIso,
+    daysSinceAssessment,
+    daysUntilExpiry,
+    isExpired: false,
+    supportingVendorNames: allSupportingVendorNames,
+    supportingEvidenceIds: allSupportingEvidenceIds,
+    explanation: `Satisfied by accepted assessment '${latest.title}' (${latest.thirdPartyName}) scored ${latest.finalScorePercent || 100}% on ${completionIso?.substring(0, 10)}. Valid for ${daysUntilExpiry} more days.`,
+  };
 }

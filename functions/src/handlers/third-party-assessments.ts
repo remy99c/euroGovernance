@@ -18,6 +18,7 @@ import {
   Vendor,
   VendorRiskTier,
   Risk,
+  RecurringAssessmentSchedule,
   DynamicQuestionnaireSection,
   analyzeSubmissionRiskPosture,
   validateThirdPartyAssessmentRequest,
@@ -1207,6 +1208,129 @@ export const syncAssessmentRisksToRegister = onCall<SyncAssessmentRisksToRegiste
       createdRiskIds,
       updatedRiskIds,
       postureAnalysis,
+    };
+  }
+);
+
+// -----------------------------------------------------------------------------
+// 7. LINK ASSESSMENTS & RECURRING SCHEDULES TO CONTROLS
+// -----------------------------------------------------------------------------
+
+export interface LinkAssessmentToControlsInput {
+  tenantId: string;
+  controlIds: string[];
+  requestId?: string;
+  scheduleId?: string;
+  action?: 'add' | 'replace' | 'remove';
+}
+
+export const linkAssessmentToControls = onCall<LinkAssessmentToControlsInput>(
+  async (request) => {
+    const { auth, data } = request;
+    if (!auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const { tenantId, controlIds, requestId, scheduleId, action = 'add' } = data;
+    if (!tenantId || (!requestId && !scheduleId) || !Array.isArray(controlIds)) {
+      throw new HttpsError('invalid-argument', 'tenantId, controlIds, and either requestId or scheduleId are required.');
+    }
+
+    const authContext = await requireTenantMember(request, tenantId, [
+      'tenant_admin',
+      'compliance_manager',
+      'privacy_manager',
+      'security_manager',
+      'approver',
+    ]);
+
+    const nowIso = new Date().toISOString();
+    const batch = db.batch();
+    let resultingControlIds: string[] = [];
+
+    if (requestId) {
+      const reqRef = db.collection('tenants').doc(tenantId).collection('assessment_requests').doc(requestId);
+      const reqSnap = await reqRef.get();
+
+      if (!reqSnap.exists) {
+        throw new HttpsError('not-found', 'Assessment request not found.');
+      }
+
+      const reqData = reqSnap.data() as ThirdPartyAssessmentRequest;
+      const current = new Set<string>(reqData.linkedControlIds || []);
+
+      if (action === 'replace') {
+        resultingControlIds = [...controlIds];
+      } else if (action === 'remove') {
+        for (const c of controlIds) current.delete(c);
+        resultingControlIds = Array.from(current);
+      } else {
+        // 'add'
+        for (const c of controlIds) current.add(c);
+        resultingControlIds = Array.from(current);
+      }
+
+      batch.update(reqRef, {
+        linkedControlIds: resultingControlIds,
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      });
+    }
+
+    if (scheduleId) {
+      const schedRef = db.collection('tenants').doc(tenantId).collection('recurring_schedules').doc(scheduleId);
+      const schedSnap = await schedRef.get();
+
+      if (!schedSnap.exists) {
+        throw new HttpsError('not-found', 'Recurring assessment schedule not found.');
+      }
+
+      const schedData = schedSnap.data() as RecurringAssessmentSchedule;
+      const current = new Set<string>(schedData.linkedControlIds || []);
+
+      if (action === 'replace') {
+        resultingControlIds = [...controlIds];
+      } else if (action === 'remove') {
+        for (const c of controlIds) current.delete(c);
+        resultingControlIds = Array.from(current);
+      } else {
+        // 'add'
+        for (const c of controlIds) current.add(c);
+        resultingControlIds = Array.from(current);
+      }
+
+      batch.update(schedRef, {
+        linkedControlIds: resultingControlIds,
+        updatedAt: nowIso,
+        updatedBy: authContext.userId,
+      });
+    }
+
+    await batch.commit();
+
+    await recordAuditLog({
+      tenantId,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.role,
+      entityType: 'control',
+      entityId: requestId || scheduleId || 'batch',
+      action: 'update',
+      afterSummary: {
+        action: 'assessment_control_linkage_updated',
+        requestId,
+        scheduleId,
+        controlIds: resultingControlIds,
+      },
+      source: 'cloud_function',
+      workflowContext: 'third_party_assessment_control_integration',
+    });
+
+    return {
+      success: true,
+      requestId,
+      scheduleId,
+      linkedControlIds: resultingControlIds,
     };
   }
 );
