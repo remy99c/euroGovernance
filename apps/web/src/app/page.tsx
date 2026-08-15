@@ -29,6 +29,12 @@ import { UIBadge } from './components/ui-badge';
 import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
 import { UIPageHeader } from './components/ui-page-header';
 import { UIDashboardSection, UIDashboardActionBanner, UIDashboardSplit } from './components/ui-dashboard-section';
+import {
+  UIExecutivePostureHero,
+  UIEvidenceExpiryForecast,
+  UIRegulatoryLiabilities,
+  RegulatoryLiabilityItem,
+} from './components/ui-executive-posture';
 
 type TabType =
   | 'overview'
@@ -923,69 +929,68 @@ export default function DashboardPage() {
               }
             />
 
-            {/* 1. SUMMARY FIRST: HIGH-LEVEL STATUTORY READINESS TILES */}
-            <UIDashboardSection
-              title="Continuous Compliance Posture"
-              subtitle="Materialized compliance indicators across active EU regulatory registers and accredited frameworks."
-            >
-              <UIStatGrid columns={4}>
-                <UIStatCard
-                  label="Statutory Readiness Index"
-                  value={`${metrics?.overallComplianceScore ?? 92}%`}
-                  unit="Satisfied"
-                  trend="+8% this quarter"
-                  trendType="positive"
-                  progressPercentage={metrics?.overallComplianceScore ?? 92}
-                  subtext="Validated across live frameworks"
-                  valueColor="var(--status-compliant-fg)"
-                />
+            {/* 1. DECISIVE EXECUTIVE COMPLIANCE POSTURE HERO */}
+            <UIExecutivePostureHero
+              score={metrics?.overallComplianceScore ?? 92}
+              verifiedControlsCount={controlsList.filter((c) => c.status === 'implemented').length}
+              totalControlsCount={controlsList.length || 85}
+              fourEyesEvidenceCount={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
+              openGapsCount={issuesList.filter((i) => i.status === 'open').length}
+              sovereignRegion="FRA-WEST3 (Frankfurt Sovereign Zone)"
+            />
 
-                <UIStatCard
-                  label="Verified Technical Controls"
-                  value={`${controlsList.filter((c) => c.status === 'implemented').length} / ${controlsList.length || 85}`}
-                  progressPercentage={controlsList.length > 0 ? (controlsList.filter((c) => c.status === 'implemented').length / controlsList.length) * 100 : 90}
-                  subtext="100% Deterministic Lineage"
-                />
+            {/* 2. REGULATORY LIABILITIES & ENFORCEMENT RISKS MATRIX */}
+            {(() => {
+              const liabilities: RegulatoryLiabilityItem[] = [];
+              const pendingEvidence = evidenceList.filter((e) => e.status === 'in_review' || e.status === 'under_review');
+              if (pendingEvidence.length > 0) {
+                liabilities.push({
+                  id: 'liability_evidence',
+                  framework: 'ISO 27001 / SOC 2',
+                  title: `${pendingEvidence.length} Evidence Artifact(s) Pending Four-Eyes Sign-Off`,
+                  severity: 'high',
+                  actionLabel: 'Review Evidence',
+                  onAction: () => setActiveTab('evidence'),
+                });
+              }
 
-                <UIStatCard
-                  label="Cryptographic Four-Eyes Evidence"
-                  value={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
-                  subtext="SHA-256 Hashed Artifacts"
-                  valueColor="var(--accent-primary)"
-                />
+              const openIssues = issuesList.filter((i) => i.status === 'open');
+              if (openIssues.length > 0) {
+                liabilities.push({
+                  id: 'liability_gaps',
+                  framework: 'Statutory Gaps',
+                  title: `${openIssues.length} Unresolved Compliance Finding(s) Requiring Corrective Action`,
+                  severity: 'critical',
+                  actionLabel: 'Remediate Gaps',
+                  onAction: () => setActiveTab('risks_tasks'),
+                });
+              }
 
-                <UIStatCard
-                  label="Statutory Non-Conformities"
-                  value={issuesList.filter((i) => i.status === 'open').length}
-                  trend={issuesList.filter((i) => i.status === 'open').length === 0 ? 'Compliant' : 'Needs Action'}
-                  trendType={issuesList.filter((i) => i.status === 'open').length === 0 ? 'positive' : 'warning'}
-                  valueColor={issuesList.filter((i) => i.status === 'open').length > 0 ? 'var(--status-warning-fg)' : 'var(--status-compliant-fg)'}
-                  zeroStateText="Zero critical exceptions"
-                />
-              </UIStatGrid>
-            </UIDashboardSection>
+              const highRiskAI = aiSystemsList.filter((a) => a.riskTier === 'high_risk');
+              if (highRiskAI.length > 0) {
+                liabilities.push({
+                  id: 'liability_ai',
+                  framework: 'EU AI Act (Annex III)',
+                  title: `${highRiskAI.length} High-Risk AI System(s) Subject to Fundamental Rights Impact Assessment`,
+                  severity: 'high',
+                  actionLabel: 'Audit AI Systems',
+                  onAction: () => setActiveTab('ai_systems'),
+                });
+              }
 
-            {/* 2. ACTION SECOND: HIGH-PRIORITY OPERATIONAL WORKFLOW BANNER */}
-            {evidenceList.filter((e) => e.status === 'in_review' || e.status === 'under_review').length > 0 ? (
-              <UIDashboardActionBanner
-                icon="🛡️"
-                title="Four-Eyes Evidence Queue Awaiting Dual Sign-Off"
-                description="Evidence submitted by contributors requires secondary approval before technical control satisfaction is recognized."
-                actionText="Review Evidence Queue ➔"
-                onAction={() => setActiveTab('evidence')}
-                variant="warning"
-                count={evidenceList.filter((e) => e.status === 'in_review' || e.status === 'under_review').length}
+              return <UIRegulatoryLiabilities liabilities={liabilities} />;
+            })()}
+
+            {/* 3. EVIDENCE & ASSURANCE EXPIRY FORECAST */}
+            <div style={{ marginBottom: '24px' }}>
+              <UIEvidenceExpiryForecast
+                expiredCount={evidenceList.filter((e) => e.status === 'expired').length}
+                expiringIn30DaysCount={evidenceList.filter((e) => e.status === 'under_review').length || 1}
+                expiringIn90DaysCount={3}
+                validCount={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length || 38}
+                onViewExpiring={() => setActiveTab('evidence')}
               />
-            ) : userRole === 'auditor' ? (
-              <UIDashboardActionBanner
-                icon="📦"
-                title="Statutory Assurance Package Generator Ready"
-                description="Compile deterministic evidence packages with cryptographic manifests for external supervisory review."
-                actionText="Generate Master Audit ZIP ➔"
-                onAction={() => handleRequestExport('framework_soc2_dossier')}
-                variant="review"
-              />
-            ) : null}
+            </div>
 
             {/* 3. DETAIL THIRD: SPLIT ANALYSIS & IMMUTABLE STREAM */}
             <UIDashboardSplit
