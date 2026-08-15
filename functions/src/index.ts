@@ -288,3 +288,14 @@ export {
   getCertificationCompletenessSummary,
   getTenantCertificationRiskDashboard,
 } from './handlers/certifications.js';
+
+// Processor Assessments & Due Diligence Handlers
+export {
+  createProcessorAssessment,
+  sendProcessorAssessment,
+  getPublicProcessorAssessment,
+  savePublicProcessorAssessmentDraft,
+  submitPublicProcessorAssessment,
+  reviewProcessorAssessment,
+  renewRecurringProcessorAssessment,
+} from './handlers/processor-assessments.js';

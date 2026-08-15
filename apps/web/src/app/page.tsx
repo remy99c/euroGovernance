@@ -21,6 +21,7 @@ import ProcessorGovernanceHub from './processor-governance-hub';
 import ProcessorInventory from './processor-inventory';
 import ProcessorAssuranceInventory from './processor-assurance-inventory';
 import { CertificationsManager } from './certifications-manager';
+import { ProcessorAssessmentWorkspace } from './processor-assessment-workspace';
 
 type TabType =
   | 'overview'
@@ -34,6 +35,7 @@ type TabType =
   | 'gdpr'
   | 'processor_inventory'
   | 'processor_assurance_inventory'
+  | 'processor_assessments'
   | 'processor_hub'
   | 'processor_transfers'
   | 'ai_systems'
@@ -64,6 +66,7 @@ export default function DashboardPage() {
   const [exportJobsList, setExportJobsList] = useState<any[]>([]);
   const [adoptedFrameworksList, setAdoptedFrameworksList] = useState<any[]>([]);
   const [certificationsList, setCertificationsList] = useState<any[]>([]);
+  const [assessmentsList, setAssessmentsList] = useState<any[]>([]);
 
   const showNotice = (msg: string) => {
     setActionNotice(msg);
@@ -217,6 +220,15 @@ export default function DashboardPage() {
       (err) => console.warn('Frameworks snapshot notice:', err.message)
     );
 
+    // Processor Assessments & Questionnaires
+    const unsubAssessments = onSnapshot(
+      collection(db, 'tenants', tenantId, 'processor_assessments'),
+      (snap) => {
+        setAssessmentsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Processor assessments snapshot notice:', err.message)
+    );
+
     return () => {
       unsubMetrics();
       unsubAudit();
@@ -233,6 +245,7 @@ export default function DashboardPage() {
       unsubMembers();
       unsubExports();
       unsubFrameworks();
+      unsubAssessments();
     };
   }, [tenantId, user]);
 
@@ -344,7 +357,88 @@ export default function DashboardPage() {
     }
   };
 
-  // Actions: Classify AI System
+  // Actions: Processor Assessment Handlers
+  const handleCreateAssessment = async (assessmentData: any, autoSend: boolean) => {
+    setLoadingAction('create_assessment');
+    try {
+      const fn = httpsCallable(functions, 'createProcessorAssessment');
+      const res: any = await fn({
+        tenantId,
+        ...assessmentData,
+        autoSend,
+      });
+      showNotice(`✅ Processor assessment "${assessmentData.title}" created successfully!`);
+      return res.data;
+    } catch (err: any) {
+      showNotice(`❌ Assessment creation failed: ${err.message}`);
+      throw err;
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleSendAssessment = async (assessmentId: string) => {
+    setLoadingAction(`send_${assessmentId}`);
+    try {
+      const fn = httpsCallable(functions, 'sendProcessorAssessment');
+      const res: any = await fn({ tenantId, assessmentId });
+      showNotice(`✅ Assessment access link dispatched to ${res.data.respondentEmail}!`);
+      return res.data;
+    } catch (err: any) {
+      showNotice(`❌ Send failed: ${err.message}`);
+      throw err;
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleReviewAssessment = async (
+    assessmentId: string,
+    decision: 'start_review' | 'accept' | 'reject' | 'request_revision',
+    reviewNotes?: string,
+    rejectionReason?: string,
+    revisionRequestNotes?: string,
+    questionReviews?: Record<string, any>
+  ) => {
+    setLoadingAction(`review_${assessmentId}`);
+    try {
+      const fn = httpsCallable(functions, 'reviewProcessorAssessment');
+      const res: any = await fn({
+        tenantId,
+        assessmentId,
+        decision,
+        reviewNotes,
+        rejectionReason,
+        revisionRequestNotes,
+        questionReviews,
+      });
+      showNotice(`✅ Assessment review updated! New status: ${res.data.status.toUpperCase()}, Score: ${res.data.score}%.`);
+    } catch (err: any) {
+      showNotice(`❌ Review failed: ${err.message}`);
+      throw err;
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleRenewAssessment = async (previousAssessmentId: string, dueDate: string) => {
+    setLoadingAction(`renew_${previousAssessmentId}`);
+    try {
+      const fn = httpsCallable(functions, 'renewRecurringProcessorAssessment');
+      const res: any = await fn({
+        tenantId,
+        previousAssessmentId,
+        dueDate,
+      });
+      showNotice(`✅ Recurring assessment renewed! Prior version archived as superseded.`);
+      return res.data;
+    } catch (err: any) {
+      showNotice(`❌ Renewal failed: ${err.message}`);
+      throw err;
+    } finally {
+      setLoadingAction(null);
+    }
+  };
   const handleClassifyAI = async (aiSystemId: string) => {
     const isProhibited = window.confirm('Does this system perform biometric categorization or cognitive manipulation? (OK = Yes, Cancel = No)');
     const isAnnex3 = window.confirm('Is this system used in credit scoring, employment, or critical infrastructure? (OK = Yes, Cancel = No)');
@@ -501,6 +595,7 @@ export default function DashboardPage() {
               { id: 'gdpr', label: '🇪🇺 GDPR & Privacy' },
               { id: 'processor_inventory', label: '📋 Processor Inventory' },
               { id: 'processor_assurance_inventory', label: '🛡️ Assurance Inventory' },
+              { id: 'processor_assessments', label: '📝 Due Diligence & Questionnaires' },
               { id: 'processor_hub', label: '🏢 Processor Hub' },
               { id: 'processor_transfers', label: '🌍 Processor Transfers' },
               { id: 'ai_systems', label: '🤖 EU AI Act Register' },
@@ -1164,6 +1259,21 @@ export default function DashboardPage() {
           />
         )}
 
+        {/* TAB 5B3: PROCESSOR DUE DILIGENCE & RECURRING ASSESSMENTS */}
+        {activeTab === 'processor_assessments' && (
+          <ProcessorAssessmentWorkspace
+            tenantId={tenantId}
+            currentUserId={user?.uid || ''}
+            currentUserRole={userRole}
+            assessments={assessmentsList}
+            onCreateAssessment={handleCreateAssessment}
+            onSendAssessment={handleSendAssessment}
+            onReviewAssessment={handleReviewAssessment}
+            onRenewAssessment={handleRenewAssessment}
+            onRequestExport={(exportType) => handleRequestExport(exportType)}
+          />
+        )}
+
         {/* TAB 5C: PROCESSOR GOVERNANCE OPERATIONAL HUB */}
         {activeTab === 'processor_hub' && (
           <ProcessorGovernanceHub
@@ -1436,6 +1546,18 @@ export default function DashboardPage() {
                 style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
                 📊 GDPR ROPA
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_assessment_report')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📊 Processor Assessment Report
+              </button>
+              <button
+                onClick={() => handleRequestExport('processor_assessment_summary_matrix')}
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                📑 Due Diligence Matrix
               </button>
               <button
                 onClick={() => handleRequestExport('eu_ai_act_technical_file_pdf')}

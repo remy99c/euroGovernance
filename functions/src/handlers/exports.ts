@@ -16,6 +16,7 @@ import {
   ROPAEntry,
   Certification,
   ProcessorCertification,
+  ProcessorAssessment,
   synthesizeProcessorAssuranceInventory,
   generateProcessorAssuranceRegisterExportPayload,
   generateProcessorExpiringCertificationsExportPayload,
@@ -23,6 +24,8 @@ import {
   generateProcessorByCertificationTypeMatrixExportPayload,
   generateProcessorAssuranceCoverageBySystemsExportPayload,
   generateCriticalProcessorsMissingAssuranceExportPayload,
+  generateProcessorAssessmentReportPayload,
+  generateProcessorAssessmentSummaryMatrixPayload,
   evaluateProcessorEvidenceCompleteness,
   evaluateProcessorRiskFlags,
   evaluateCertificationCompleteness,
@@ -1057,6 +1060,28 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
       });
 
       fileName = `critical_processors_missing_assurance_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'processor_assessment_report') {
+      const assessSnap = await tenantRef.collection('processor_assessments').get();
+      const assessments = assessSnap.docs.map((d) => d.data() as ProcessorAssessment);
+
+      const payload = generateProcessorAssessmentReportPayload(assessments, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `processor_assessment_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'processor_assessment_summary_matrix') {
+      const assessSnap = await tenantRef.collection('processor_assessments').get();
+      const assessments = assessSnap.docs.map((d) => d.data() as ProcessorAssessment);
+
+      const payload = generateProcessorAssessmentSummaryMatrixPayload(assessments, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `processor_assessment_summary_matrix_${tenantId}_${Date.now()}.json`;
       fileContent = JSON.stringify(payload, null, 2);
     } else {
       // Default: tenant_evidence_package_zip metadata package

@@ -10,3 +10,4 @@ export * from './scoping-and-harmonization.js';
 export * from './canonical-master-library.js';
 export * from './processors.js';
 export * from './certifications.js';
+export * from './processor-assessments.js';

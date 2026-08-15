@@ -38,7 +38,9 @@ export type ExportType =
   | 'processor_expired_insufficient_assurance_report'
   | 'processor_by_certification_type_matrix'
   | 'processor_assurance_coverage_by_systems'
-  | 'critical_processors_missing_assurance';
+  | 'critical_processors_missing_assurance'
+  | 'processor_assessment_report'
+  | 'processor_assessment_summary_matrix';
 
 export type NotificationPriority = 'low' | 'medium' | 'high' | 'urgent';
 
@@ -75,7 +77,14 @@ export type NotificationType =
   | 'processor_cert_review_overdue'
   | 'processor_cert_stale_report'
   | 'processor_cert_missing_replacement_evidence'
-  | 'processor_cert_grace_period_expiring';
+  | 'processor_cert_grace_period_expiring'
+  | 'processor_assessment_submitted'
+  | 'processor_assessment_review_due'
+  | 'processor_assessment_overdue'
+  | 'processor_assessment_revision_requested'
+  | 'processor_assessment_accepted'
+  | 'processor_assessment_rejected'
+  | 'processor_assessment_recurring_due';
 
 /**
  * Immutable Audit Log Event (/tenants/{tenantId}/audit_logs/{logId})
