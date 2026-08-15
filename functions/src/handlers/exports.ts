@@ -30,6 +30,14 @@ import {
   evaluateProcessorRiskFlags,
   evaluateCertificationCompleteness,
   evaluateCertificationRiskFlags,
+  ThirdPartyAssessmentRequest,
+  RecurringAssessmentSchedule,
+  generateThirdPartyAssessmentInventoryExportPayload,
+  generateLatestAcceptedAssessmentRegisterExportPayload,
+  generateOverdueRecurringAssessmentsExportPayload,
+  generateAssessmentControlAssuranceExportPayload,
+  generateAssessmentOpenFollowUpsExportPayload,
+  generateProspectAssessmentsUnlinkedExportPayload,
 } from '@eurogovernance/shared-types';
 
 export interface RequestExportInput {
@@ -1082,6 +1090,75 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
       });
 
       fileName = `processor_assessment_summary_matrix_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'third_party_assessment_inventory') {
+      const reqsSnap = await tenantRef.collection('assessment_requests').get();
+      const requests = reqsSnap.docs.map((d) => d.data() as ThirdPartyAssessmentRequest);
+
+      const payload = generateThirdPartyAssessmentInventoryExportPayload(requests, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `third_party_assessment_inventory_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'latest_accepted_assessment_register') {
+      const reqsSnap = await tenantRef.collection('assessment_requests').get();
+      const requests = reqsSnap.docs.map((d) => d.data() as ThirdPartyAssessmentRequest);
+
+      const payload = generateLatestAcceptedAssessmentRegisterExportPayload(requests, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `latest_accepted_assessment_register_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'overdue_recurring_assessments_report') {
+      const reqsSnap = await tenantRef.collection('assessment_requests').get();
+      const requests = reqsSnap.docs.map((d) => d.data() as ThirdPartyAssessmentRequest);
+
+      const schedsSnap = await tenantRef.collection('recurring_schedules').get();
+      const schedules = schedsSnap.docs.map((d) => d.data() as RecurringAssessmentSchedule);
+
+      const payload = generateOverdueRecurringAssessmentsExportPayload(requests, schedules, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `overdue_recurring_assessments_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'assessment_control_assurance_report') {
+      const reqsSnap = await tenantRef.collection('assessment_requests').get();
+      const requests = reqsSnap.docs.map((d) => d.data() as ThirdPartyAssessmentRequest);
+
+      const payload = generateAssessmentControlAssuranceExportPayload(requests, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `assessment_control_assurance_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'assessment_open_follow_ups_report') {
+      const reqsSnap = await tenantRef.collection('assessment_requests').get();
+      const requests = reqsSnap.docs.map((d) => d.data() as ThirdPartyAssessmentRequest);
+
+      const payload = generateAssessmentOpenFollowUpsExportPayload(requests, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `assessment_open_follow_ups_report_${tenantId}_${Date.now()}.json`;
+      fileContent = JSON.stringify(payload, null, 2);
+    } else if (job.exportType === 'prospect_assessments_unlinked_report') {
+      const reqsSnap = await tenantRef.collection('assessment_requests').get();
+      const requests = reqsSnap.docs.map((d) => d.data() as ThirdPartyAssessmentRequest);
+
+      const payload = generateProspectAssessmentsUnlinkedExportPayload(requests, {
+        tenantId,
+        asOfDate: new Date(processingTime),
+      });
+
+      fileName = `prospect_assessments_unlinked_report_${tenantId}_${Date.now()}.json`;
       fileContent = JSON.stringify(payload, null, 2);
     } else {
       // Default: tenant_evidence_package_zip metadata package

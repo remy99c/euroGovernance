@@ -1022,3 +1022,289 @@ export function filterThirdPartyAssessments(
     return true;
   });
 }
+
+// =============================================================================
+// 8. EXPORT & REPORTING PAYLOAD GENERATORS
+// =============================================================================
+
+export interface BaseExportHeader {
+  exportType: string;
+  title: string;
+  generatedAt: string;
+  tenantId: string;
+  totalRecords: number;
+}
+
+export function generateThirdPartyAssessmentInventoryExportPayload(
+  requests: ThirdPartyAssessmentRequest[],
+  options: { tenantId: string; asOfDate?: Date }
+) {
+  const asOfDate = options.asOfDate || new Date();
+
+  return {
+    exportHeader: {
+      exportType: 'third_party_assessment_inventory',
+      title: 'Third-Party Assessment Inventory Report',
+      generatedAt: asOfDate.toISOString(),
+      tenantId: options.tenantId,
+      totalRecords: requests.length,
+    },
+    assessments: requests.map((r) => ({
+      requestId: r.id,
+      title: r.title,
+      targetType: r.targetType,
+      thirdPartyName: r.thirdPartyName,
+      vendorId: r.vendorId || null,
+      processorProfileId: r.processorProfileId || null,
+      respondentName: r.respondent?.name || '',
+      respondentEmail: r.respondent?.email || '',
+      status: r.status,
+      dueDate: r.dueDate,
+      finalScorePercent: r.finalScorePercent ?? null,
+      overallRiskRating: r.overallRiskRating ?? null,
+      isCompliant: r.isCompliant ?? null,
+      reviewedBy: r.reviewedBy || null,
+      reviewedAt: r.reviewedAt || null,
+      linkedControlIds: r.linkedControlIds || [],
+      linkedEvidenceIds: r.linkedEvidenceIds || [],
+      linkedRiskIds: r.linkedRiskIds || [],
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    })),
+  };
+}
+
+export function generateLatestAcceptedAssessmentRegisterExportPayload(
+  requests: ThirdPartyAssessmentRequest[],
+  options: { tenantId: string; asOfDate?: Date; maxValidityDays?: number }
+) {
+  const asOfDate = options.asOfDate || new Date();
+  const maxValidityDays = options.maxValidityDays || 365;
+
+  // Filter accepted assessments
+  const accepted = requests.filter((r) => r.status === 'accepted');
+
+  // Group by vendor/processor/thirdPartyName
+  const grouped = new Map<string, ThirdPartyAssessmentRequest>();
+  for (const r of accepted) {
+    const key = r.processorProfileId || r.vendorId || r.thirdPartyName;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, r);
+    } else {
+      const timeA = new Date(r.reviewedAt || r.updatedAt).getTime();
+      const timeB = new Date(existing.reviewedAt || existing.updatedAt).getTime();
+      if (timeA > timeB) {
+        grouped.set(key, r);
+      }
+    }
+  }
+
+  const latestAccepted = Array.from(grouped.values()).map((r) => {
+    const completionIso = r.reviewedAt || r.updatedAt;
+    const completionTime = new Date(completionIso).getTime();
+    const daysSince = Math.floor((asOfDate.getTime() - completionTime) / (1000 * 60 * 60 * 24));
+    const daysRemaining = maxValidityDays - daysSince;
+
+    return {
+      requestId: r.id,
+      thirdPartyName: r.thirdPartyName,
+      vendorId: r.vendorId || null,
+      processorProfileId: r.processorProfileId || null,
+      assessmentTitle: r.title,
+      finalScorePercent: r.finalScorePercent ?? 100,
+      overallRiskRating: r.overallRiskRating || 'low',
+      reviewedBy: r.reviewedBy || null,
+      reviewedAt: completionIso,
+      daysSinceCompletion: daysSince,
+      daysRemainingValidity: daysRemaining,
+      isExpired: daysSince > maxValidityDays,
+      supportingEvidenceIds: r.linkedEvidenceIds || [],
+    };
+  });
+
+  return {
+    exportHeader: {
+      exportType: 'latest_accepted_assessment_register',
+      title: 'Latest Accepted Assessment Register',
+      generatedAt: asOfDate.toISOString(),
+      tenantId: options.tenantId,
+      totalRecords: latestAccepted.length,
+    },
+    latestAssessments: latestAccepted,
+  };
+}
+
+export function generateOverdueRecurringAssessmentsExportPayload(
+  requests: ThirdPartyAssessmentRequest[],
+  schedules: RecurringAssessmentSchedule[],
+  options: { tenantId: string; asOfDate?: Date }
+) {
+  const asOfDate = options.asOfDate || new Date();
+  const nowTime = asOfDate.getTime();
+
+  const overdueRequests = requests
+    .filter((r) => ['sent', 'opened', 'in_progress'].includes(r.status) && r.dueDate && new Date(r.dueDate).getTime() < nowTime)
+    .map((r) => {
+      const dueTime = new Date(r.dueDate).getTime();
+      const daysOverdue = Math.floor((nowTime - dueTime) / (1000 * 60 * 60 * 24));
+      return {
+        itemType: 'assessment_request',
+        id: r.id,
+        title: r.title,
+        thirdPartyName: r.thirdPartyName,
+        respondentEmail: r.respondent?.email || '',
+        dueDate: r.dueDate,
+        daysOverdue,
+        ownerUserId: r.ownerUserId,
+      };
+    });
+
+  const overdueSchedules = schedules
+    .filter((s) => s.status === 'active' && s.nextAssessmentDueDate && new Date(s.nextAssessmentDueDate).getTime() < nowTime)
+    .map((s) => {
+      const dueTime = new Date(s.nextAssessmentDueDate).getTime();
+      const daysOverdue = Math.floor((nowTime - dueTime) / (1000 * 60 * 60 * 24));
+      return {
+        itemType: 'recurring_schedule',
+        id: s.id,
+        title: s.title,
+        thirdPartyName: s.thirdPartyName,
+        respondentEmail: s.contact?.email || '',
+        dueDate: s.nextAssessmentDueDate,
+        daysOverdue,
+        cadence: s.cadence,
+        ownerUserId: s.ownerUserId,
+      };
+    });
+
+  return {
+    exportHeader: {
+      exportType: 'overdue_recurring_assessments_report',
+      title: 'Overdue Third-Party Assessments & Recurring Cycles',
+      generatedAt: asOfDate.toISOString(),
+      tenantId: options.tenantId,
+      totalRecords: overdueRequests.length + overdueSchedules.length,
+    },
+    overdueRequests,
+    overdueSchedules,
+  };
+}
+
+export function generateAssessmentControlAssuranceExportPayload(
+  requests: ThirdPartyAssessmentRequest[],
+  options: { tenantId: string; asOfDate?: Date; maxValidityDays?: number }
+) {
+  const asOfDate = options.asOfDate || new Date();
+  const maxValidityDays = options.maxValidityDays || 365;
+
+  const controlLinked = requests.filter((r) => r.linkedControlIds && r.linkedControlIds.length > 0);
+
+  const mappings = controlLinked.flatMap((r) => {
+    return (r.linkedControlIds || []).map((controlId) => {
+      const satisfaction = evaluateControlAssessmentSatisfaction(controlId, [r], {
+        maxValidityDays,
+        nowDate: asOfDate,
+      });
+
+      return {
+        controlId,
+        assessmentRequestId: r.id,
+        assessmentTitle: r.title,
+        thirdPartyName: r.thirdPartyName,
+        status: r.status,
+        scorePercent: r.finalScorePercent ?? null,
+        satisfactionStatus: satisfaction.satisfactionStatus,
+        isSatisfied: satisfaction.isSatisfied,
+        isExpired: satisfaction.isExpired,
+        supportingEvidenceIds: r.linkedEvidenceIds || [],
+        reviewedAt: r.reviewedAt || null,
+        explanation: satisfaction.explanation,
+      };
+    });
+  });
+
+  return {
+    exportHeader: {
+      exportType: 'assessment_control_assurance_report',
+      title: 'Third-Party Assessment Control Assurance Report',
+      generatedAt: asOfDate.toISOString(),
+      tenantId: options.tenantId,
+      totalRecords: mappings.length,
+    },
+    controlAssuranceMappings: mappings,
+  };
+}
+
+export function generateAssessmentOpenFollowUpsExportPayload(
+  requests: ThirdPartyAssessmentRequest[],
+  options: { tenantId: string; asOfDate?: Date }
+) {
+  const asOfDate = options.asOfDate || new Date();
+
+  const followUps = requests.filter(
+    (r) =>
+      r.status === 'revision_requested' ||
+      r.status === 'rejected' ||
+      r.overallRiskRating === 'critical' ||
+      r.overallRiskRating === 'high'
+  );
+
+  return {
+    exportHeader: {
+      exportType: 'assessment_open_follow_ups_report',
+      title: 'Third-Party Assessment Open Follow-Ups & Gaps Report',
+      generatedAt: asOfDate.toISOString(),
+      tenantId: options.tenantId,
+      totalRecords: followUps.length,
+    },
+    followUpItems: followUps.map((r) => ({
+      requestId: r.id,
+      title: r.title,
+      thirdPartyName: r.thirdPartyName,
+      status: r.status,
+      overallRiskRating: r.overallRiskRating || 'unrated',
+      finalScorePercent: r.finalScorePercent ?? null,
+      dueDate: r.dueDate,
+      ownerUserId: r.ownerUserId,
+      linkedRiskIds: r.linkedRiskIds || [],
+      reviewedBy: r.reviewedBy || null,
+      reviewedAt: r.reviewedAt || null,
+    })),
+  };
+}
+
+export function generateProspectAssessmentsUnlinkedExportPayload(
+  requests: ThirdPartyAssessmentRequest[],
+  options: { tenantId: string; asOfDate?: Date }
+) {
+  const asOfDate = options.asOfDate || new Date();
+
+  const unlinkedProspects = requests.filter(
+    (r) => r.targetType === 'prospective_vendor' && !r.vendorId && !r.processorProfileId
+  );
+
+  return {
+    exportHeader: {
+      exportType: 'prospect_assessments_unlinked_report',
+      title: 'Prospect Assessments Not Yet Linked to Onboarded Vendors',
+      generatedAt: asOfDate.toISOString(),
+      tenantId: options.tenantId,
+      totalRecords: unlinkedProspects.length,
+    },
+    prospectAssessments: unlinkedProspects.map((r) => ({
+      requestId: r.id,
+      title: r.title,
+      prospectCompanyName: r.prospectCompanyName || r.thirdPartyName,
+      prospectWebsite: r.prospectWebsite || null,
+      respondentName: r.respondent?.name || '',
+      respondentEmail: r.respondent?.email || '',
+      status: r.status,
+      finalScorePercent: r.finalScorePercent ?? null,
+      overallRiskRating: r.overallRiskRating || null,
+      dueDate: r.dueDate,
+      ownerUserId: r.ownerUserId,
+      createdAt: r.createdAt,
+    })),
+  };
+}

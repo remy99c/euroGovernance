@@ -40,7 +40,13 @@ export type ExportType =
   | 'processor_assurance_coverage_by_systems'
   | 'critical_processors_missing_assurance'
   | 'processor_assessment_report'
-  | 'processor_assessment_summary_matrix';
+  | 'processor_assessment_summary_matrix'
+  | 'third_party_assessment_inventory'
+  | 'latest_accepted_assessment_register'
+  | 'overdue_recurring_assessments_report'
+  | 'assessment_control_assurance_report'
+  | 'assessment_open_follow_ups_report'
+  | 'prospect_assessments_unlinked_report';
 
 export type NotificationPriority = 'low' | 'medium' | 'high' | 'urgent';
 
