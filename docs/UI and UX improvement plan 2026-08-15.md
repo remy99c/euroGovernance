@@ -267,13 +267,149 @@ graph LR
 
 ---
 
-## 📅 5. UI/UX Modernization Roadmap & Action Plan
+## 📊 5. BI & Analytics GRC Style Guide (Drata / Vanta Benchmark)
+
+To match the authoritative, high-density, and analytics-driven user experience of industry-leading compliance platforms like **Drata** and **Vanta**, `euroGovernance` adopts a specialized **Sovereign European BI & Analytics Design System**.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 🛡️ GDPR Article 28 Assurance Posture                                 [ 30 Days ▾ ] [ Export ]│
+├───────────────────────────────┬───────────────────────────────┬─────────────────────────────┤
+│ TOTAL PROCESSORS              │ COMPLIANT & AUDIT READY       │ OPEN GAPS & OVERDUE         │
+│ 350                           │ 328 (93.7%)                   │ 22 (6.3%)                   │
+│ ▲ +12 onboarded this cycle    │ [███████████████████░░]       │ ⚠️ 4 High-Risk Unreviewed   │
+├───────────────────────────────┴───────────────────────────────┴─────────────────────────────┤
+│ PROCESSOR ASSURANCE INVENTORY                                  [ 🔍 Search ] [ Filter ▾ ]   │
+├────────┬─────────────────────────┬──────────────┬──────────────┬────────────┬───────────────┤
+│ TIER   │ PROCESSOR / VENDOR      │ ART. 28 DPA  │ TIA STATUS   │ SOC2 / ISO │ AUDIT STATUS  │
+├────────┼─────────────────────────┼──────────────┼──────────────┼────────────┼───────────────┤
+│ Tier 1 │ AWS Europe (Frankfurt)  │ [✓] Signed   │ [✓] Adequacy │ [✓] Valid  │ ● Compliant   │
+│ Tier 1 │ CloudAI Solutions BV    │ [✓] Signed   │ [✓] SCCs     │ [✓] Valid  │ ● Compliant   │
+│ Tier 2 │ Global Messaging Corp   │ [!] Expired  │ [!] Pending  │ [✕] Missing│ ● Non-Compliant│
+└────────┴─────────────────────────┴──────────────┴──────────────┴────────────┴───────────────┘
+```
+
+---
+
+### 5.1 Color Palette & Semantic Compliance Tokens
+
+The color palette prioritizes high contrast, legibility, and standardized European regulatory status signifiers:
+
+```mermaid
+graph LR
+    subgraph StatusTokens ["Semantic Status Tokens"]
+        C_COMP["<b>Compliant / Satisfied</b><br>Emerald (#10B981)<br>bg-emerald-50 / text-emerald-700"]
+        C_WARN["<b>Expiring / Action Needed</b><br>Amber (#F59E0B)<br>bg-amber-50 / text-amber-700"]
+        C_DANG["<b>Non-Compliant / Critical</b><br>Crimson (#EF4444)<br>bg-rose-50 / text-rose-700"]
+        C_REV["<b>Under Review / In Progress</b><br>Cobalt (#2563EB)<br>bg-blue-50 / text-blue-700"]
+        C_NEUT["<b>Not Applicable / Scoped Out</b><br>Slate (#64748B)<br>bg-slate-100 / text-slate-600"]
+    end
+```
+
+#### CSS Token Architecture (Light / Dark Mode):
+
+```css
+:root {
+  /* Surface & Elevation */
+  --bg-canvas: #f8fafc;        /* Slate-50: Main application canvas */
+  --bg-surface: #ffffff;       /* Pure white: Cards, tables & dialogs */
+  --bg-subtle: #f1f5f9;        /* Slate-100: Table headers & subtle fills */
+  --border-default: #e2e8f0;   /* Slate-200: Crisp 1px card/table borders */
+  --border-muted: #cbd5e1;     /* Slate-300: Active input borders */
+
+  /* Typography */
+  --text-primary: #0f172a;     /* Slate-900: High-contrast headings & primary values */
+  --text-secondary: #475569;   /* Slate-600: Descriptions & secondary labels */
+  --text-muted: #94a3b8;       /* Slate-400: Timestamps, hints & metadata */
+
+  /* Semantic Compliance Signals */
+  --status-compliant-bg: #ecfdf5;  --status-compliant-fg: #047857;  --status-compliant-dot: #10b981;
+  --status-warning-bg: #fffbeb;    --status-warning-fg: #b45309;    --status-warning-dot: #f59e0b;
+  --status-critical-bg: #fff1f2;   --status-critical-fg: #be123c;   --status-critical-dot: #f43f5e;
+  --status-review-bg: #eff6ff;     --status-review-fg: #1d4ed8;     --status-review-dot: #3b82f6;
+  --status-neutral-bg: #f8fafc;    --status-neutral-fg: #475569;    --status-neutral-dot: #94a3b8;
+}
+
+[data-theme="dark"] {
+  --bg-canvas: #0b0f19;        /* Deep midnight canvas */
+  --bg-surface: #111827;       /* Slate-900 surface */
+  --bg-subtle: #1e293b;        /* Slate-800 table headers */
+  --border-default: #1f2937;   /* Slate-800 borders */
+  --border-muted: #374151;     /* Slate-700 active borders */
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --status-compliant-bg: rgba(16, 185, 129, 0.12);  --status-compliant-fg: #34d399;
+  --status-warning-bg: rgba(245, 158, 11, 0.12);    --status-warning-fg: #fbbf24;
+  --status-critical-bg: rgba(244, 63, 94, 0.12);    --status-critical-fg: #fb7185;
+  --status-review-bg: rgba(59, 130, 246, 0.12);     --status-review-fg: #60a5fa;
+  --status-neutral-bg: rgba(100, 116, 139, 0.12);   --status-neutral-fg: #cbd5e1;
+}
+```
+
+---
+
+### 5.2 Typography & Numeric Data Rules
+
+In compliance analytics, numbers must align with mathematical precision:
+
+1. **Tabular Numeric Figures**:
+   - All compliance counts, percentage figures, scores, and dates must enforce `font-variant-numeric: tabular-nums` (`font-feature-settings: "tnum"`).
+   - This prevents jitter when numbers update live or when viewing rows in table columns.
+2. **Visual Hierarchy for Metric KPIs**:
+   - **Overline Category**: `10px`, uppercase, `font-weight: 700`, `letter-spacing: 0.08em`, `color: var(--text-muted)`.
+   - **Primary Metric Value**: `32px` (`text-3xl`), `font-weight: 800`, `letter-spacing: -0.03em`, `color: var(--text-primary)`.
+   - **Trend & Context Delta**: `12px`, `font-weight: 600`, with positive (`▲ +6%`) or negative (`▼ -2%`) indicator pills.
+
+---
+
+### 5.3 Core Analytics Components (Vanta / Drata Patterns)
+
+#### A. Segmented Readiness & Coverage Bar
+Visualizes exact framework satisfaction across four standardized states in a single clean horizontal bar:
+
+```
+[████████████████████████████░░░░░░▒▒▒▒▓▓]
+ ■ 78% Satisfied (Green)  ■ 12% In Progress (Blue)  ■ 6% Expiring Soon (Amber)  ■ 4% Non-Compliant (Red)
+```
+
+#### B. High-Density Compliance Data Table
+- **Row Height**: Compact `38px` to `42px` height allowing 15–20 rows per screen without excessive scrolling.
+- **Sticky Table Header**: Header remains locked at the top during scroll with subtle bottom border shadow.
+- **Micro Status Badges**:
+  - Compact rounded pill (`padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600;`).
+  - Contains a `6px` solid status circle dot with tinted background matching the semantic state.
+- **Slide-Over Row Inspection Drawer**:
+  - Clicking any table row slides out a detailed inspection drawer (`Sheet`) from the right (showing full questionnaire answers, uploaded evidence hashes, and review history) **without leaving the table or losing active search filters**.
+
+#### C. $5 \times 5$ Risk Heatmap & Matrix Widget
+- Interactive matrix mapping organizational risks across Likelihood (1–5) and Impact (1–5).
+- Cells display the count of active risks; clicking a cell filters the risk inventory table instantly.
+
+#### D. Metric Stat Card (BI Widget)
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 🛡️ THIRD-PARTY COMPLIANCE RATE                              │
+│                                                             │
+│ 94.2%  [ +3.8% vs last audit cycle ]                        │
+│                                                             │
+│ 284 of 301 active data processors have verified Art. 28 DPAs│
+│ ─────────────────────────────────────────────────────────── │
+│ [██████████████████████████████████████████░░░░] 284/301    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📅 6. UI/UX Modernization Roadmap & Action Plan
 
 | Phase | Milestone | Expected Impact |
 |:---:|---|---|
-| **Phase 1<br>(Quick Wins)** | • Group 17 tabs into 5 collapsible sidebar sections.<br>• Replace `window.prompt()` / `window.confirm()` with accessible modal dialogs.<br>• Add `Cmd + K` search bar in header. | Eliminates immediate visual clutter; removes disruptive browser popups. |
-| **Phase 2<br>(Onboarding)** | • Implement First-Time Login Persona Detection.<br>• Build the 4-step Admin Setup Wizard and 3-step Manager Checklist.<br>• Add empty-state illustrations with direct "Get Started" call-to-actions. | Drastically reduces time-to-value for new enterprise customers. |
-| **Phase 3<br>(Polish)** | • Implement SWR/TanStack Query caching for snappy zero-latency page transitions.<br>• Add dark/light mode toggle with refined European sovereign color palette.<br>• Mobile-responsive drawer navigation. | Enterprise-grade aesthetic polish and responsiveness. |
+| **Phase 1<br>(Quick Wins & Styling)** | • Adopt Drata/Vanta sovereign color tokens and `tabular-nums` typography.<br>• Group 17 tabs into 5 collapsible sidebar sections.<br>• Replace `window.prompt()` with slide-over drawers and accessible modals.<br>• Add `Cmd + K` search bar in header. | Eliminates immediate visual clutter; replaces disruptive browser popups with modern BI aesthetic. |
+| **Phase 2<br>(Onboarding Flows)** | • Implement First-Time Login Persona Detection.<br>• Build the 4-step Admin Setup Wizard and 3-step Manager Checklist.<br>• Add empty-state illustrations with direct "Get Started" call-to-actions. | Drastically reduces time-to-value for new enterprise customers. |
+| **Phase 3<br>(Analytics & Polish)** | • Implement Segmented Readiness Bars and $5 \times 5$ Risk Matrix widgets.<br>• Implement SWR/TanStack Query caching for snappy zero-latency page transitions.<br>• Slide-over row inspection drawers on all inventory tables. | Enterprise-grade analytic maturity and fluidity. |
 
 ---
 
