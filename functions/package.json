@@ -12,7 +12,7 @@
     "shell": "firebase functions:shell"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "20"
   },
   "dependencies": {
     "@eurogovernance/shared-types": "file:../packages/shared-types",

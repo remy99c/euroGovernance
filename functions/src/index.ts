@@ -1,3 +1,8 @@
+import { setGlobalOptions } from 'firebase-functions/v2';
+
+// Set global region to europe-west3 (Frankfurt) for all Cloud Functions v2
+setGlobalOptions({ region: 'europe-west3' });
+
 // Privileged Tenant & Membership Handlers
 export {
   syncUserProfile,
