@@ -30,6 +30,17 @@ graph TD
         AUDIT["[[AUDIT_LOG_DESIGN|Immutable Audit Logging]]"]
     end
 
+    %% Onboarding Architecture Cluster
+    subgraph OnboardingCluster ["🚀 Sovereign Onboarding System"]
+        ONB_SYS["[[ONBOARDING_SYSTEM|Onboarding System Architecture]]"]
+        ONB_MAT["[[ONBOARDING_FLOW_MATRIX|Onboarding Flow Matrix]]"]
+        ONB_ADM["[[ONBOARDING_TENANT_ADMIN|Tenant Admin Genesis Setup]]"]
+        ONB_ROL["[[ONBOARDING_ROLE_BASED_FLOWS|Specialist Role Flows]]"]
+        ONB_DAT["[[ONBOARDING_DATA_MODEL|Onboarding Data Model]]"]
+        ONB_SEC["[[ONBOARDING_SECURITY_AND_AUTHORIZATION|Onboarding Security Model]]"]
+        ONB_OPS["[[ONBOARDING_OPERATIONS_AND_SUPPORT|Operations & Support Guide]]"]
+    end
+
     %% Backend & Platform Infrastructure
     subgraph Platform ["⚙️ Backend & Platform Operations"]
         CF_PLAN["[[CLOUD_FUNCTIONS_PLAN|Cloud Functions Plan]]"]
@@ -67,12 +78,20 @@ graph TD
 
     INDEX --> Architecture
     INDEX --> Security
+    INDEX --> OnboardingCluster
     INDEX --> Platform
     INDEX --> GovernanceEngine
     INDEX --> Regulations
     INDEX --> Processors
 
     ARCH --- TENANT
+    TENANT --- ONB_SYS
+    ONB_SYS --- ONB_MAT
+    ONB_SYS --- ONB_ADM
+    ONB_SYS --- ONB_ROL
+    ONB_SYS --- ONB_DAT
+    ONB_SYS --- ONB_SEC
+    ONB_SYS --- ONB_OPS
     ARCH --- CF_PLAN
     ARCH --- FS
     FCE --- FAS
@@ -112,7 +131,16 @@ graph TD
 - [[SECURITY_RULES_AND_CLOUD_FUNCTIONS_ARCHITECTURE|Firestore Security Rules & Privileged Functions]] — Dual-layer enforcement (Rules + Cloud Functions).
 - [[AUDIT_LOG_DESIGN|Immutable Append-Only Audit Logging Subsystem]] — Tamper-evident logging and compliance attribution.
 
-### 3. Backend, Platform Operations & Testing
+### 3. Sovereign Onboarding & Persona Journeys
+- [[ONBOARDING_SYSTEM|Sovereign Onboarding System Architecture]] — Canonical overview of multi-tenant onboarding lifecycle, state machines, and trust boundaries.
+- [[ONBOARDING_FLOW_MATRIX|Onboarding Flow Matrix (All Personas)]] — Master matrix mapping authenticated user roles to entry conditions, default tabs, and verified step sequences.
+- [[ONBOARDING_TENANT_ADMIN|Tenant Admin Genesis Setup Documentation]] — Step-by-step documentation of the 5-step genesis setup flow for new tenant administrators.
+- [[ONBOARDING_ROLE_BASED_FLOWS|Specialist Role Onboarding Flows]] — Role-tailored onboarding journeys for Compliance, Privacy, AI Lead, Security Lead, Auditor, and Contributor.
+- [[ONBOARDING_DATA_MODEL|Onboarding Data Model & Persistence Schema]] — Firestore document hierarchy, schemas, TypeScript types, and example payloads for `/onboarding_state/{userId}`.
+- [[ONBOARDING_SECURITY_AND_AUTHORIZATION|Onboarding Security & Authorization Model]] — Security boundaries, membership checks, rule dependencies, threat models, and anti-tampering invariants.
+- [[ONBOARDING_OPERATIONS_AND_SUPPORT|Operations, Troubleshooting & Support Guide]] — Support runbook, state recovery procedures, role-switch behavior, and manual QA checklists.
+
+### 4. Backend, Platform Operations & Testing
 - [[CLOUD_FUNCTIONS_PLAN|Cloud Functions Architecture & API Catalog]] — Node 20 / v2 Cloud Function handlers and RBAC middleware.
 - [[backend-workflows|Core Backend State Machines & Event Workflows]] — Lifecycle transitions, validation gates, and triggers.
 - [[NOTIFICATIONS_AND_SCHEDULED_JOBS_DESIGN|In-App Notifications & Scheduled Cron Dispatchers]] — Alerting, renewal reminders, and cron jobs.
@@ -121,19 +149,19 @@ graph TD
 - [[testing|Comprehensive Testing Strategy]] — Unit, integration, security rules, and end-to-end testing approaches.
 - [[EMULATOR_AND_TEST_PLAN|Firebase Local Emulator & Rules Verification Plan]] — Local emulator test suites and isolated execution.
 
-### 4. Governance Engines, Scoping & Control Harmonization
+### 5. Governance Engines, Scoping & Control Harmonization
 - [[FRAMEWORK_AND_CONTROLS_ENGINE|Master Framework & Unified Controls Engine]] — Global governance library and control mapping.
 - [[FRAMEWORK_ADOPTION_SCOPING_AND_HARMONIZATION|Framework Adoption, Dynamic Scoping & Harmonization]] — Overlap detection, scoping questionnaires, and applicability engines.
 - [[framework-scoping-harmonization-audit-2026-08-14|Framework Scoping & Harmonization Audit]] — Implementation audit and alignment report.
 - [[domain-modules|GRC Domain Modules & Functional Boundaries]] — Module definitions and operational scope.
 
-### 5. Statutory & Regulatory Subsystems
+### 6. Statutory & Regulatory Subsystems
 - [[GDPR_MODULE_DESIGN|GDPR Compliance Subsystem (Articles 6, 28, 30, 32, 35, 44-49)]] — ROPA, DPIA, DSAR, Breach management.
 - [[EU_AI_ACT_MODULE_DESIGN|EU AI Act Compliance Subsystem (Regulation EU 2024/1689)]] — AI system risk classification, CE marking, and conformity.
 - [[EU_DATA_ACT_MODULE_DESIGN|EU Data Act Subsystem (Regulation EU 2023/2854)]] — Data sharing agreements, switching barriers, and essential requirements.
 - [[ISO_MANAGEMENT_SYSTEM_DESIGN|ISO Management Systems (ISO 27001, ISO 27701, ISO 42001)]] — Statement of Applicability (SoA), internal audits, and CAPA.
 
-### 6. Processors, Cross-Border Transfers, Evidence & Assurance
+### 7. Processors, Cross-Border Transfers, Evidence & Assurance
 - [[PROCESSOR_AND_TRANSFER_MANAGEMENT|Data Processor & Cross-Border Transfer Governance (GDPR Art. 28 & Chapter V)]] — Vendor vs Processor distinction, DPAs, SCCs, and TIAs.
 - [[THIRD_PARTY_ASSESSMENT_AND_QUESTIONNAIRE_MODULE|Third-Party Questionnaire Assessment & Vendor Due Diligence]] — Dynamic templates, secure magic links, internal reviews, risk scoring, recurring schedules, and control evidence.
 - [[PROCESSOR_CERTIFICATIONS_AND_ASSURANCE|Processor Certifications & Third-Party Assurance]] — SOC reports, ISO certs, evidence linkage, reminders, and export matrix.
