@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../lib/auth-context';
+import { useAuth, availableTenantsList } from '../lib/auth-context';
 import { db, functions } from '../lib/firebase';
 import {
   collection,
@@ -57,7 +57,7 @@ type TabType =
 
 export default function DashboardPage() {
   const { user, userRole, tenantId: currentTenantId, loginDevUser } = useAuth();
-  const [tenantId, setTenantId] = useState<string>(currentTenantId || 'tenant_acme_eu');
+  const [tenantId, setTenantId] = useState<string>(currentTenantId || 'tenant_eurocorp_de');
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [selectedHubProcessorProfileId, setSelectedHubProcessorProfileId] = useState<string | undefined>();
   const [searchQuery, setSearchQuery] = useState('');
@@ -153,7 +153,7 @@ export default function DashboardPage() {
     if (!tenantId) return;
 
     // 1. Summary Metrics
-    const metricsRef = doc(db, 'tenants', tenantId, 'summary_metrics', 'latest');
+    const metricsRef = doc(db, 'tenants', tenantId, 'summary_metrics', 'current');
     const unsubMetrics = onSnapshot(metricsRef, (snap) => {
       if (snap.exists()) setMetrics(snap.data());
     });
@@ -195,8 +195,8 @@ export default function DashboardPage() {
       setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
 
-    // 8. ROPA
-    const ropaRef = collection(db, 'tenants', tenantId, 'ropa_activities');
+    // 8. ROPA (Article 30 Activities)
+    const ropaRef = collection(db, 'tenants', tenantId, 'ropa_entries');
     const unsubRopa = onSnapshot(ropaRef, (snap) => {
       setRopaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
@@ -266,7 +266,7 @@ export default function DashboardPage() {
   const handleRecalculateMetrics = async () => {
     setLoadingAction('metrics');
     try {
-      const fn = httpsCallable(functions, 'recalculateTenantMetrics');
+      const fn = httpsCallable(functions, 'materializeTenantMetrics');
       await fn({ tenantId });
       showNotice('✅ Summary compliance metrics successfully re-materialized from live database records.');
     } catch (err: any) {
@@ -371,13 +371,13 @@ export default function DashboardPage() {
   const handleRequestExport = async (exportType: string) => {
     setLoadingAction(`export_${exportType}`);
     try {
-      const fn = httpsCallable(functions, 'requestExportPackage');
+      const fn = httpsCallable(functions, 'generateTenantEvidenceExport');
       const res: any = await fn({
         tenantId,
         exportType,
-        format: exportType.endsWith('_pdf') ? 'pdf' : exportType.endsWith('_xlsx') ? 'xlsx' : 'zip',
+        filters: {},
       });
-      showNotice(`📦 Export queued! Storage Path: ${res.data.fileStoragePath}`);
+      showNotice(`📦 Export queued & compiled! Storage Path: ${res.data.fileStoragePath || 'Generated successfully'}`);
     } catch (err: any) {
       showNotice(`❌ Export failed: ${err.message}`);
     } finally {
@@ -446,7 +446,7 @@ export default function DashboardPage() {
   const handleRenewAssessment = async (previousAssessmentId: string, dueDate: string) => {
     setLoadingAction(`renew_${previousAssessmentId}`);
     try {
-      const fn = httpsCallable(functions, 'renewRecurringAssessment');
+      const fn = httpsCallable(functions, 'renewRecurringProcessorAssessment');
       const res: any = await fn({
         tenantId,
         previousAssessmentId,
@@ -517,7 +517,7 @@ export default function DashboardPage() {
   const handleInstantiateFramework = async (frameworkId: string, frameworkName: string) => {
     setLoadingAction(`instantiate_${frameworkId}`);
     try {
-      const fn = httpsCallable(functions, 'instantiateFrameworkControls');
+      const fn = httpsCallable(functions, 'instantiateTenantFrameworkControls');
       const res: any = await fn({ tenantId, frameworkId });
       showNotice(`✅ ${frameworkName} instantiated! Added ${res.data.controlsCreatedCount} controls.`);
     } catch (err: any) {
@@ -527,12 +527,8 @@ export default function DashboardPage() {
     }
   };
 
-  // Mock available tenants
-  const availableTenants = [
-    { id: 'tenant_acme_eu', name: 'Acme Health Europe (Frankfurt)' },
-    { id: 'tenant_fintech_berlin', name: 'Berlin FinTech Sovereign AG' },
-    { id: 'tenant_cloud_paris', name: 'Paris Cloud Solutions SAS' },
-  ];
+  // Seeded available tenants from Auth Context
+  const availableTenants = availableTenantsList;
 
   // Map activeTab to Top-Level Area
   const getTopLevelArea = (tab: TabType): string => {
