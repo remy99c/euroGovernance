@@ -179,6 +179,13 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      // Onboarding State & Persona Progress (/tenants/{tenantId}/onboarding_state/{userId})
+      match /onboarding_state/{onboardingUserId} {
+        allow read: if isTenantMember(tenantId) && (request.auth.uid == onboardingUserId || isTenantAdmin(tenantId));
+        allow create, update: if isTenantMember(tenantId) && (request.auth.uid == onboardingUserId || isTenantAdmin(tenantId));
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
       // Audit Logs (Strictly Append-Only via server or audited create)
       match /audit_logs/{logId} {
         allow read: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'auditor', 'security_manager']);

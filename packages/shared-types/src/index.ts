@@ -14,3 +14,4 @@ export * from './processor-assessments.js';
 export * from './third-party-assessments.js';
 export * from './questionnaire-engine.js';
 export * from './assessment-access-tokens.js';
+export * from './onboarding.js';

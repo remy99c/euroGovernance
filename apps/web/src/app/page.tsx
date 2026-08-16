@@ -58,6 +58,11 @@ import { ClassifyAIModal } from './modals/classify-ai-modal';
 import { AdoptFrameworkModal } from './modals/adopt-framework-modal';
 import { GlobalSearchModal } from './modals/global-search-modal';
 
+// Resumable Onboarding Architecture
+import { useOnboarding } from './onboarding/use-onboarding';
+import { OnboardingProgressBanner } from './onboarding/onboarding-progress-banner';
+import { OnboardingWizardModal } from './onboarding/onboarding-wizard-modal';
+
 export type TabType =
   | 'overview'
   | 'coverage_dashboard'
@@ -85,6 +90,7 @@ export default function DashboardPage() {
 
   // Modals visibility state
   const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [onboardingWizardOpen, setOnboardingWizardOpen] = useState(false);
   const [createControlModalOpen, setCreateControlModalOpen] = useState(false);
   const [inviteMemberModalOpen, setInviteMemberModalOpen] = useState(false);
   const [approveEvidenceModal, setApproveEvidenceModal] = useState<{ open: boolean; evidenceId: string; title: string }>({
@@ -128,6 +134,20 @@ export default function DashboardPage() {
   const [adoptedFrameworksList, setAdoptedFrameworksList] = useState<any[]>([]);
   const [certificationsList, setCertificationsList] = useState<any[]>([]);
   const [assessmentsList, setAssessmentsList] = useState<any[]>([]);
+
+  // Resumable Onboarding State Hook
+  const {
+    progress: onboardingProgress,
+    flowConfig,
+    totalSteps: onboardingTotalSteps,
+    currentStepIndex: onboardingCurrentStepIndex,
+    percentComplete: onboardingPercentComplete,
+    isCompleted: onboardingIsCompleted,
+    isDismissed: onboardingIsDismissed,
+    markStepComplete: onboardingMarkStepComplete,
+    dismissBanner: onboardingDismissBanner,
+    completeOnboarding: onboardingCompleteOnboarding,
+  } = useOnboarding(tenantId, user?.uid || 'usr_admin_01', (userRole as any) || 'tenant_admin');
 
   // Action status state
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -805,11 +825,32 @@ export default function DashboardPage() {
             >
               📦 Quick Export
             </button>
+
+            <button
+              onClick={() => setOnboardingWizardOpen(true)}
+              className="btn-primary"
+              style={{ fontSize: '12px', padding: '6px 12px', fontWeight: 700 }}
+            >
+              🚀 {onboardingIsCompleted ? 'Replay Guide' : 'Onboarding Guide'}
+            </button>
           </div>
         </div>
 
         {/* Viewport Content */}
         <div style={{ padding: '28px 36px', flex: 1 }}>
+          {/* Onboarding Progress Banner */}
+          {!onboardingIsCompleted && !onboardingIsDismissed && (
+            <OnboardingProgressBanner
+              flowConfig={flowConfig}
+              currentStepIndex={onboardingCurrentStepIndex}
+              completedStepsCount={onboardingProgress?.completedStepIds?.length || 0}
+              totalSteps={onboardingTotalSteps}
+              percentComplete={onboardingPercentComplete}
+              onOpenWizard={() => setOnboardingWizardOpen(true)}
+              onDismiss={onboardingDismissBanner}
+            />
+          )}
+
           {/* Action Notice Banner */}
           {actionNotice && (
             <div
@@ -1099,6 +1140,18 @@ export default function DashboardPage() {
         ropa={ropaList}
         aiSystems={aiSystemsList}
         onSelectResult={(tab) => setActiveTab(tab as TabType)}
+      />
+
+      <OnboardingWizardModal
+        isOpen={onboardingWizardOpen}
+        onClose={() => setOnboardingWizardOpen(false)}
+        flowConfig={flowConfig}
+        currentStepIndex={onboardingCurrentStepIndex}
+        onStepComplete={onboardingMarkStepComplete}
+        onFinishOnboarding={onboardingCompleteOnboarding}
+        onNavigateToTab={(tab) => setActiveTab(tab as TabType)}
+        tenantId={tenantId}
+        onNotice={showNotice}
       />
     </div>
   );
