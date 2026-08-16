@@ -14,6 +14,12 @@ import {
   TIA,
   evaluateTransferEvidenceCompleteness,
 } from '@eurogovernance/shared-types';
+import { UIPageHeader } from './components/ui-page-header';
+import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
+import { UIFilterBar } from './components/ui-filter-bar';
+import { UIDataTable } from './components/ui-data-table';
+import { UIBadge, UIStatusBadge } from './components/ui-badge';
+import { UIEmptyState } from './components/ui-empty-state';
 
 interface ProcessorTransfersManagerProps {
   tenantId: string;
@@ -434,177 +440,104 @@ export default function ProcessorTransfersManager({
   };
 
   return (
-    <div style={{ maxWidth: '1240px', margin: '0 auto', padding: '16px 0' }}>
-      {/* 1. Header & Context */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '14px' }}>
-        <div>
-          <h1 style={{ fontSize: '22px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>🌍</span> Processor Cross-Border Transfer Governance
-          </h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Manage GDPR Chapter V restricted transfer arrangements, Standard Contractual Clauses (SCC), adequacy decisions, TIAs, and safeguard evidence.
-          </p>
-        </div>
-
-        <button
-          onClick={handleOpenCreate}
-          style={{
-            backgroundColor: 'var(--accent-blue)',
-            color: '#fff',
-            padding: '8px 16px',
-            borderRadius: '6px',
-            fontSize: '13px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-          }}
-        >
-          <span>➕</span> New Transfer Arrangement
-        </button>
-      </div>
-
-      {/* 2. Metrics & Warning Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '14px', marginBottom: '24px' }}>
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Arrangements</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>{metrics.total}</div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Restricted Transfers</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: metrics.restricted > 0 ? 'var(--status-warning)' : 'var(--status-success)', marginTop: '4px' }}>
-            {metrics.restricted}
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Active / Valid</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--status-success)', marginTop: '4px' }}>{metrics.valid}</div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Missing TIAs</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: metrics.missingTia > 0 ? 'var(--status-danger)' : 'var(--text-secondary)', marginTop: '4px' }}>
-            {metrics.missingTia}
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Evidence Follow-up</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: metrics.missingEvidence > 0 ? 'var(--status-danger)' : 'var(--text-secondary)', marginTop: '4px' }}>
-            {metrics.missingEvidence}
-          </div>
-        </div>
-      </div>
-
-      {/* 3. Processor Scope & Filter Toolbar */}
-      <div
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '8px',
-          padding: '16px',
-          marginBottom: '20px',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '14px',
-          alignItems: 'center',
-          justifyContent: 'space-between',
+    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '16px 0' }}>
+      {/* 1. Standard Page Header */}
+      <UIPageHeader
+        title="Processor Cross-Border Transfer Governance"
+        description="Manage GDPR Chapter V restricted transfer arrangements, Standard Contractual Clauses (SCC), adequacy decisions, TIAs, and safeguard evidence."
+        primaryAction={{
+          label: 'New Transfer Arrangement',
+          icon: '➕',
+          onClick: handleOpenCreate,
         }}
-      >
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-          {/* Processor Select */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Processor:</span>
-            <select
-              value={selectedProfileId}
-              onChange={(e) => setSelectedProfileId(e.target.value)}
-              style={{
-                backgroundColor: 'var(--bg-primary)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '6px',
-                padding: '6px 10px',
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
-            >
-              <option value="all">🌐 All Processors ({profiles.length})</option>
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.engagementName || p.id} ({p.processorRole})
-                </option>
-              ))}
-            </select>
-          </div>
+      />
 
-          {/* Restricted Filter */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Transfer Type:</span>
-            <select
-              value={restrictedFilter}
-              onChange={(e) => setRestrictedFilter(e.target.value as any)}
-              style={{
-                backgroundColor: 'var(--bg-primary)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '6px',
-                padding: '6px 10px',
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
-            >
-              <option value="all">All Types</option>
-              <option value="restricted">⚠️ Restricted (Third Country)</option>
-              <option value="eea">🛡️ EEA / Adequate Only</option>
-            </select>
-          </div>
-
-          {/* Mechanism Filter */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Mechanism:</span>
-            <select
-              value={mechanismFilter}
-              onChange={(e) => setMechanismFilter(e.target.value)}
-              style={{
-                backgroundColor: 'var(--bg-primary)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '6px',
-                padding: '6px 10px',
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
-            >
-              <option value="all">All Legal Mechanisms</option>
-              {MECHANISMS.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Search */}
-        <input
-          type="text"
-          placeholder="Search name, country, mechanism..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          style={{
-            backgroundColor: 'var(--bg-primary)',
-            color: 'var(--text-primary)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '6px',
-            padding: '6px 12px',
-            fontSize: '13px',
-            minWidth: '220px',
-          }}
+      {/* 2. Standardized KPI Metrics Grid */}
+      <UIStatGrid columns={5}>
+        <UIStatCard
+          label="Total Arrangements"
+          value={metrics.total}
+          subtext="Configured data pipelines"
+          valueColor="var(--accent-primary)"
         />
-      </div>
+        <UIStatCard
+          label="Restricted Transfers"
+          value={metrics.restricted}
+          subtext="Third-country destinations"
+          valueColor={metrics.restricted > 0 ? 'var(--status-warning-fg)' : 'var(--status-compliant-fg)'}
+          onClick={() => setRestrictedFilter(restrictedFilter === 'restricted' ? 'all' : 'restricted')}
+        />
+        <UIStatCard
+          label="Active & Valid"
+          value={metrics.valid}
+          subtext="Legally executed safeguards"
+          valueColor="var(--status-compliant-fg)"
+        />
+        <UIStatCard
+          label="Missing TIAs"
+          value={metrics.missingTia}
+          subtext="Schrems II assessment needed"
+          valueColor={metrics.missingTia > 0 ? 'var(--status-critical-fg)' : 'var(--text-muted)'}
+          zeroStateText="Zero missing TIAs"
+        />
+        <UIStatCard
+          label="Evidence Follow-up"
+          value={metrics.missingEvidence}
+          subtext="Unlinked safeguard files"
+          valueColor={metrics.missingEvidence > 0 ? 'var(--status-critical-fg)' : 'var(--text-muted)'}
+          zeroStateText="All evidence linked"
+        />
+      </UIStatGrid>
+
+      {/* 3. Standardized Filter Toolbar */}
+      <UIFilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search arrangements by name, country, or mechanism..."
+        filters={[
+          {
+            id: 'filter_processor',
+            label: 'Processor',
+            value: selectedProfileId,
+            options: [
+              { label: `All Processors (${profiles.length})`, value: 'all' },
+              ...profiles.map((p) => ({
+                label: `${p.engagementName || p.id} (${p.processorRole})`,
+                value: p.id,
+              })),
+            ],
+            onChange: setSelectedProfileId,
+          },
+          {
+            id: 'filter_restricted',
+            label: 'Transfer Type',
+            value: restrictedFilter,
+            options: [
+              { label: 'All Transfer Types', value: 'all' },
+              { label: 'Restricted (Third Country)', value: 'restricted' },
+              { label: 'EEA / Adequate Only', value: 'eea' },
+            ],
+            onChange: (v) => setRestrictedFilter(v as any),
+          },
+          {
+            id: 'filter_mechanism',
+            label: 'Mechanism',
+            value: mechanismFilter,
+            options: [
+              { label: 'All Legal Mechanisms', value: 'all' },
+              ...MECHANISMS.map((m) => ({ label: m.label, value: m.value })),
+            ],
+            onChange: setMechanismFilter,
+          },
+        ]}
+        hasActiveFilters={selectedProfileId !== 'all' || restrictedFilter !== 'all' || mechanismFilter !== 'all' || searchQuery.trim() !== ''}
+        onResetFilters={() => {
+          setSelectedProfileId('all');
+          setRestrictedFilter('all');
+          setMechanismFilter('all');
+          setSearchQuery('');
+        }}
+      />
 
       {/* Active Processor Context Banner */}
       {activeProfile && (

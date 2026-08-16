@@ -4,6 +4,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { functions } from '../lib/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { TenantFrameworkCoverageDashboardData } from '@eurogovernance/shared-types';
+import { UIPageHeader } from './components/ui-page-header';
+import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
+import { UIBadge } from './components/ui-badge';
 
 interface FrameworkCoverageDashboardProps {
   tenantId: string;
@@ -52,148 +55,82 @@ export default function FrameworkCoverageDashboardTab({
   });
 
   return (
-    <div style={{ maxWidth: '1240px', margin: '0 auto', padding: '24px 16px' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h1 style={{ fontSize: '22px', fontWeight: 700 }}>🌐 Multi-Framework Coverage & Gap Dashboard</h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Real-time derivation of statutory applicability, instantiated controls, harmonized reuse, and open governance gaps.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          {onNavigateToWizard && (
-            <button
-              onClick={onNavigateToWizard}
-              style={{
-                padding: '8px 14px',
-                backgroundColor: 'var(--accent-blue)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              🚀 Launch Adoption Wizard
-            </button>
-          )}
-          <button
-            onClick={loadCoverage}
-            style={{
-              padding: '8px 14px',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--text-primary)',
-              borderRadius: '6px',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            🔄 Recalculate Coverage
-          </button>
-        </div>
-      </div>
+    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '16px 0' }}>
+      {/* 1. Standard Page Header */}
+      <UIPageHeader
+        title="Multi-Framework Coverage & Gap Dashboard"
+        description="Real-time derivation of statutory applicability, instantiated controls, harmonized reuse, and open governance gaps."
+        primaryAction={
+          onNavigateToWizard
+            ? {
+                label: 'Launch Adoption Wizard',
+                icon: '🚀',
+                onClick: onNavigateToWizard,
+              }
+            : undefined
+        }
+        secondaryActions={[
+          {
+            label: 'Recalculate Coverage',
+            icon: '🔄',
+            onClick: loadCoverage,
+            variant: 'secondary',
+          },
+        ]}
+      />
 
       {/* Error Alert */}
       {error && (
-        <div style={{ padding: '14px 16px', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--status-danger)', color: 'var(--status-danger)', borderRadius: '6px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ padding: '14px 16px', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--status-critical-border)', color: 'var(--status-critical-fg)', borderRadius: '6px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{error}</span>
-          <button onClick={() => setError(null)} style={{ color: 'var(--status-danger)', fontWeight: 600, fontSize: '12px' }}>
+          <button onClick={() => setError(null)} style={{ color: 'var(--status-critical-fg)', fontWeight: 600, fontSize: '12px' }}>
             Dismiss
           </button>
         </div>
       )}
 
       {loading ? (
-        <div style={{ padding: '64px', textAlign: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-          <div style={{ display: 'inline-block', width: '32px', height: '32px', border: '3px solid var(--border-color)', borderTopColor: 'var(--accent-blue)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '14px' }} />
+        <div style={{ padding: '64px', textAlign: 'center', backgroundColor: 'var(--surface-l2-card)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
+          <div style={{ display: 'inline-block', width: '32px', height: '32px', border: '3px solid var(--border-default)', borderTopColor: 'var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '14px' }} />
           <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>Deriving framework coverage, harmonized controls, and gap metrics...</div>
         </div>
       ) : !data ? (
-        <div style={{ padding: '48px', textAlign: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '8px', border: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '13px' }}>
+        <div style={{ padding: '48px', textAlign: 'center', backgroundColor: 'var(--surface-l2-card)', borderRadius: '8px', border: '1px solid var(--border-default)', color: 'var(--text-muted)', fontSize: '13px' }}>
           No coverage data available for this tenant.
         </div>
       ) : (
         <>
           {/* TOP KPI CARDS MATRIX */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '24px' }}>
-            {/* Card 1: Adopted Frameworks */}
-            <div style={{ backgroundColor: 'var(--bg-surface)', padding: '18px 20px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                1. Adopted Frameworks
-              </div>
-              <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '6px' }}>
-                {data.adoptedFrameworksCount}
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Active statutory & standard regimes
-              </div>
-            </div>
+          <UIStatGrid columns={4}>
+            <UIStatCard
+              label="Adopted Frameworks"
+              value={data.adoptedFrameworksCount}
+              subtext="Active statutory regimes"
+              valueColor="var(--accent-primary)"
+            />
 
-            {/* Card 2: Requirements Scope Breakdown */}
-            <div style={{ backgroundColor: 'var(--bg-surface)', padding: '18px 20px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                2-5. Requirements Status
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '6px' }}>
-                <span style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                  {data.totalRequirementsCount}
-                </span>
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>total</span>
-              </div>
-              <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(16, 185, 129, 0.2)', color: 'var(--status-success)', fontWeight: 600 }}>
-                  {data.totalApplicableCount} Applicable
-                </span>
-                <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(107, 114, 128, 0.2)', color: 'var(--text-muted)', fontWeight: 600 }}>
-                  {data.totalNonApplicableCount} Excluded
-                </span>
-                <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(245, 158, 11, 0.2)', color: 'var(--status-warning)', fontWeight: 600 }}>
-                  {data.totalReviewNeededCount} Review Needed
-                </span>
-              </div>
-            </div>
+            <UIStatCard
+              label="Applicable Requirements"
+              value={`${data.totalApplicableCount} / ${data.totalRequirementsCount}`}
+              subtext={`${data.totalNonApplicableCount} Excluded • ${data.totalReviewNeededCount} Review Needed`}
+              valueColor="var(--status-compliant-fg)"
+            />
 
-            {/* Card 3: Instantiated & Harmonized Controls */}
-            <div style={{ backgroundColor: 'var(--bg-surface)', padding: '18px 20px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                6-7. Controls & Harmonization
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '6px' }}>
-                <span style={{ fontSize: '28px', fontWeight: 700, color: 'var(--status-success)' }}>
-                  {data.totalControlsCount}
-                </span>
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>controls</span>
-              </div>
-              <div style={{ fontSize: '12px', color: '#60a5fa', fontWeight: 600, marginTop: '4px' }}>
-                ✨ {data.totalHarmonizedControlsCount} Harmonized Across Regimes
-              </div>
-            </div>
+            <UIStatCard
+              label="Instantiated Controls"
+              value={data.totalControlsCount}
+              subtext={`✨ ${data.totalHarmonizedControlsCount} Harmonized Across Regimes`}
+              valueColor="var(--text-primary)"
+            />
 
-            {/* Card 4: Gaps & Missing Evidence */}
-            <div style={{ backgroundColor: 'var(--bg-surface)', padding: '18px 20px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                8. Governance Attention Indicators
-              </div>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
-                <div style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '4px', backgroundColor: data.totalOpenGapsCount > 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.15)', color: data.totalOpenGapsCount > 0 ? 'var(--status-danger)' : 'var(--status-success)', fontWeight: 600 }}>
-                  ⚠️ {data.totalOpenGapsCount} Open Gaps
-                </div>
-                <div style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '4px', backgroundColor: data.totalOverdueReviewsCount > 0 ? 'rgba(245, 158, 11, 0.2)' : 'rgba(16, 185, 129, 0.15)', color: data.totalOverdueReviewsCount > 0 ? 'var(--status-warning)' : 'var(--status-success)', fontWeight: 600 }}>
-                  ⏳ {data.totalOverdueReviewsCount} Overdue Reviews
-                </div>
-                <div style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '4px', backgroundColor: data.totalMissingEvidenceCount > 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.15)', color: data.totalMissingEvidenceCount > 0 ? 'var(--status-danger)' : 'var(--status-success)', fontWeight: 600 }}>
-                  📁 {data.totalMissingEvidenceCount} Missing Evidence
-                </div>
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                Overall Readiness: <strong>{data.overallReadinessScore}%</strong>
-              </div>
-            </div>
-          </div>
+            <UIStatCard
+              label="Readiness Index"
+              value={`${data.overallReadinessScore}%`}
+              subtext={`${data.totalOpenGapsCount} Open Gaps • ${data.totalMissingEvidenceCount} Missing Evidence`}
+              valueColor={data.overallReadinessScore >= 80 ? 'var(--status-compliant-fg)' : 'var(--status-warning-fg)'}
+              progressPercentage={data.overallReadinessScore}
+            />
+          </UIStatGrid>
 
           {/* FRAMEWORK BREAKDOWN TABLE */}
           <div style={{ backgroundColor: 'var(--bg-surface)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden', marginBottom: '24px' }}>

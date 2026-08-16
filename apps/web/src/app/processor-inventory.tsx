@@ -10,6 +10,10 @@ import {
   TransferMechanismType,
   SystemAsset,
 } from '@eurogovernance/shared-types';
+import { UIPageHeader } from './components/ui-page-header';
+import { UIStatCard, UIStatGrid } from './components/ui-stat-card';
+import { UIFilterBar } from './components/ui-filter-bar';
+import { UIBadge, UIStatusBadge, UIRiskBadge } from './components/ui-badge';
 
 interface ProcessorInventoryProps {
   tenantId: string;
@@ -145,89 +149,69 @@ export default function ProcessorInventory({
 
   return (
     <div style={{ maxWidth: '1360px', margin: '0 auto', padding: '16px 0' }}>
-      {/* 1. Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h1 style={{ fontSize: '22px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>📋</span> Processor Inventory & Multi-Dimensional Register
-          </h1>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Comprehensive filterable inventory of third-party data processors, cross-border transfer mechanisms, Schrems II TIAs, and evidence status.
-          </p>
-        </div>
+      {/* 1. Standard Page Header */}
+      <UIPageHeader
+        title="GDPR Article 28 Processor Inventory"
+        description="Comprehensive audit registry of all external data processors, sub-processors, transfer safeguards, and evidence coverage."
+        primaryAction={
+          onNavigateToTransfers
+            ? {
+                label: 'Transfer Arrangements',
+                icon: '🌍',
+                onClick: () => onNavigateToTransfers(),
+              }
+            : undefined
+        }
+        secondaryActions={[
+          {
+            label: loading ? 'Refreshing...' : 'Refresh',
+            icon: '🔄',
+            onClick: fetchInventory,
+            variant: 'secondary',
+            disabled: loading,
+          },
+        ]}
+      />
 
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button
-            onClick={fetchInventory}
-            disabled={loading}
-            style={{
-              padding: '8px 14px',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--text-primary)',
-              borderRadius: '6px',
-              fontSize: '13px',
-              cursor: 'pointer',
-            }}
-          >
-            {loading ? '🔄 Refreshing...' : '🔄 Refresh'}
-          </button>
-
-          {onNavigateToTransfers && (
-            <button
-              onClick={() => onNavigateToTransfers()}
-              style={{
-                padding: '8px 14px',
-                backgroundColor: 'var(--accent-blue)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              🌍 Transfer Arrangements
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* 2. Aggregate Metrics Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '14px', marginBottom: '24px' }}>
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Processors</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>{metrics.total}</div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Restricted Transfers</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: metrics.restricted > 0 ? 'var(--status-warning)' : 'var(--status-success)', marginTop: '4px' }}>
-            {metrics.restricted}
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Missing Evidence</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: metrics.missingEvidence > 0 ? 'var(--status-danger)' : 'var(--status-success)', marginTop: '4px' }}>
-            {metrics.missingEvidence}
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Overdue Reviews</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: metrics.overdue > 0 ? 'var(--status-danger)' : 'var(--text-secondary)', marginTop: '4px' }}>
-            {metrics.overdue}
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Critical Risk Tier</div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: metrics.criticalRisk > 0 ? 'var(--status-danger)' : 'var(--text-secondary)', marginTop: '4px' }}>
-            {metrics.criticalRisk}
-          </div>
-        </div>
-      </div>
+      {/* 2. Standardized KPI Metrics Grid */}
+      <UIStatGrid columns={5}>
+        <UIStatCard
+          label="Total Processors"
+          value={metrics.total}
+          subtext="Article 28 registry"
+          valueColor="var(--accent-primary)"
+        />
+        <UIStatCard
+          label="Restricted Transfers"
+          value={metrics.restricted}
+          subtext="Third-country recipients"
+          valueColor={metrics.restricted > 0 ? 'var(--status-warning-fg)' : 'var(--status-compliant-fg)'}
+          onClick={() => setRestrictedFilter(restrictedFilter === 'restricted' ? 'all' : 'restricted')}
+        />
+        <UIStatCard
+          label="Missing Evidence"
+          value={metrics.missingEvidence}
+          subtext="Unverified DPA/TOMs"
+          valueColor={metrics.missingEvidence > 0 ? 'var(--status-critical-fg)' : 'var(--status-compliant-fg)'}
+          zeroStateText="Zero missing evidence"
+          onClick={() => setMissingEvidenceFilter(missingEvidenceFilter === 'missing' ? 'all' : 'missing')}
+        />
+        <UIStatCard
+          label="Overdue Reviews"
+          value={metrics.overdue}
+          subtext="Past periodic review date"
+          valueColor={metrics.overdue > 0 ? 'var(--status-critical-fg)' : 'var(--text-muted)'}
+          zeroStateText="Zero overdue reviews"
+          onClick={() => setReviewStatusFilter(reviewStatusFilter === 'overdue' ? 'all' : 'overdue')}
+        />
+        <UIStatCard
+          label="Critical Risk Tier"
+          value={metrics.criticalRisk}
+          subtext="High statutory impact"
+          valueColor={metrics.criticalRisk > 0 ? 'var(--status-critical-fg)' : 'var(--text-muted)'}
+          onClick={() => setCriticalityFilter(criticalityFilter === 'critical' ? 'all' : 'critical')}
+        />
+      </UIStatGrid>
 
       {/* 3. Comprehensive Filter Toolbar */}
       <div
