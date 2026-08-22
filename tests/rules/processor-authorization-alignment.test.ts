@@ -44,12 +44,14 @@ beforeEach(async () => {
 
     // 1. Tenants
     await db.doc(`tenants/${tenantA}`).set({
+      status: 'active',
       id: tenantA,
       name: 'EuroCorp Technologies SE',
       createdAt: now,
       updatedAt: now,
     });
     await db.doc(`tenants/${tenantB}`).set({
+      status: 'active',
       id: tenantB,
       name: 'MedTech France SAS',
       createdAt: now,
@@ -295,10 +297,10 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
   // 3. Evidence Repository & Linked References
   // ---------------------------------------------------------------------------
   describe('3. Evidence & Linked References Rules', () => {
-    test('Authorized user can link processor and transfer references on evidence in under_review status', async () => {
+    test('Authorized users cannot create evidence linkage metadata directly', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/evidence/ev_scc_new`).set({
           id: 'ev_scc_new',
           tenantId: tenantA,

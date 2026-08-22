@@ -1476,7 +1476,7 @@ export default function ProcessorTransfersManager({
             </div>
 
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              Attach a verified DPA, signed Standard Contractual Clauses (SCC), TOMs audit, or ISO/SOC report to transfer{' '}
+              Link a recorded DPA, Standard Contractual Clauses (SCC), TOMs audit, or ISO/SOC report to transfer{' '}
               <strong>"{targetTransferForEvidence.name}"</strong>.
             </p>
 

@@ -49,7 +49,7 @@ describe('Evidence Repository Security Rules & Immutability Test Suite', () => {
       const adminDb = context.firestore();
 
       // Seed Tenant A
-      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, name: 'EuroCorp Technologies SE' });
+      await adminDb.doc(`tenants/${tenantA}`).set({ status: 'active', id: tenantA, name: 'EuroCorp Technologies SE' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${userAdminA}`).set({
         userId: userAdminA,
         tenantId: tenantA,
@@ -82,7 +82,7 @@ describe('Evidence Repository Security Rules & Immutability Test Suite', () => {
       });
 
       // Seed Tenant B
-      await adminDb.doc(`tenants/${tenantB}`).set({ id: tenantB, name: 'MedTech France SAS' });
+      await adminDb.doc(`tenants/${tenantB}`).set({ status: 'active', id: tenantB, name: 'MedTech France SAS' });
       await adminDb.doc(`tenants/${tenantB}/memberships/${userAdminB}`).set({
         userId: userAdminB,
         tenantId: tenantB,
@@ -123,12 +123,12 @@ describe('Evidence Repository Security Rules & Immutability Test Suite', () => {
     });
   });
 
-  // 1. Permitted Creation of Evidence & Versions
-  test('Contributor and Compliance Manager can create evidence and append new versions with status under_review', async () => {
+  // 1. Server-only creation of Evidence & Versions
+  test('Direct clients cannot create evidence metadata or append versions', async () => {
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
     // Contributor creates evidence
-    await assertSucceeds(
+    await assertFails(
       contribDb.doc(`tenants/${tenantA}/evidence/ev_pen_test`).set({
         id: 'ev_pen_test',
         tenantId: tenantA,
@@ -140,7 +140,7 @@ describe('Evidence Repository Security Rules & Immutability Test Suite', () => {
     );
 
     // Contributor appends version v2
-    await assertSucceeds(
+    await assertFails(
       contribDb.doc(`tenants/${tenantA}/evidence/${evidenceId}/versions/v2`).set({
         id: 'v2',
         tenantId: tenantA,
@@ -221,8 +221,8 @@ describe('Evidence Repository Security Rules & Immutability Test Suite', () => {
     );
   });
 
-  // 6. Contributor vs Approver Role Capabilities & Deletion Isolation
-  test('Contributor cannot mutate evidence status; Tenant Admin can delete evidence records', async () => {
+  // 6. Evidence lifecycle is server-only for every tenant role
+  test('Contributor and tenant admin cannot mutate or delete evidence directly', async () => {
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
 
@@ -237,7 +237,7 @@ describe('Evidence Repository Security Rules & Immutability Test Suite', () => {
     // Contributor attempt to delete evidence is denied
     await assertFails(contribDb.doc(`tenants/${tenantA}/evidence/${evidenceId}`).delete());
 
-    // Tenant Admin can delete evidence
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/evidence/${evidenceId}`).delete());
+    // Tenant Admin must use a future retention-aware server workflow.
+    await assertFails(adminDb.doc(`tenants/${tenantA}/evidence/${evidenceId}`).delete());
   });
 });

@@ -3,8 +3,8 @@ import './globals.css';
 import { AuthProvider } from '../lib/auth-context';
 
 export const metadata: Metadata = {
-  title: 'euroGovernance - Sovereign EU GRC SaaS',
-  description: 'Automated compliance operating system for GDPR, EU AI Act, EU Data Act, ISO 27001, and ISO 42001.',
+  title: 'euroGovernance - EU GRC Operations Platform',
+  description: 'Governance record and workflow platform for GDPR, EU AI Act, EU Data Act, ISO 27001, and ISO 42001.',
 };
 
 export default function RootLayout({

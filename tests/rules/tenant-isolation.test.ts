@@ -48,6 +48,8 @@ describe('Multi-Tenant Firestore Security Rules Isolation Tests', () => {
     // Setup Tenant B membership for User B, and Tenant A membership for User A
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
+      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+      await adminDb.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${userA}`).set({
         userId: userA,
         tenantId: tenantA,
@@ -76,6 +78,7 @@ describe('Multi-Tenant Firestore Security Rules Isolation Tests', () => {
   test('Allows Tenant A member to read Tenant A controls', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
+      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${userA}`).set({
         userId: userA,
         tenantId: tenantA,
@@ -99,6 +102,7 @@ describe('Multi-Tenant Firestore Security Rules Isolation Tests', () => {
     const auditorUser = 'user_auditor';
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
+      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${auditorUser}`).set({
         userId: auditorUser,
         tenantId: tenantA,
@@ -125,6 +129,7 @@ describe('Multi-Tenant Firestore Security Rules Isolation Tests', () => {
     const adminUser = 'user_tenant_admin';
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
+      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${adminUser}`).set({
         userId: adminUser,
         tenantId: tenantA,

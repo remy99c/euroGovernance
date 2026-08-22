@@ -2,7 +2,8 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import * as crypto from 'crypto';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import { appendAuditLogInTransaction, recordAuditLog } from '../lib/audit.js';
+import { buildDeploymentAssessmentPortalAccessUrl } from '../lib/assessment-portal-url.js';
 import { createNotification } from '../lib/notifications.js';
 import {
   ThirdPartyAssessmentRequest,
@@ -12,6 +13,7 @@ import {
   AssessmentRecurrenceCadence,
   QuestionnaireTemplate,
   AssessmentAccessToken,
+  ExternalAssessmentSubmission,
   SubmissionReview,
   SubmissionReviewDecision,
   QuestionReviewFinding,
@@ -36,6 +38,84 @@ function generateTokenPair(): { rawToken: string; tokenHash: string } {
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
   return { rawToken, tokenHash };
+}
+
+function rejectLegacyAssessmentTokenIssuance(): void {
+  throw new HttpsError(
+    'failed-precondition',
+    'Use the hardened assessment access-token commands to issue or regenerate external links.'
+  );
+}
+
+const SAFE_DOCUMENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const ASSESSMENT_RISK_TIERS = new Set<AssessmentRiskTier>(['low', 'medium', 'high', 'critical']);
+
+function assertSafeDocumentId(value: unknown, fieldName: string): asserts value is string {
+  if (typeof value !== 'string' || !SAFE_DOCUMENT_ID.test(value)) {
+    throw new HttpsError('invalid-argument', `${fieldName} must be a valid document identifier.`);
+  }
+}
+
+function boundedReviewText(value: unknown, fieldName: string, required: boolean): string | null {
+  if (value === undefined || value === null) {
+    if (required) throw new HttpsError('invalid-argument', `${fieldName} is required.`);
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new HttpsError('invalid-argument', `${fieldName} must be text.`);
+  }
+  const normalized = value.trim();
+  if ((required && normalized.length < 10) || normalized.length > 5000) {
+    throw new HttpsError(
+      'invalid-argument',
+      `${fieldName} must be ${required ? 'between 10 and 5000' : 'at most 5000'} characters.`
+    );
+  }
+  return normalized || null;
+}
+
+function validateQuestionReviewFindings(
+  value: unknown,
+  submission: ExternalAssessmentSubmission
+): Record<string, QuestionReviewFinding> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const entries = Object.entries(value);
+  if (entries.length > 500) {
+    throw new HttpsError('invalid-argument', 'questionFindings exceeds the 500-item limit.');
+  }
+
+  const normalized: Record<string, QuestionReviewFinding> = {};
+  for (const [questionId, rawFinding] of entries) {
+    if (!SAFE_DOCUMENT_ID.test(questionId) || !submission.answers[questionId]) {
+      throw new HttpsError('invalid-argument', 'Every finding must reference an answer in the bound submission.');
+    }
+    if (!rawFinding || typeof rawFinding !== 'object' || Array.isArray(rawFinding)) {
+      throw new HttpsError('invalid-argument', `Finding '${questionId}' must be an object.`);
+    }
+    const finding = rawFinding as Partial<QuestionReviewFinding>;
+    if (
+      finding.questionId !== questionId ||
+      typeof finding.questionCode !== 'string' ||
+      finding.questionCode !== submission.answers[questionId]?.questionCode ||
+      !['ok', 'concern', 'gap', 'critical_finding'].includes(finding.flag || '') ||
+      (finding.remediationRequired !== undefined && typeof finding.remediationRequired !== 'boolean')
+    ) {
+      throw new HttpsError('invalid-argument', `Finding '${questionId}' does not match the bound submission answer.`);
+    }
+    const reviewerFindingNotes = boundedReviewText(
+      finding.reviewerNotes,
+      `questionFindings.${questionId}.reviewerNotes`,
+      false
+    );
+    normalized[questionId] = {
+      questionId,
+      questionCode: finding.questionCode,
+      flag: finding.flag!,
+      reviewerNotes: reviewerFindingNotes || undefined,
+      remediationRequired: finding.remediationRequired ?? false,
+    };
+  }
+  return normalized;
 }
 
 // -----------------------------------------------------------------------------
@@ -108,38 +188,26 @@ export const createThirdPartyAssessmentRequest = onCall<CreateThirdPartyAssessme
       'security_manager',
     ]);
 
+    if (autoSend) {
+      rejectLegacyAssessmentTokenIssuance();
+    }
+
     // Fetch Template snapshot
     const templateRef = db.collection('tenants').doc(tenantId).collection('questionnaire_templates').doc(templateId);
     const templateSnap = await templateRef.get();
 
-    let templateSnapshot: QuestionnaireTemplate;
-    if (templateSnap.exists) {
-      templateSnapshot = templateSnap.data() as QuestionnaireTemplate;
-    } else {
-      // Fallback default snapshot
-      templateSnapshot = {
-        id: templateId,
-        tenantId,
-        code: 'TMPL-DEFAULT',
-        title: 'Standard Third-Party Compliance Assessment',
-        description: 'Comprehensive compliance and technical security due diligence questionnaire.',
-        version: '1.0.0',
-        status: 'published',
-        category: 'gdpr_article_28',
-        targetScope: 'any',
-        passingScoreThreshold: 70,
-        defaultValidDays: 30,
-        defaultRecurrenceCadence: 'annual',
-        sectionCount: 0,
-        questionCount: 0,
-        isSystemDefault: true,
-        sections: [],
-        ownerId: authContext.userId,
-        createdBy: authContext.userId,
-        updatedBy: authContext.userId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+    if (!templateSnap.exists) {
+      throw new HttpsError('failed-precondition', 'A published tenant questionnaire template is required.');
+    }
+    const templateSnapshot = templateSnap.data() as QuestionnaireTemplate;
+    if (
+      templateSnapshot.id !== templateId ||
+      templateSnapshot.tenantId !== tenantId ||
+      templateSnapshot.status !== 'published' ||
+      !Array.isArray(templateSnapshot.sections) ||
+      templateSnapshot.sections.length === 0
+    ) {
+      throw new HttpsError('failed-precondition', 'The questionnaire template is not published or has no questions.');
     }
 
     const requestId = `req_${crypto.randomBytes(12).toString('hex')}`;
@@ -265,7 +333,7 @@ export const createThirdPartyAssessmentRequest = onCall<CreateThirdPartyAssessme
         updatedAt: nowIso,
       });
 
-      accessUrl = `https://app.eurogovernance.eu/portal/assessments/${requestId}?tokenId=${tokenId}&token=${rawToken}`;
+      accessUrl = buildDeploymentAssessmentPortalAccessUrl({ tenantId, requestId, tokenId, rawToken });
     }
 
     batch.set(requestRef, requestDoc);
@@ -330,6 +398,8 @@ export const sendThirdPartyAssessmentRequest = onCall<SendThirdPartyAssessmentRe
       'privacy_manager',
       'security_manager',
     ]);
+
+    rejectLegacyAssessmentTokenIssuance();
 
     const reqRef = db.collection('tenants').doc(tenantId).collection('assessment_requests').doc(requestId);
     const reqSnap = await reqRef.get();
@@ -438,6 +508,9 @@ export const sendThirdPartyAssessmentRequest = onCall<SendThirdPartyAssessmentRe
       updatedBy: authContext.userId,
     });
 
+    // Validate the per-environment portal origin before committing the only
+    // copy of the raw bearer credential.
+    const accessUrl = buildDeploymentAssessmentPortalAccessUrl({ tenantId, requestId, tokenId, rawToken });
     await batch.commit();
 
     await recordAuditLog({
@@ -472,8 +545,6 @@ export const sendThirdPartyAssessmentRequest = onCall<SendThirdPartyAssessmentRe
       sourceEntityId: requestId,
       deduplicationKey: `notif_sent_${requestId}`,
     });
-
-    const accessUrl = `https://app.eurogovernance.eu/portal/assessments/${requestId}?tokenId=${tokenId}&token=${rawToken}`;
 
     return {
       success: true,
@@ -620,14 +691,12 @@ export const reviewThirdPartyAssessmentSubmission = onCall<ReviewThirdPartyAsses
       submissionId: providedSubmissionId,
       decision,
       determinedRiskTier = 'low',
-      isCompliant = decision === 'accept',
       reviewerNotes = '',
       rejectionReason = null,
       revisionInstructions = null,
       questionFindings = {},
       remediationActionPlan = null,
       reissueQuestionnaire = false,
-      validityDays = 14,
     } = data;
 
     if (!tenantId || !requestId || !decision) {
@@ -642,187 +711,162 @@ export const reviewThirdPartyAssessmentSubmission = onCall<ReviewThirdPartyAsses
       'approver',
     ]);
 
-    const reqRef = db.collection('tenants').doc(tenantId).collection('assessment_requests').doc(requestId);
-    const reqSnap = await reqRef.get();
-
-    if (!reqSnap.exists) {
-      throw new HttpsError('not-found', 'Assessment request not found.');
+    if (!['accept', 'reject', 'request_revision'].includes(decision)) {
+      throw new HttpsError('invalid-argument', 'decision must be accept, reject, or request_revision.');
+    }
+    if (!ASSESSMENT_RISK_TIERS.has(determinedRiskTier)) {
+      throw new HttpsError('invalid-argument', 'determinedRiskTier is invalid.');
+    }
+    if (reissueQuestionnaire) {
+      rejectLegacyAssessmentTokenIssuance();
+    }
+    assertSafeDocumentId(requestId, 'requestId');
+    if (providedSubmissionId !== undefined) {
+      assertSafeDocumentId(providedSubmissionId, 'submissionId');
     }
 
-    const reqData = reqSnap.data() as ThirdPartyAssessmentRequest;
-    const submissionId = providedSubmissionId || reqData.activeSubmissionId || `sub_${requestId}`;
+    const normalizedReviewerNotes = boundedReviewText(reviewerNotes, 'reviewerNotes', true)!;
+    const normalizedRejectionReason = boundedReviewText(
+      rejectionReason,
+      'rejectionReason',
+      decision === 'reject'
+    );
+    const normalizedRevisionInstructions = boundedReviewText(
+      revisionInstructions,
+      'revisionInstructions',
+      decision === 'request_revision'
+    );
+    const normalizedRemediationPlan = boundedReviewText(
+      remediationActionPlan,
+      'remediationActionPlan',
+      false
+    );
+    const isCompliant = decision === 'accept';
 
-    const subRef = db.collection('tenants').doc(tenantId).collection('assessment_submissions').doc(submissionId);
-    const subSnap = await subRef.get();
-
+    const reqRef = db.collection('tenants').doc(tenantId).collection('assessment_requests').doc(requestId);
     const nowIso = new Date().toISOString();
-    const batch = db.batch();
-
     const reviewId = `rev_${crypto.randomBytes(12).toString('hex')}`;
-
-    const reviewDoc: SubmissionReview = {
-      id: reviewId,
-      tenantId,
-      status: 'completed',
-      submissionId,
-      requestId,
-      vendorId: reqData.vendorId || null,
-      processorProfileId: reqData.processorProfileId || null,
-      thirdPartyName: reqData.thirdPartyName,
-      decision,
-      finalScorePercent: reqData.finalScorePercent || 0,
-      determinedRiskTier,
-      isCompliant,
-      rejectionReason: decision === 'reject' ? rejectionReason || reviewerNotes : null,
-      revisionInstructions: decision === 'request_revision' ? revisionInstructions || reviewerNotes : null,
-      internalNotes: reviewerNotes || null,
-      remediationActionPlan: remediationActionPlan || null,
-      questionFindings,
-      derivedRiskFlagIds: [],
-      generatedEvidenceIds: [],
-      reviewerUserId: authContext.userId,
-      reviewerEmail: authContext.email,
-      reviewedAt: nowIso,
-      ownerId: authContext.userId,
-      createdBy: authContext.userId,
-      updatedBy: authContext.userId,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-
     const reviewRef = db.collection('tenants').doc(tenantId).collection('submission_reviews').doc(reviewId);
-    batch.set(reviewRef, reviewDoc);
+    const committed = await db.runTransaction(async (transaction) => {
+      const reqSnap = await transaction.get(reqRef);
+      if (!reqSnap.exists) {
+        throw new HttpsError('not-found', 'Assessment request not found.');
+      }
+      const reqData = reqSnap.data() as ThirdPartyAssessmentRequest;
+      if (
+        reqData.id !== requestId ||
+        reqData.tenantId !== tenantId ||
+        reqData.status !== 'submitted' ||
+        !reqData.activeSubmissionId
+      ) {
+        throw new HttpsError('failed-precondition', 'Only a bound submitted assessment can be reviewed.');
+      }
+      const submissionId = providedSubmissionId || reqData.activeSubmissionId;
+      if (submissionId !== reqData.activeSubmissionId) {
+        throw new HttpsError('failed-precondition', 'submissionId does not match the request active submission.');
+      }
+      assertSafeDocumentId(submissionId, 'submissionId');
+      const subRef = db.collection('tenants').doc(tenantId).collection('assessment_submissions').doc(submissionId);
+      const subSnap = await transaction.get(subRef);
+      if (!subSnap.exists) {
+        throw new HttpsError('failed-precondition', 'The bound assessment submission does not exist.');
+      }
+      const submission = subSnap.data() as ExternalAssessmentSubmission;
+      if (
+        submission.id !== submissionId ||
+        submission.tenantId !== tenantId ||
+        submission.requestId !== requestId ||
+        submission.templateId !== reqData.templateId ||
+        submission.status !== 'submitted' ||
+        !Number.isFinite(submission.computedScorePercent) ||
+        submission.computedScorePercent < 0 ||
+        submission.computedScorePercent > 100
+      ) {
+        throw new HttpsError('failed-precondition', 'The assessment submission binding or score is invalid.');
+      }
 
-    // Update Submission Status while preserving full answer and document history
-    if (subSnap.exists) {
-      batch.update(subRef, {
+      const normalizedFindings = validateQuestionReviewFindings(questionFindings, submission);
+      const nextRequestStatus: ThirdPartyAssessmentRequest['status'] =
+        decision === 'accept'
+          ? 'accepted'
+          : decision === 'reject'
+            ? 'rejected'
+            : 'revision_requested';
+      const reviewDoc: SubmissionReview = {
+        id: reviewId,
+        tenantId,
+        status: 'completed',
+        submissionId,
+        requestId,
+        vendorId: reqData.vendorId || null,
+        processorProfileId: reqData.processorProfileId || null,
+        thirdPartyName: reqData.thirdPartyName,
+        decision,
+        finalScorePercent: submission.computedScorePercent,
+        determinedRiskTier,
+        isCompliant,
+        rejectionReason: decision === 'reject' ? normalizedRejectionReason : null,
+        revisionInstructions: decision === 'request_revision' ? normalizedRevisionInstructions : null,
+        internalNotes: normalizedReviewerNotes,
+        remediationActionPlan: normalizedRemediationPlan,
+        questionFindings: normalizedFindings,
+        derivedRiskFlagIds: [],
+        generatedEvidenceIds: [],
+        reviewerUserId: authContext.userId,
+        reviewerEmail: authContext.email,
+        reviewedAt: nowIso,
+        ownerId: authContext.userId,
+        createdBy: authContext.userId,
+        updatedBy: authContext.userId,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      transaction.create(reviewRef, reviewDoc);
+      transaction.update(subRef, {
         status: decision === 'request_revision' ? 'revision_pending' : 'reviewed',
         updatedAt: nowIso,
         updatedBy: authContext.userId,
       });
-    }
-
-    let nextRequestStatus = reqData.status;
-    let reissuedToken: string | undefined;
-    let reissuedAccessUrl: string | undefined;
-
-    if (decision === 'accept') {
-      nextRequestStatus = 'accepted';
-      batch.update(reqRef, {
-        status: 'accepted',
+      transaction.update(reqRef, {
+        status: nextRequestStatus,
         reviewedBy: authContext.userId,
         reviewedAt: nowIso,
-        isCompliant: true,
+        finalScorePercent: submission.computedScorePercent,
+        isCompliant: decision === 'request_revision' ? null : isCompliant,
         overallRiskRating: determinedRiskTier,
         updatedAt: nowIso,
         updatedBy: authContext.userId,
       });
-    } else if (decision === 'reject') {
-      nextRequestStatus = 'rejected';
-      batch.update(reqRef, {
-        status: 'rejected',
-        reviewedBy: authContext.userId,
-        reviewedAt: nowIso,
-        isCompliant: false,
-        overallRiskRating: determinedRiskTier || 'high',
-        updatedAt: nowIso,
-        updatedBy: authContext.userId,
+      appendAuditLogInTransaction(transaction, {
+        tenantId,
+        actorId: authContext.userId,
+        actorEmail: authContext.email,
+        actorRole: authContext.role,
+        entityType: 'processor_assessment',
+        entityId: requestId,
+        action: 'update',
+        beforeSummary: { status: reqData.status, submissionStatus: submission.status },
+        afterSummary: {
+          action: 'assessment_review_completed',
+          reviewId,
+          submissionId,
+          decision,
+          finalScorePercent: submission.computedScorePercent,
+          determinedRiskTier,
+          isCompliant: decision === 'request_revision' ? null : isCompliant,
+        },
+        source: 'cloud_function',
+        workflowContext: 'third_party_assessment_review',
       });
-    } else if (decision === 'request_revision') {
-      nextRequestStatus = 'revision_requested';
-      const updateReq: Partial<ThirdPartyAssessmentRequest> = {
-        status: 'revision_requested',
-        reviewedBy: authContext.userId,
-        reviewedAt: nowIso,
-        updatedAt: nowIso,
-        updatedBy: authContext.userId,
-      };
-
-      if (reissueQuestionnaire) {
-        const { rawToken, tokenHash } = generateTokenPair();
-        const newTokenId = `tok_${crypto.randomBytes(12).toString('hex')}`;
-        const tokenExpiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000).toISOString();
-
-        const tokenRecord: AssessmentAccessToken = {
-          id: newTokenId,
-          tenantId,
-          requestId,
-          templateId: reqData.templateId,
-          recipientEmail: reqData.respondent.email,
-          recipientName: reqData.respondent.name,
-          thirdPartyName: reqData.thirdPartyName,
-          tokenHash,
-          tokenType: 'multi_use_session',
-          status: 'active',
-          maxUses: 50,
-          useCount: 0,
-          expiresAt: tokenExpiresAt,
-          lastAccessedAt: null,
-          lastAccessedIpMasked: null,
-          revokedAt: null,
-          revokedBy: null,
-          revocationReason: null,
-          requireEmailVerificationCode: false,
-          issuedByUserId: authContext.userId,
-          issuedAt: nowIso,
-          ownerId: authContext.userId,
-          createdBy: authContext.userId,
-          updatedBy: authContext.userId,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        };
-
-        const tokenRef = db.collection('tenants').doc(tenantId).collection('assessment_access_tokens').doc(newTokenId);
-        batch.set(tokenRef, tokenRecord);
-
-        const globalTokenRef = db.collection('assessment_access_tokens').doc(newTokenId);
-        batch.set(globalTokenRef, {
-          tokenId: newTokenId,
-          tenantId,
-          requestId,
-          tokenHash,
-          status: 'active',
-          expiresAt: tokenExpiresAt,
-          updatedAt: nowIso,
-        });
-
-        updateReq.accessTokenHash = tokenHash;
-        updateReq.tokenExpiresAt = tokenExpiresAt;
-        updateReq.status = 'sent';
-        nextRequestStatus = 'sent';
-
-        reissuedToken = rawToken;
-        reissuedAccessUrl = `https://app.eurogovernance.eu/portal/assessments/${requestId}?tokenId=${newTokenId}&token=${rawToken}`;
-      }
-
-      batch.update(reqRef, updateReq);
-    }
-
-    await batch.commit();
-
-    await recordAuditLog({
-      tenantId,
-      actorId: authContext.userId,
-      actorEmail: authContext.email,
-      actorRole: authContext.role,
-      entityType: 'processor_assessment',
-      entityId: requestId,
-      action: 'update',
-      afterSummary: {
-        action: 'assessment_review_completed',
-        reviewId,
+      return {
+        requestStatus: nextRequestStatus,
         submissionId,
-        decision,
-        determinedRiskTier,
-        isCompliant,
-        reissueQuestionnaire,
-        reviewerNotes,
-      },
-      source: 'cloud_function',
-      workflowContext: 'third_party_assessment_review',
+        thirdPartyName: reqData.thirdPartyName,
+        notificationRecipient: reqData.ownerUserId || authContext.userId,
+      };
     });
 
-    const notifRecipient = reqData.ownerUserId || authContext.userId;
     const reviewNotifType: NotificationType =
       decision === 'accept'
         ? 'assessment_review_accepted'
@@ -832,8 +876,8 @@ export const reviewThirdPartyAssessmentSubmission = onCall<ReviewThirdPartyAsses
 
     await createNotification({
       tenantId,
-      recipientId: notifRecipient,
-      title: `Assessment Review ${decision.toUpperCase()}: ${reqData.thirdPartyName}`,
+      recipientId: committed.notificationRecipient,
+      title: `Assessment Review ${decision.toUpperCase()}: ${committed.thirdPartyName}`,
       message: `Review decision '${decision}' recorded by ${authContext.email}. Risk tier: ${determinedRiskTier.toUpperCase()}.`,
       type: reviewNotifType,
       priority: decision === 'accept' ? 'medium' : 'high',
@@ -841,15 +885,20 @@ export const reviewThirdPartyAssessmentSubmission = onCall<ReviewThirdPartyAsses
       sourceEntityType: 'processor_assessment',
       sourceEntityId: requestId,
       deduplicationKey: `notif_review_${reviewId}`,
+    }).catch((error) => {
+      console.error('Post-commit assessment review notification failed', {
+        tenantId,
+        requestId,
+        reviewId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
 
     return {
       success: true,
       reviewId,
       decision,
-      requestStatus: nextRequestStatus,
-      reissuedToken,
-      reissuedAccessUrl,
+      requestStatus: committed.requestStatus,
     };
   }
 );
@@ -1094,6 +1143,18 @@ export const syncAssessmentRisksToRegister = onCall<SyncAssessmentRisksToRegiste
     if (!tenantId || !requestId) {
       throw new HttpsError('invalid-argument', 'tenantId and requestId are required.');
     }
+    assertSafeDocumentId(requestId, 'requestId');
+    if (providedSubmissionId !== undefined) {
+      assertSafeDocumentId(providedSubmissionId, 'submissionId');
+    }
+    if (
+      riskCodesToSync !== undefined &&
+      (!Array.isArray(riskCodesToSync) ||
+        riskCodesToSync.length > 200 ||
+        riskCodesToSync.some((code) => typeof code !== 'string' || code.length === 0 || code.length > 128))
+    ) {
+      throw new HttpsError('invalid-argument', 'riskCodesToSync must contain at most 200 bounded risk codes.');
+    }
 
     const authContext = await requireTenantMember(request, tenantId, [
       'tenant_admin',
@@ -1111,7 +1172,19 @@ export const syncAssessmentRisksToRegister = onCall<SyncAssessmentRisksToRegiste
     }
 
     const reqData = reqSnap.data() as ThirdPartyAssessmentRequest;
-    const submissionId = providedSubmissionId || reqData.activeSubmissionId || `sub_${requestId}`;
+    if (
+      reqData.id !== requestId ||
+      reqData.tenantId !== tenantId ||
+      !['submitted', 'accepted', 'rejected'].includes(reqData.status) ||
+      !reqData.activeSubmissionId
+    ) {
+      throw new HttpsError('failed-precondition', 'Only a bound completed submission can produce risk records.');
+    }
+    const submissionId = providedSubmissionId || reqData.activeSubmissionId;
+    if (submissionId !== reqData.activeSubmissionId) {
+      throw new HttpsError('failed-precondition', 'submissionId does not match the request active submission.');
+    }
+    assertSafeDocumentId(submissionId, 'submissionId');
 
     const subRef = db.collection('tenants').doc(tenantId).collection('assessment_submissions').doc(submissionId);
     const subSnap = await subRef.get();
@@ -1120,7 +1193,18 @@ export const syncAssessmentRisksToRegister = onCall<SyncAssessmentRisksToRegiste
       throw new HttpsError('not-found', 'Assessment submission not found.');
     }
 
-    const subData = subSnap.data() as { answers: Record<string, any> };
+    const subData = subSnap.data() as ExternalAssessmentSubmission;
+    if (
+      subData.id !== submissionId ||
+      subData.tenantId !== tenantId ||
+      subData.requestId !== requestId ||
+      subData.templateId !== reqData.templateId ||
+      !['submitted', 'reviewed'].includes(subData.status) ||
+      !subData.answers ||
+      typeof subData.answers !== 'object'
+    ) {
+      throw new HttpsError('failed-precondition', 'The assessment submission binding or lifecycle state is invalid.');
+    }
 
     // Get Sections from template snapshot or live template
     let sections: DynamicQuestionnaireSection[] = [];

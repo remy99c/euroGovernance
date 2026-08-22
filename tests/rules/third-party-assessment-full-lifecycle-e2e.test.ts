@@ -154,12 +154,14 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
       const now = new Date('2026-08-15T00:00:00.000Z').toISOString();
 
       await db.doc(`tenants/${tenantA}`).set({
+        status: 'active',
         id: tenantA,
         name: 'EuroCorp Technologies SE',
         createdAt: now,
         updatedAt: now,
       });
       await db.doc(`tenants/${tenantB}`).set({
+        status: 'active',
         id: tenantB,
         name: 'Nordic AI Health AB',
         createdAt: now,

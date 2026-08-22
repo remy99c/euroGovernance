@@ -111,115 +111,7 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
       const decFn = httpsCallable(functions, 'listTenantApplicabilityDecisions');
       const decRes: any = await decFn({ tenantId });
       const rawDecisions: DecisionItem[] = decRes.data?.decisions || [];
-
-      // If no decisions exist yet, initialize sample defaults for rich inspection
-      if (rawDecisions.length === 0) {
-        const sampleDecisions: DecisionItem[] = [
-          {
-            id: 'dec_gdpr_art30',
-            requirementId: 'gdpr_art_30',
-            frameworkId: 'gdpr',
-            sectionCode: 'Article 30',
-            requirementTitle: 'Records of Processing Activities (ROPA)',
-            isApplicable: true,
-            status: 'applicable',
-            applicabilityType: 'statutory_mandatory',
-            decisionSource: 'auto',
-            isOverridden: false,
-            autoResult: {
-              isApplicable: true,
-              status: 'applicable',
-              matchedRuleId: 'rule_gdpr_art30_records',
-              ruleEvaluationSummary: 'Triggered because tenant confirmed processing personal data in scope.',
-              evaluatedAt: new Date().toISOString(),
-            },
-            matchedRuleId: 'rule_gdpr_art30_records',
-            ruleEvaluationSummary: 'Triggered because tenant confirmed processing personal data in scope.',
-            rationale: 'Mandatory statutory record for all EU controllers under GDPR Art. 30.',
-            assessedBy: 'system_engine',
-            assessedAt: new Date().toISOString(),
-            history: [],
-          },
-          {
-            id: 'dec_gdpr_art35',
-            requirementId: 'gdpr_art_35',
-            frameworkId: 'gdpr',
-            sectionCode: 'Article 35',
-            requirementTitle: 'Data Protection Impact Assessment (DPIA)',
-            isApplicable: false,
-            status: 'not_applicable',
-            applicabilityType: 'statutory_mandatory',
-            decisionSource: 'auto',
-            isOverridden: false,
-            autoResult: {
-              isApplicable: false,
-              status: 'not_applicable',
-              matchedRuleId: 'rule_gdpr_art35_dpia',
-              ruleEvaluationSummary: 'No large-scale processing of special category personal data declared.',
-              evaluatedAt: new Date().toISOString(),
-            },
-            matchedRuleId: 'rule_gdpr_art35_dpia',
-            ruleEvaluationSummary: 'No large-scale processing of special category personal data declared.',
-            rationale: 'Exempt unless high-risk or special category data processing is activated in scope.',
-            assessedBy: 'system_engine',
-            assessedAt: new Date().toISOString(),
-            history: [],
-          },
-          {
-            id: 'dec_ai_act_art09',
-            requirementId: 'aia_art_09',
-            frameworkId: 'eu_ai_act',
-            sectionCode: 'Article 9',
-            requirementTitle: 'Risk Management System for High-Risk AI',
-            isApplicable: false,
-            status: 'not_applicable',
-            applicabilityType: 'statutory_mandatory',
-            decisionSource: 'auto',
-            isOverridden: false,
-            autoResult: {
-              isApplicable: false,
-              status: 'not_applicable',
-              matchedRuleId: 'rule_eu_ai_act_annex3_high_risk',
-              ruleEvaluationSummary: 'highRiskAIUsage is set to false.',
-              evaluatedAt: new Date().toISOString(),
-            },
-            matchedRuleId: 'rule_eu_ai_act_annex3_high_risk',
-            ruleEvaluationSummary: 'highRiskAIUsage is set to false.',
-            rationale: 'Annex III high-risk requirements apply exclusively to high-risk AI deployments.',
-            assessedBy: 'system_engine',
-            assessedAt: new Date().toISOString(),
-            history: [],
-          },
-          {
-            id: 'dec_iso_a824',
-            requirementId: 'iso_a824',
-            frameworkId: 'iso_27001',
-            sectionCode: 'A.8.24',
-            requirementTitle: 'Use of Cryptography',
-            isApplicable: true,
-            status: 'applicable',
-            applicabilityType: 'standard_annex',
-            decisionSource: 'auto',
-            isOverridden: false,
-            autoResult: {
-              isApplicable: true,
-              status: 'applicable',
-              matchedRuleId: 'rule_iso_crypto_mandatory',
-              ruleEvaluationSummary: 'Production cloud infrastructure requires cryptographic baseline.',
-              evaluatedAt: new Date().toISOString(),
-            },
-            matchedRuleId: 'rule_iso_crypto_mandatory',
-            ruleEvaluationSummary: 'Production cloud infrastructure requires cryptographic baseline.',
-            rationale: 'Mandatory Annex A control for cloud and customer data protection.',
-            assessedBy: 'system_engine',
-            assessedAt: new Date().toISOString(),
-            history: [],
-          },
-        ];
-        setDecisions(sampleDecisions);
-      } else {
-        setDecisions(rawDecisions);
-      }
+      setDecisions(rawDecisions);
 
       // Fetch Scope Facts
       const factsFn = httpsCallable(functions, 'listTenantScopeFacts');
@@ -494,6 +386,11 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
         <div style={{ padding: '48px', textAlign: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
           <div style={{ display: 'inline-block', width: '28px', height: '28px', border: '3px solid var(--border-color)', borderTopColor: 'var(--accent-blue)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '12px' }} />
           <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Loading applicability decisions...</div>
+        </div>
+      ) : decisions.length === 0 ? (
+        <div style={{ padding: '36px', textAlign: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '8px', border: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '13px' }}>
+          <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>No applicability decisions recorded</div>
+          <div>Complete the tenant scope questionnaire and run an applicability evaluation before relying on this register.</div>
         </div>
       ) : filteredDecisions.length === 0 ? (
         <div style={{ padding: '36px', textAlign: 'center', backgroundColor: 'var(--bg-surface)', borderRadius: '8px', border: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '13px' }}>

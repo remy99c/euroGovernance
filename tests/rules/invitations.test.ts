@@ -84,10 +84,23 @@ describe('Invitation Workflow & Access Control Security Rules', () => {
 
   test('Intended recipient with matching email can read their invitation document', async () => {
     await seedTestSetup();
-    const recipientDb = testEnv.authenticatedContext(invitedUserId, { email: invitedUserEmail }).firestore();
+    const recipientDb = testEnv.authenticatedContext(invitedUserId, {
+      email: invitedUserEmail,
+      email_verified: true,
+    }).firestore();
     const inviteRef = recipientDb.doc(`invitations/${invitationId}`);
 
     await assertSucceeds(inviteRef.get());
+  });
+
+  test('Recipient with an unverified matching email CANNOT read their invitation document', async () => {
+    await seedTestSetup();
+    const recipientDb = testEnv.authenticatedContext(invitedUserId, {
+      email: invitedUserEmail,
+      email_verified: false,
+    }).firestore();
+
+    await assertFails(recipientDb.doc(`invitations/${invitationId}`).get());
   });
 
   test('Unintended user with different email CANNOT read another persons invitation', async () => {

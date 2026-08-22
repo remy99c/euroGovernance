@@ -329,7 +329,7 @@ export function CertificationsManager({
           value={certifications.filter((c) => c.status === 'active_valid').length}
           subtext="In good standing & compliant"
           valueColor="var(--status-compliant-fg)"
-          progressPercentage={certifications.length > 0 ? (certifications.filter((c) => c.status === 'active_valid').length / certifications.length) * 100 : 100}
+          progressPercentage={certifications.length > 0 ? (certifications.filter((c) => c.status === 'active_valid').length / certifications.length) * 100 : 0}
         />
 
         <UIStatCard

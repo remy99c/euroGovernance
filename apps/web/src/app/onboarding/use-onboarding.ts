@@ -19,8 +19,10 @@ export function useOnboarding(tenantId: string, userId: string, role: UserRole) 
   const [progress, setProgress] = useState<UserOnboardingProgress | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const flowConfig = PERSONA_ONBOARDING_FLOWS[role] || PERSONA_ONBOARDING_FLOWS.tenant_admin;
-  const totalSteps = flowConfig?.steps?.length || 5;
+  // Unknown or pre-auth states fail to the non-mutating viewer experience,
+  // never to an administrator workflow.
+  const flowConfig = PERSONA_ONBOARDING_FLOWS[role] || PERSONA_ONBOARDING_FLOWS.viewer;
+  const totalSteps = flowConfig.steps.length;
 
   useEffect(() => {
     if (!tenantId || !userId) {

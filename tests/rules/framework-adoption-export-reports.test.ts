@@ -43,6 +43,9 @@ beforeEach(async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
 
+    await db.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+    await db.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
+
     // Tenant A Memberships
     await db.doc(`tenants/${tenantA}/memberships/${userAdminA}`).set({
       userId: userAdminA,
@@ -90,7 +93,7 @@ describe('Framework Adoption & Applicability Export/Report Generation Suite', ()
 
   // 1. Export Authorization & Tenant Isolation (Firestore Rules)
   describe('1. Export Job Security & Role Authorization', () => {
-    test('compliance manager and auditor can request all 5 framework export types in Firestore', async () => {
+    test('compliance manager can request all 5 framework export types while direct auditor requests are denied', async () => {
       const complianceDb = testEnv.authenticatedContext(userComplianceA).firestore();
       const auditorDb = testEnv.authenticatedContext(userAuditorA).firestore();
 
@@ -124,8 +127,8 @@ describe('Framework Adoption & Applicability Export/Report Generation Suite', ()
         );
       }
 
-      // Auditor can also request exports
-      await assertSucceeds(
+      // Auditor requests are routed through an authorized backend command, never a direct client write
+      await assertFails(
         auditorDb.doc(`tenants/${tenantA}/export_jobs/job_aud_gap`).set({
           id: 'job_aud_gap',
           tenantId: tenantA,

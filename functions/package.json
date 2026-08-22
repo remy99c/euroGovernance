@@ -16,8 +16,8 @@
   },
   "dependencies": {
     "@eurogovernance/shared-types": "file:../packages/shared-types",
-    "firebase-admin": "^12.1.0",
-    "firebase-functions": "^5.0.0"
+    "firebase-admin": "14.3.0",
+    "firebase-functions": "7.3.2"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",

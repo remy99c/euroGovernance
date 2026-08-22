@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -45,6 +44,9 @@ describe('RBAC & Privileged Workflow Security Rules Enforcement', () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
 
+      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+      await adminDb.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
+
       await adminDb.doc(`tenants/${tenantA}/memberships/${userAdmin}`).set({
         userId: userAdmin,
         tenantId: tenantA,
@@ -76,12 +78,11 @@ describe('RBAC & Privileged Workflow Security Rules Enforcement', () => {
   });
 
   // 1. Evidence Approval Isolation Test
-  test('Contributor can create draft evidence with under_review, but CANNOT self-approve to valid', async () => {
+  test('Contributor CANNOT create or approve evidence directly; trusted server workflows own evidence mutations', async () => {
     const contribDb = testEnv.authenticatedContext(userContributor, { email: 'dev@eurocorp.de' }).firestore();
     const evidenceRef = contribDb.doc(`tenants/${tenantA}/evidence/ev_test_01`);
 
-    // Contributor creates draft evidence (Succeeds)
-    await assertSucceeds(
+    await assertFails(
       evidenceRef.set({
         id: 'ev_test_01',
         tenantId: tenantA,
@@ -92,7 +93,17 @@ describe('RBAC & Privileged Workflow Security Rules Enforcement', () => {
       })
     );
 
-    // Contributor tries to self-approve evidence to 'valid' directly (Must Fail)
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/evidence/ev_test_01`).set({
+        id: 'ev_test_01',
+        tenantId: tenantA,
+        title: 'Encryption Verification Log',
+        status: 'under_review',
+        createdBy: userContributor,
+        createdAt: new Date().toISOString(),
+      });
+    });
+
     await assertFails(
       evidenceRef.update({
         status: 'valid',

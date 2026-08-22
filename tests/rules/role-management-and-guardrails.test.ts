@@ -45,7 +45,7 @@ describe('Safe Role Management & Privilege Guardrails Security Rules', () => {
       const adminDb = context.firestore();
 
       // Tenant A setup
-      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, name: 'EuroCorp Technologies SE' });
+      await adminDb.doc(`tenants/${tenantA}`).set({ status: 'active', id: tenantA, name: 'EuroCorp Technologies SE' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${userAdminA}`).set({
         userId: userAdminA,
         tenantId: tenantA,
@@ -72,7 +72,7 @@ describe('Safe Role Management & Privilege Guardrails Security Rules', () => {
       });
 
       // Tenant B setup
-      await adminDb.doc(`tenants/${tenantB}`).set({ id: tenantB, name: 'MedTech France SAS' });
+      await adminDb.doc(`tenants/${tenantB}`).set({ status: 'active', id: tenantB, name: 'MedTech France SAS' });
       await adminDb.doc(`tenants/${tenantB}/memberships/${userAdminB}`).set({
         userId: userAdminB,
         tenantId: tenantB,

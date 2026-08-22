@@ -54,6 +54,9 @@ describe('Applicability Rules Engine & Condition Evaluator', () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
 
+      await db.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+      await db.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
+
       // Seed global applicability rules
       for (const rule of CANONICAL_APPLICABILITY_RULES) {
         await db.doc(`applicability_rules/${rule.id}`).set(rule);

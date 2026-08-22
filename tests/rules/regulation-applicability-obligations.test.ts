@@ -47,6 +47,9 @@ beforeEach(async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
 
+    await db.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+    await db.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
+
     // Tenant A Memberships
     await db.doc(`tenants/${tenantA}/memberships/${userAdminA}`).set({
       userId: userAdminA,
@@ -413,7 +416,7 @@ describe('Regulation-Oriented Applicability & Statutory Obligations Suite', () =
 
       const ropaFlag = result.obligationFlags.find((o) => o.obligationType === 'gdpr_ropa_register');
       expect(ropaFlag).toBeDefined();
-      expect(ropaFlag?.triggeringFactKeys).toContain('processesPersonalData');
+      expect(ropaFlag?.triggeringFactKeys).toContain('processes_personal_data');
       expect(ropaFlag?.statutoryBasis).toContain('GDPR Article 30');
       expect(ropaFlag?.targetCollection).toBe('ropa_entries');
       expect(ropaFlag?.derivedFromDecisionId).toBe('dec_gdpr_art_30');

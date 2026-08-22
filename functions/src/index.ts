@@ -3,9 +3,14 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 // Set global region to europe-west3 (Frankfurt) for all Cloud Functions v2
 setGlobalOptions({ region: 'europe-west3' });
 
+// One-release compatibility tombstone: this overwrites the previously deployed
+// generic audit endpoint with a fail-closed callable before final deletion.
+export { createAuditLogEvent } from './handlers/audit.js';
+
 // Privileged Tenant & Membership Handlers
 export {
   syncUserProfile,
+  listMyTenantMemberships,
   createTenant,
   inviteUserToTenant,
   cancelTenantInvite,
@@ -212,11 +217,6 @@ export {
   getTransferArrangementEvidenceSummary,
   getProcessorCertificationEvidenceSummary,
 } from './handlers/evidence.js';
-
-// Audit Log Callable Handler
-export {
-  createAuditLogEvent,
-} from './handlers/audit.js';
 
 // Regulatory Workflows & Classification Handlers
 export {

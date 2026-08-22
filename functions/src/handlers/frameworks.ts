@@ -1,13 +1,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireAuth, requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import { appendAuditLogInTransaction, recordAuditLog } from '../lib/audit.js';
 import { computeAndStoreTenantMetrics } from './metrics.js';
 import {
   AdoptedFramework,
   RequirementApplicability,
   Framework,
-  Requirement,
   MasterControl,
   Control,
 } from '@eurogovernance/shared-types';
@@ -100,10 +99,7 @@ export const adoptFramework = onCall<AdoptFrameworkInput>(async (request) => {
   }
 
   // 3. Fetch master controls count and requirements
-  const [masterControlsSnap, reqsSnap] = await Promise.all([
-    fwRef.collection('master_controls').get(),
-    fwRef.collection('requirements').get(),
-  ]);
+  const masterControlsSnap = await fwRef.collection('master_controls').get();
 
   const now = new Date().toISOString();
   const effectiveVersion = pinnedVersion || fwData.version || '1.0';
@@ -124,7 +120,7 @@ export const adoptFramework = onCall<AdoptFrameworkInput>(async (request) => {
     targetCertificationDate: targetCertificationDate || null,
     totalMasterControlsCount: masterControlsSnap.size,
     instantiatedControlsCount: 0,
-    applicableControlsCount: masterControlsSnap.size,
+    applicableControlsCount: 0,
     notApplicableControlsCount: 0,
     adoptedBy: authCtx.userId,
     adoptedAt: now,
@@ -135,53 +131,31 @@ export const adoptFramework = onCall<AdoptFrameworkInput>(async (request) => {
     updatedBy: authCtx.userId,
   };
 
-  await adoptedRef.set(adoptedRecord);
-
-  // 4. Populate default requirement applicability (without cloning controls yet)
-  const batch = db.batch();
-  for (const reqDoc of reqsSnap.docs) {
-    const reqData = reqDoc.data() as Requirement;
-    const appRef = db.collection('tenants').doc(tenantId).collection('requirement_applicability').doc(reqDoc.id);
-    const appDoc = await appRef.get();
-
-    if (!appDoc.exists) {
-      const appRecord: RequirementApplicability = {
-        id: reqDoc.id,
-        tenantId,
-        requirementId: reqDoc.id,
-        frameworkId,
-        sectionCode: reqData.sectionCode || reqDoc.id,
-        requirementTitle: reqData.title || reqDoc.id,
-        isApplicable: true,
-        status: 'implemented',
-        ownerId: authCtx.userId,
-        justification: 'Default statutory applicability in initial scope',
-        scopingNotes: '',
-        assessedBy: authCtx.userId,
-        assessedAt: now,
-        createdAt: now,
-        updatedAt: now,
-        createdBy: authCtx.userId,
-        updatedBy: authCtx.userId,
-      };
-      batch.set(appRef, appRecord);
+  // Adoption records scope intent only. It must not fabricate applicable or
+  // implemented requirements before a scope evaluation has actually run.
+  await db.runTransaction(async (transaction) => {
+    const currentAdoption = await transaction.get(adoptedRef);
+    if (currentAdoption.exists && currentAdoption.data()?.status !== 'retired') {
+      throw new HttpsError(
+        'already-exists',
+        `Framework '${frameworkId}' is already adopted by tenant '${tenantId}'.`
+      );
     }
-  }
-  await batch.commit();
 
-  // 5. Audit Log
-  await recordAuditLog({
-    tenantId,
-    actorId: authCtx.userId,
-    actorEmail: authCtx.email,
-    actorRole: authCtx.role,
-    entityType: 'adopted_framework',
-    entityId: frameworkId,
-    action: 'create',
-    beforeSummary: existingAdopted.exists ? existingAdopted.data() : null,
-    afterSummary: adoptedRecord as any,
-    source: 'cloud_function',
-    workflowContext: `Adopted framework ${frameworkId} (Pinned Version: ${effectiveVersion})`,
+    transaction.set(adoptedRef, adoptedRecord);
+    appendAuditLogInTransaction(transaction, {
+      tenantId,
+      actorId: authCtx.userId,
+      actorEmail: authCtx.email,
+      actorRole: authCtx.role,
+      entityType: 'adopted_framework',
+      entityId: frameworkId,
+      action: 'create',
+      beforeSummary: currentAdoption.exists ? currentAdoption.data() || null : null,
+      afterSummary: adoptedRecord as any,
+      source: 'cloud_function',
+      workflowContext: `Adopted framework ${frameworkId} (Pinned Version: ${effectiveVersion}); applicability pending evaluation`,
+    });
   });
 
   return { adoptedFramework: adoptedRecord };
@@ -541,7 +515,7 @@ export const instantiateFrameworkControls = onCall(async (request) => {
   await batch.commit();
 
   // 5. Recompute tenant metrics
-  await computeAndStoreTenantMetrics(tenantId);
+  await computeAndStoreTenantMetrics(tenantId, authCtx);
 
   // 6. Audit Log
   await recordAuditLog({

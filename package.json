@@ -16,16 +16,22 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run typecheck",
     "test": "npm run test --workspaces --if-present",
+    "test:ci": "npm run typecheck && npm run security:audit && npm run test:rules",
     "test:rules": "npm run test --workspace=@eurogovernance/rules-tests",
+    "security:audit": "npm audit --omit=dev --audit-level=high",
     "emulators:start": "firebase emulators:start --only firestore,auth,storage,functions,ui",
-    "emulators:exec": "firebase emulators:exec --only firestore,auth,storage,functions,ui",
+    "emulators:exec": "npm run build && npx firebase-tools emulators:exec --only firestore,auth,storage,functions \"npm run test:ci\"",
     "seed:emulator": "npx tsx scripts/seed-emulator.ts",
     "deploy:rules": "firebase deploy --only firestore:rules,storage",
     "deploy:functions": "firebase deploy --only functions",
     "deploy:hosting": "firebase deploy --only hosting"
   },
   "devDependencies": {
+    "firebase-tools": "15.28.1",
     "typescript": "^5.4.5"
+  },
+  "overrides": {
+    "uuid@9.0.1": "11.1.1"
   },
   "engines": {
     "node": ">=20.0.0"

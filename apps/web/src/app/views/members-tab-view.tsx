@@ -7,9 +7,20 @@ import { UIEmptyState } from '../components/ui-empty-state';
 export interface MembersTabViewProps {
   membersList: any[];
   onOpenInviteModal: () => void;
+  canInvite: boolean;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
-export function MembersTabView({ membersList, onOpenInviteModal }: MembersTabViewProps) {
+export function MembersTabView({
+  membersList,
+  onOpenInviteModal,
+  canInvite,
+  loading = false,
+  error,
+  onRetry,
+}: MembersTabViewProps) {
   return (
     <div>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -18,28 +29,48 @@ export function MembersTabView({ membersList, onOpenInviteModal }: MembersTabVie
             Organization Members & Access Control
           </h1>
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Manage role-based memberships, administrative rights, and assurance responsibilities.
+            {canInvite
+              ? 'Review memberships and invite authorized colleagues.'
+              : 'Review the organization membership directory available to your role.'}
           </p>
         </div>
-        <button onClick={onOpenInviteModal} className="btn-success">
-          + Invite Colleague
-        </button>
+        {canInvite && (
+          <button onClick={onOpenInviteModal} className="btn-success">
+            + Invite Colleague
+          </button>
+        )}
       </header>
 
       <div className="card-modern" style={{ padding: 0, overflow: 'hidden' }}>
-        {membersList.length === 0 ? (
+        {loading ? (
+          <UIEmptyState
+            icon="⏳"
+            title="Loading Memberships"
+            description="The authorized membership directory is being requested from the server."
+          />
+        ) : error ? (
+          <UIEmptyState
+            icon="⚠️"
+            title="Memberships Unavailable"
+            description={error}
+            actionText={onRetry ? 'Retry' : undefined}
+            onAction={onRetry}
+          />
+        ) : membersList.length === 0 ? (
           <UIEmptyState
             icon="👥"
             title="No Members Found"
-            description="Invite team leads, auditors, and compliance managers to collaborate."
-            actionText="+ Invite Colleague"
-            onAction={onOpenInviteModal}
+            description={canInvite
+              ? 'Invite team leads, auditors, and compliance managers to collaborate.'
+              : 'No memberships were returned for this organization.'}
+            actionText={canInvite ? '+ Invite Colleague' : undefined}
+            onAction={canInvite ? onOpenInviteModal : undefined}
           />
         ) : (
           <table className="table-modern">
             <thead>
               <tr>
-                <th>User ID / Email</th>
+                <th>User ID</th>
                 <th>Role</th>
                 <th>Department</th>
                 <th>Status</th>
@@ -50,9 +81,9 @@ export function MembersTabView({ membersList, onOpenInviteModal }: MembersTabVie
                 <tr key={m.id}>
                   <td style={{ fontWeight: 600 }}>{m.userId || m.id}</td>
                   <td style={{ fontWeight: 700, color: 'var(--accent-primary)' }}>{m.role}</td>
-                  <td style={{ color: 'var(--text-muted)' }}>{m.department || 'Governance'}</td>
+                  <td style={{ color: 'var(--text-muted)' }}>{m.department || '—'}</td>
                   <td>
-                    <UIBadge variant="compliant">{m.status}</UIBadge>
+                    <UIBadge variant={m.status === 'active' ? 'compliant' : 'critical'}>{m.status}</UIBadge>
                   </td>
                 </tr>
               ))}

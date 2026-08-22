@@ -56,7 +56,7 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
       const adminDb = context.firestore();
 
       // Seed Tenant A
-      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, name: 'EuroCorp Technologies SE' });
+      await adminDb.doc(`tenants/${tenantA}`).set({ status: 'active', id: tenantA, name: 'EuroCorp Technologies SE' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${userAdminA}`).set({
         userId: userAdminA,
         tenantId: tenantA,
@@ -101,7 +101,7 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
       });
 
       // Seed Tenant B
-      await adminDb.doc(`tenants/${tenantB}`).set({ id: tenantB, name: 'MedTech France SAS' });
+      await adminDb.doc(`tenants/${tenantB}`).set({ status: 'active', id: tenantB, name: 'MedTech France SAS' });
       await adminDb.doc(`tenants/${tenantB}/memberships/${userAdminB}`).set({
         userId: userAdminB,
         tenantId: tenantB,
@@ -211,13 +211,14 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
   });
 
   // 2. Internal Audits & Findings RBAC
-  test('Auditors and Compliance Managers can log audits and findings; Viewers cannot', async () => {
+  test('Compliance Managers can log audits and findings; Auditors and Viewers cannot', async () => {
+    const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Auditor CAN create internal audit and log finding
+    // Compliance Manager CAN create internal audit and log finding
     await assertSucceeds(
-      auditorDb.doc(`tenants/${tenantA}/iso_internal_audits/adt_q2`).set({
+      complianceDb.doc(`tenants/${tenantA}/iso_internal_audits/adt_q2`).set({
         id: 'adt_q2',
         tenantId: tenantA,
         frameworkType: 'iso_42001',
@@ -227,7 +228,7 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
     );
 
     await assertSucceeds(
-      auditorDb
+      complianceDb
         .doc(`tenants/${tenantA}/iso_internal_audits/${auditId}/findings/fnd_02`)
         .set({
           id: 'fnd_02',
@@ -241,7 +242,23 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
         })
     );
 
-    // Viewer CANNOT create audit or finding
+    // Auditor and Viewer are read-only and CANNOT create audits or findings
+    await assertFails(
+      auditorDb.doc(`tenants/${tenantA}/iso_internal_audits/adt_auditor`).set({
+        id: 'adt_auditor',
+        tenantId: tenantA,
+        title: 'Auditor mutation attempt',
+      })
+    );
+    await assertFails(
+      auditorDb
+        .doc(`tenants/${tenantA}/iso_internal_audits/${auditId}/findings/fnd_auditor`)
+        .set({
+          id: 'fnd_auditor',
+          tenantId: tenantA,
+          title: 'Auditor finding mutation attempt',
+        })
+    );
     await assertFails(
       viewerDb.doc(`tenants/${tenantA}/iso_internal_audits/adt_view`).set({
         id: 'adt_view',

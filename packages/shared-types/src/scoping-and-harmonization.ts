@@ -670,7 +670,7 @@ export interface StatutoryObligationFlag extends BaseEntity {
   artifactKind: StatutoryArtifactKind;
   targetCollection: string;
   isMandatory: boolean;
-  status: 'active' | 'waived' | 'fulfilled' | 'deferred';
+  status: 'active' | 'waived' | 'fulfilled' | 'deferred' | 'retired';
   triggeringFactKeys: string[];
   statutoryBasis: string;
   suggestedArtifactTemplate?: Record<string, unknown>;
@@ -845,17 +845,24 @@ export function validateScopeFactValue(fact: Partial<TenantScopeFact>): { valid:
       }
       break;
     case 'string':
-      if (typeof fact.valueString !== 'string') {
+      if (typeof fact.valueString !== 'string' || fact.valueString.length > 10_000) {
         return { valid: false, error: `factKey '${fact.factKey}' declared dataType 'string' but valueString is not string.` };
       }
       break;
     case 'number':
-      if (typeof fact.valueNumber !== 'number' || isNaN(fact.valueNumber)) {
+      if (typeof fact.valueNumber !== 'number' || !Number.isFinite(fact.valueNumber)) {
         return { valid: false, error: `factKey '${fact.factKey}' declared dataType 'number' but valueNumber is not a valid number.` };
       }
       break;
     case 'string_array':
-      if (!Array.isArray(fact.valueArray) || fact.valueArray.some((i) => typeof i !== 'string')) {
+      if (
+        !Array.isArray(fact.valueArray) ||
+        fact.valueArray.length > 100 ||
+        fact.valueArray.some(
+          (item) =>
+            typeof item !== 'string' || item.trim().length === 0 || item.length > 500
+        )
+      ) {
         return { valid: false, error: `factKey '${fact.factKey}' declared dataType 'string_array' but valueArray is not an array of strings.` };
       }
       break;
@@ -2176,6 +2183,7 @@ export function deriveStatutoryObligations(params: {
   // 1. GDPR REGIME OBLIGATIONS
   if (adoptedFrameworks.includes('gdpr')) {
     const processesPersonalData =
+      factsMap.get('processes_personal_data') === true ||
       factsMap.get('processesPersonalData') === true ||
       factsMap.get('gdpr.processesPersonalData') === true ||
       (Array.isArray(factsMap.get('dataCategories')) && (factsMap.get('dataCategories') as string[]).length > 0);
@@ -2189,7 +2197,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_register',
         targetCollection: 'ropa_entries',
         isMandatory: true,
-        triggeringFactKeys: ['processesPersonalData'],
+        triggeringFactKeys: ['processes_personal_data'],
         statutoryBasis: 'GDPR Article 30',
         rationale: 'Processing of personal data triggers statutory inventory and legal basis documentation.',
         requirementId: 'gdpr_art_30',
@@ -2203,7 +2211,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_operational_record',
         targetCollection: 'breach_logs',
         isMandatory: true,
-        triggeringFactKeys: ['processesPersonalData'],
+        triggeringFactKeys: ['processes_personal_data'],
         statutoryBasis: 'GDPR Articles 33 & 34',
         rationale: 'Mandatory breach notification and documentation obligations under Article 33(5).',
         requirementId: 'gdpr_art_33',
@@ -2217,7 +2225,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_operational_record',
         targetCollection: 'dsr_requests',
         isMandatory: true,
-        triggeringFactKeys: ['processesPersonalData'],
+        triggeringFactKeys: ['processes_personal_data'],
         statutoryBasis: 'GDPR Chapter III (Articles 12-23)',
         rationale: 'Direct statutory individual rights obligations for data controllers.',
         requirementId: 'gdpr_art_15',
@@ -2225,6 +2233,7 @@ export function deriveStatutoryObligations(params: {
     }
 
     const specialCategory =
+      factsMap.get('processes_special_category_data') === true ||
       factsMap.get('processesSpecialCategoryData') === true ||
       factsMap.get('gdpr.processesSpecialCategoryData') === true ||
       factsMap.get('highRiskProcessing') === true;
@@ -2238,7 +2247,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_assessment',
         targetCollection: 'dpia_assessments',
         isMandatory: true,
-        triggeringFactKeys: ['processesSpecialCategoryData', 'highRiskProcessing'],
+        triggeringFactKeys: ['processes_special_category_data'],
         statutoryBasis: 'GDPR Article 35',
         rationale: 'High-risk processing operations likely to result in a high risk to rights and freedoms require prior DPIA.',
         requirementId: 'gdpr_art_35',
@@ -2246,6 +2255,7 @@ export function deriveStatutoryObligations(params: {
     }
 
     const internationalTransfers =
+      factsMap.get('has_international_transfers') === true ||
       factsMap.get('internationalDataTransfers') === true ||
       factsMap.get('gdpr.transfersDataOutsideEEA') === true;
 
@@ -2258,7 +2268,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_assessment',
         targetCollection: 'tia_assessments',
         isMandatory: true,
-        triggeringFactKeys: ['internationalDataTransfers'],
+        triggeringFactKeys: ['has_international_transfers'],
         statutoryBasis: 'GDPR Chapter V (Articles 44-49)',
         rationale: 'Data transfers outside EEA require documented verification of essentially equivalent protection.',
         requirementId: 'gdpr_art_46',
@@ -2272,7 +2282,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'obligation_flag',
         targetCollection: 'transfer_safeguards',
         isMandatory: true,
-        triggeringFactKeys: ['internationalDataTransfers'],
+        triggeringFactKeys: ['has_international_transfers'],
         statutoryBasis: 'GDPR Article 46(2)(c)',
         rationale: 'Statutory basis verification for international third-party processors.',
         requirementId: 'gdpr_art_46',
@@ -2283,6 +2293,7 @@ export function deriveStatutoryObligations(params: {
   // 2. EU AI ACT REGIME OBLIGATIONS
   if (adoptedFrameworks.includes('eu_ai_act')) {
     const deploysAI =
+      factsMap.get('deploys_ai_systems') === true ||
       factsMap.get('deploysAISystems') === true ||
       factsMap.get('ai.deploysAISystems') === true ||
       factsMap.get('usesAI') === true;
@@ -2296,7 +2307,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_register',
         targetCollection: 'ai_systems',
         isMandatory: true,
-        triggeringFactKeys: ['deploysAISystems'],
+        triggeringFactKeys: ['deploys_ai_systems'],
         statutoryBasis: 'EU AI Act Articles 4, 49, 71',
         rationale: 'Mandatory organizational visibility into AI models, capabilities, and supply chain dependencies.',
         requirementId: 'ai_act_art_49',
@@ -2310,7 +2321,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_operational_record',
         targetCollection: 'ai_incidents',
         isMandatory: true,
-        triggeringFactKeys: ['deploysAISystems'],
+        triggeringFactKeys: ['deploys_ai_systems'],
         statutoryBasis: 'EU AI Act Article 73',
         rationale: 'Statutory notification obligations for high-risk and general AI system incidents.',
         requirementId: 'ai_act_art_73',
@@ -2324,7 +2335,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'obligation_flag',
         targetCollection: 'ai_transparency_notices',
         isMandatory: true,
-        triggeringFactKeys: ['deploysAISystems'],
+        triggeringFactKeys: ['deploys_ai_systems'],
         statutoryBasis: 'EU AI Act Article 50',
         rationale: 'Direct statutory disclosure obligations for deployers of generative AI and interactive systems.',
         requirementId: 'ai_act_art_50',
@@ -2332,6 +2343,7 @@ export function deriveStatutoryObligations(params: {
     }
 
     const highRiskAI =
+      factsMap.get('deploys_high_risk_ai') === true ||
       factsMap.get('highRiskAIUsage') === true ||
       factsMap.get('ai.highRiskUsage') === true ||
       factsMap.get('isHighRiskAI') === true;
@@ -2345,7 +2357,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_assessment',
         targetCollection: 'ai_assessments',
         isMandatory: true,
-        triggeringFactKeys: ['highRiskAIUsage'],
+        triggeringFactKeys: ['deploys_high_risk_ai'],
         statutoryBasis: 'EU AI Act Articles 6, 9 & Annex III',
         rationale: 'High-risk AI systems must undergo formal classification and continuous risk management system review.',
         requirementId: 'ai_act_art_9',
@@ -2359,7 +2371,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_assessment',
         targetCollection: 'fria_assessments',
         isMandatory: true,
-        triggeringFactKeys: ['highRiskAIUsage'],
+        triggeringFactKeys: ['deploys_high_risk_ai'],
         statutoryBasis: 'EU AI Act Article 27',
         rationale: 'Deployers of high-risk AI systems in critical public and commercial services must conduct a FRIA.',
         requirementId: 'ai_act_art_27',
@@ -2373,7 +2385,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_operational_record',
         targetCollection: 'post_market_logs',
         isMandatory: true,
-        triggeringFactKeys: ['highRiskAIUsage'],
+        triggeringFactKeys: ['deploys_high_risk_ai'],
         statutoryBasis: 'EU AI Act Article 72',
         rationale: 'Proactive post-deployment performance and reliability verification.',
         requirementId: 'ai_act_art_72',
@@ -2387,7 +2399,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_operational_record',
         targetCollection: 'substantial_changes',
         isMandatory: true,
-        triggeringFactKeys: ['highRiskAIUsage'],
+        triggeringFactKeys: ['deploys_high_risk_ai'],
         statutoryBasis: 'EU AI Act Article 43(4)',
         rationale: 'Substantial changes to high-risk AI require triggering new conformity assessment.',
         requirementId: 'ai_act_art_43',
@@ -2398,6 +2410,7 @@ export function deriveStatutoryObligations(params: {
   // 3. EU DATA ACT REGIME OBLIGATIONS
   if (adoptedFrameworks.includes('eu_data_act')) {
     const isDataHolderOrConnected =
+      factsMap.get('is_b2b_data_holder') === true ||
       factsMap.get('manufacturesConnectedProducts') === true ||
       factsMap.get('dataAct.isDataHolder') === true ||
       factsMap.get('providesConnectedServices') === true;
@@ -2411,7 +2424,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_register',
         targetCollection: 'data_act_assets',
         isMandatory: true,
-        triggeringFactKeys: ['manufacturesConnectedProducts'],
+        triggeringFactKeys: ['is_b2b_data_holder'],
         statutoryBasis: 'EU Data Act Chapter II (Articles 3-7)',
         rationale: 'Data holders must make generated data easily, securely, and freely accessible to users.',
         requirementId: 'data_act_art_3',
@@ -2425,7 +2438,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_register',
         targetCollection: 'data_sharing_requests',
         isMandatory: true,
-        triggeringFactKeys: ['manufacturesConnectedProducts'],
+        triggeringFactKeys: ['is_b2b_data_holder'],
         statutoryBasis: 'EU Data Act Chapter III & IV (Articles 8-13)',
         rationale: 'Mandatory fulfillment of fair, reasonable, and non-discriminatory (FRAND) data sharing obligations.',
         requirementId: 'data_act_art_8',
@@ -2433,8 +2446,12 @@ export function deriveStatutoryObligations(params: {
     }
 
     const usesCloud =
+      factsMap.get('uses_cloud_infrastructure') === true ||
       factsMap.get('usesCloudInfrastructure') === true ||
-      factsMap.get('cloudProviders') !== undefined ||
+      (Array.isArray(factsMap.get('cloud_providers')) &&
+        (factsMap.get('cloud_providers') as string[]).length > 0) ||
+      (Array.isArray(factsMap.get('cloudProviders')) &&
+        (factsMap.get('cloudProviders') as string[]).length > 0) ||
       factsMap.get('dataAct.usesCloudServices') === true;
 
     if (usesCloud) {
@@ -2446,7 +2463,7 @@ export function deriveStatutoryObligations(params: {
         artifactKind: 'required_register',
         targetCollection: 'switching_dependencies',
         isMandatory: true,
-        triggeringFactKeys: ['usesCloudInfrastructure'],
+        triggeringFactKeys: ['uses_cloud_infrastructure'],
         statutoryBasis: 'EU Data Act Chapter VI (Articles 23-31)',
         rationale: 'Customer rights to switch cloud data processing services without obstacle.',
         requirementId: 'data_act_art_23',

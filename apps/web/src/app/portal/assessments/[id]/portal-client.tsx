@@ -1,326 +1,348 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, useParams } from 'next/navigation';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { httpsCallable } from 'firebase/functions';
 import {
-  DynamicQuestionnaireSection,
+  DynamicQuestionnaireQuestion,
+  PublicQuestionnaireQuestion,
+  PublicQuestionnaireSection,
   QuestionnaireAnswer,
+  SanitizedPublicAssessmentView,
+  ValidateAssessmentAccessTokenInput,
   evaluateQuestionVisibility,
+  validateAnswer,
 } from '@eurogovernance/shared-types';
+import { functions } from '@/lib/firebase';
+
+const MAX_TEXT_LENGTH = 10_000;
+const MAX_ARRAY_ITEMS = 100;
+const ALLOWED_ACTIVE_STATUSES = new Set(['sent', 'dispatched', 'opened', 'in_progress', 'revision_requested']);
+
+type EmailVerificationRequired = {
+  requiresEmailVerification: true;
+  isEmailVerified: false;
+  recipientEmailMasked?: string;
+};
+
+interface SaveDraftResult {
+  success: boolean;
+  submissionId: string;
+  savedAt: string;
+}
+
+interface SubmitAssessmentResult {
+  success: boolean;
+  submissionId: string;
+  submittedAt: string;
+}
+
+interface SubmissionReceipt {
+  submissionId: string;
+  submittedAt: string;
+}
+
+function isSafeIdentifier(value: string): boolean {
+  return value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function sanitizeAnswerValue(value: unknown): QuestionnaireAnswer['value'] {
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') return value.slice(0, MAX_TEXT_LENGTH);
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .slice(0, MAX_ARRAY_ITEMS)
+      .map((item) => item.slice(0, MAX_TEXT_LENGTH));
+  }
+  return null;
+}
+
+function createAnswerMap(
+  sections: PublicQuestionnaireSection[],
+  existingAnswers: Record<string, QuestionnaireAnswer> = {}
+): Record<string, QuestionnaireAnswer> {
+  const answerMap: Record<string, QuestionnaireAnswer> = {};
+
+  for (const section of sections) {
+    for (const question of section.questions) {
+      const existing = existingAnswers[question.id];
+      answerMap[question.id] = {
+        questionId: question.id,
+        questionCode: question.code,
+        sectionId: section.id,
+        value: sanitizeAnswerValue(existing?.value),
+        attachedEvidenceIds: [],
+        updatedAt: existing?.updatedAt || new Date().toISOString(),
+      };
+    }
+  }
+
+  return answerMap;
+}
+
+function createAnswerPayload(
+  sections: PublicQuestionnaireSection[],
+  answers: Record<string, QuestionnaireAnswer>
+): Record<string, QuestionnaireAnswer> {
+  const payload: Record<string, QuestionnaireAnswer> = {};
+
+  for (const section of sections) {
+    for (const question of section.questions) {
+      const answer = answers[question.id];
+      payload[question.id] = {
+        questionId: question.id,
+        questionCode: question.code,
+        sectionId: section.id,
+        value: sanitizeAnswerValue(answer?.value),
+        attachedEvidenceIds: [],
+        updatedAt: answer?.updatedAt || new Date().toISOString(),
+      };
+    }
+  }
+
+  return payload;
+}
+
+function getSafePortalError(action: 'load' | 'save' | 'submit', error: unknown): string {
+  const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
+  if (code.includes('permission-denied') || code.includes('unauthenticated')) {
+    return 'The assessment access link is invalid, expired, revoked, or has reached its usage limit.';
+  }
+  if (code.includes('failed-precondition') && action === 'submit') {
+    return 'The server rejected the submission because required or constrained answers are incomplete. Review the highlighted questions and try again.';
+  }
+  if (code.includes('resource-exhausted')) {
+    return 'The assessment service is temporarily busy. Wait before trying again.';
+  }
+  if (action === 'load') return 'The assessment could not be loaded or verified. Request a new link from your compliance contact.';
+  if (action === 'save') return 'The draft was not saved. Your current entries remain on this page; try again before closing it.';
+  return 'The assessment was not submitted. No submission receipt was created; review your answers and try again.';
+}
+
+function getQuestionVisibility(
+  question: PublicQuestionnaireQuestion,
+  answers: Record<string, QuestionnaireAnswer>
+) {
+  try {
+    return evaluateQuestionVisibility(question as DynamicQuestionnaireQuestion, answers);
+  } catch {
+    return { isVisible: true, isRequired: question.required };
+  }
+}
+
+function validatePublicView(
+  data: SanitizedPublicAssessmentView,
+  requestId: string,
+  tenantId: string
+): string | null {
+  if (data.requestId !== requestId || data.tenantId !== tenantId) {
+    return 'The verified assessment did not match this access link.';
+  }
+  if (!Array.isArray(data.sections) || data.sections.length === 0) {
+    return 'This assessment does not have a published questionnaire. Contact your compliance representative.';
+  }
+  if (data.sections.length > 100) return 'This questionnaire exceeds the portal section limit.';
+
+  const questionIds = new Set<string>();
+  let questionCount = 0;
+  for (const section of data.sections) {
+    if (!section?.id || !Array.isArray(section.questions)) return 'The questionnaire definition is incomplete.';
+    for (const question of section.questions) {
+      questionCount += 1;
+      if (!question?.id || questionIds.has(question.id)) return 'The questionnaire contains invalid or duplicate question identifiers.';
+      questionIds.add(question.id);
+    }
+  }
+  if (questionCount > 2_000) return 'This questionnaire exceeds the portal question limit.';
+  if (!ALLOWED_ACTIVE_STATUSES.has(data.status)) {
+    return `This assessment is not open for responses (recorded status: ${data.status || 'unknown'}).`;
+  }
+  return null;
+}
 
 export function ExternalAssessmentPortalClient() {
   const params = useParams();
   const searchParams = useSearchParams();
-
-  const requestId = (params?.id as string) || '';
-  const rawToken = searchParams.get('token') || '';
-  const tenantId = searchParams.get('tenantId') || 'tenant_eurocorp_de';
-
-  // State
+  const routeRequestId = (params?.id as string) || '';
+  const queryRequestId = searchParams.get('requestId') || '';
+  const queryTenantId = searchParams.get('tenantId') || '';
+  const queryTokenId = searchParams.get('tokenId') || '';
+  const [accessContext, setAccessContext] = useState<{
+    requestId: string;
+    tenantId: string;
+    tokenId: string;
+    rawToken: string;
+  } | null>(null);
+  const requestId = accessContext?.requestId || '';
+  const tenantId = accessContext?.tenantId || '';
+  const tokenId = accessContext?.tokenId || '';
+  const rawToken = accessContext?.rawToken || '';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [assessmentData, setAssessmentData] = useState<{
-    templateTitle: string;
-    templateDescription?: string;
-    thirdPartyName: string;
-    recipientName: string;
-    recipientEmail: string;
-    dueDate: string;
-    status: string;
-    sections: DynamicQuestionnaireSection[];
-  } | null>(null);
-
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const [assessmentData, setAssessmentData] = useState<SanitizedPublicAssessmentView | null>(null);
   const [answers, setAnswers] = useState<Record<string, QuestionnaireAnswer>>({});
   const [activeSectionIndex, setActiveSectionIndex] = useState(0);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
-  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submissionComplete, setSubmissionComplete] = useState(false);
-  const [submissionReceipt, setSubmissionReceipt] = useState<{
-    submissionId: string;
-    submittedAt: string;
-    scorePercent?: number;
-  } | null>(null);
+  const [submissionReceipt, setSubmissionReceipt] = useState<SubmissionReceipt | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // Load questionnaire data
+  // URL fragments are not sent to Hosting/CDN logs or referrers. Read the
+  // bearer secret once, remove it from browser history, and retain it only in
+  // this component's in-memory state.
   useEffect(() => {
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const fragmentToken = fragment.get('token') || '';
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    setAccessContext({
+      requestId: queryRequestId || routeRequestId,
+      tenantId: queryTenantId,
+      tokenId: queryTokenId,
+      rawToken: fragmentToken,
+    });
+  }, [queryRequestId, queryTenantId, queryTokenId, routeRequestId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadQuestionnaire() {
+      if (!accessContext) return;
       setLoading(true);
       setError(null);
 
-      if (!requestId || !rawToken) {
-        setError('Missing access token or assessment identifier. Please use the complete link provided in your invitation email.');
+      if (
+        !isSafeIdentifier(requestId) ||
+        !isSafeIdentifier(tenantId) ||
+        !isSafeIdentifier(tokenId) ||
+        !/^[a-f0-9]{64}$/.test(rawToken)
+      ) {
+        setError('The access link is incomplete or malformed. Use the complete link from your invitation email.');
         setLoading(false);
         return;
       }
 
       try {
-        // Fallback default sample data if backend endpoint is unavailable locally
-        const mockSections: DynamicQuestionnaireSection[] = [
-          {
-            id: 'sec_gov',
-            tenantId,
-            templateId: 'tmpl_gdpr_art28',
-            code: 'SEC-GOV',
-            title: '1. Privacy Governance & DPA Agreement',
-            description: 'Organizational data protection measures, DPO designation, and GDPR Art. 28 commitments.',
-            sortOrder: 1,
-            weight: 1,
-            questions: [
-              {
-                id: 'q_gov_dpo',
-                tenantId,
-                templateId: 'tmpl_gdpr_art28',
-                sectionId: 'sec_gov',
-                code: 'GOV-01',
-                title: 'Has your organization formally designated a Data Protection Officer (DPO)?',
-                questionType: 'yes_no',
-                required: true,
-                sortOrder: 1,
-                scoring: { weight: 5 },
-                createdBy: 'system',
-                updatedBy: 'system',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-              {
-                id: 'q_gov_dpo_email',
-                tenantId,
-                templateId: 'tmpl_gdpr_art28',
-                sectionId: 'sec_gov',
-                code: 'GOV-02',
-                title: 'Provide the official contact email for your DPO or Privacy Office',
-                questionType: 'text',
-                required: true,
-                sortOrder: 2,
-                scoring: { weight: 5 },
-                conditionalRules: [
-                  {
-                    dependsOnQuestionId: 'q_gov_dpo',
-                    operator: 'is_truthy',
-                    action: 'show',
-                  },
-                ],
-                createdBy: 'system',
-                updatedBy: 'system',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-              {
-                id: 'q_gov_dpa_agreement',
-                tenantId,
-                templateId: 'tmpl_gdpr_art28',
-                sectionId: 'sec_gov',
-                code: 'GOV-03',
-                title: 'Commitment to execute our Standard Data Processing Addendum (GDPR Art. 28)',
-                questionType: 'single_select',
-                required: true,
-                sortOrder: 3,
-                scoring: { weight: 10 },
-                options: [
-                  { label: 'Fully Accept standard DPA terms with standard audit rights', value: 'accept_dpa', score: 100 },
-                  { label: 'Request custom negotiated DPA / SCC addendum', value: 'custom_dpa', score: 80 },
-                  { label: 'Refuse DPA terms', value: 'refuse_dpa', score: 0, isRiskTrigger: true },
-                ],
-                createdBy: 'system',
-                updatedBy: 'system',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-            ],
-            createdBy: 'system',
-            updatedBy: 'system',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-          {
-            id: 'sec_toms',
-            tenantId,
-            templateId: 'tmpl_gdpr_art28',
-            code: 'SEC-TOMS',
-            title: '2. Technical & Organizational Measures (TOMs)',
-            description: 'Encryption standards, access controls, multi-factor authentication, and security certs.',
-            sortOrder: 2,
-            weight: 2,
-            questions: [
-              {
-                id: 'q_toms_encryption',
-                tenantId,
-                templateId: 'tmpl_gdpr_art28',
-                sectionId: 'sec_toms',
-                code: 'TOM-01',
-                title: 'Data Encryption Standards (at rest & in transit)',
-                questionType: 'single_select',
-                required: true,
-                sortOrder: 1,
-                scoring: { weight: 10 },
-                options: [
-                  { label: 'AES-256 at rest, TLS 1.3 in transit with strict PFS', value: 'aes256_tls13', score: 100 },
-                  { label: 'Standard cloud encryption at rest, TLS 1.2+ in transit', value: 'standard_enc', score: 80 },
-                  { label: 'No encryption at rest enforced', value: 'no_encryption', score: 0, isRiskTrigger: true },
-                ],
-                createdBy: 'system',
-                updatedBy: 'system',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-              {
-                id: 'q_toms_breach_sla',
-                tenantId,
-                templateId: 'tmpl_gdpr_art28',
-                sectionId: 'sec_toms',
-                code: 'TOM-02',
-                title: 'Security Incident & Breach Notification SLA to Controller (Hours)',
-                questionType: 'numeric',
-                required: true,
-                sortOrder: 2,
-                scoring: { weight: 10 },
-                numericConstraints: { min: 1, max: 720, unit: 'hours' },
-                guidanceNotes: 'GDPR Article 33 requires notification without undue delay and within 72 hours.',
-                createdBy: 'system',
-                updatedBy: 'system',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-              {
-                id: 'q_toms_cert_upload',
-                tenantId,
-                templateId: 'tmpl_gdpr_art28',
-                sectionId: 'sec_toms',
-                code: 'TOM-03',
-                title: 'Attach Current ISO 27001 Certificate or SOC 2 Type II Report (PDF)',
-                questionType: 'file_upload',
-                required: false,
-                sortOrder: 3,
-                scoring: { weight: 5, evidenceBonusPoints: 10 },
-                requiresEvidence: true,
-                acceptedEvidenceCategories: ['iso_certificate', 'soc_report'],
-                createdBy: 'system',
-                updatedBy: 'system',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-            ],
-            createdBy: 'system',
-            updatedBy: 'system',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-        ];
+        const validateToken = httpsCallable<
+          ValidateAssessmentAccessTokenInput,
+          SanitizedPublicAssessmentView | EmailVerificationRequired
+        >(functions, 'validateAssessmentAccessToken');
+        const response = await validateToken({ tenantId, requestId, tokenId, rawToken });
+        if (cancelled) return;
 
-        setAssessmentData({
-          templateTitle: 'GDPR Article 28 Processor Due Diligence & Technical Assessment',
-          templateDescription: 'Please complete all sections to confirm controller technical and organizational guarantees under EU data protection standards.',
-          thirdPartyName: 'Assessed Third Party',
-          recipientName: 'Authorized Security / Privacy Officer',
-          recipientEmail: 'security-officer@supplier.eu',
-          dueDate: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString(),
-          status: 'in_progress',
-          sections: mockSections,
-        });
-
-        // Initialize default empty answers
-        const initAnswers: Record<string, QuestionnaireAnswer> = {};
-        for (const sec of mockSections) {
-          for (const q of sec.questions) {
-            initAnswers[q.id] = {
-              questionId: q.id,
-              questionCode: q.code,
-              sectionId: sec.id,
-              value: null,
-              attachedEvidenceIds: [],
-              updatedAt: new Date().toISOString(),
-            };
-          }
+        const data = response.data;
+        if ('requiresEmailVerification' in data && data.requiresEmailVerification && !data.isEmailVerified) {
+          setError('This invitation requires email verification, but verification is not available in the current portal. Request an alternative link from your compliance contact.');
+          return;
         }
-        setAnswers(initAnswers);
-      } catch (err: any) {
-        setError(err.message || 'Failed to load questionnaire.');
+
+        const publicView = data as SanitizedPublicAssessmentView;
+        const viewError = validatePublicView(publicView, requestId, tenantId);
+        if (viewError) {
+          setError(viewError);
+          return;
+        }
+
+        setAssessmentData(publicView);
+        setAnswers(createAnswerMap(publicView.sections, publicView.existingAnswers));
+      } catch (loadError) {
+        if (!cancelled) setError(getSafePortalError('load', loadError));
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
-    loadQuestionnaire();
-  }, [requestId, rawToken, tenantId]);
+    void loadQuestionnaire();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessContext, requestId, tenantId, tokenId, rawToken]);
 
-  // Active section questions
   const activeSection = assessmentData?.sections[activeSectionIndex];
 
-  // Helper to update answer
-  const handleAnswerChange = (questionId: string, value: any) => {
-    setAnswers((prev) => ({
-      ...prev,
-      [questionId]: {
-        ...(prev[questionId] || {
-          questionId,
-          questionCode: '',
-          sectionId: activeSection?.id || '',
+  const completionStats = useMemo(() => {
+    if (!assessmentData) return { total: 0, answered: 0, percent: 0 };
+    let total = 0;
+    let answered = 0;
+
+    for (const section of assessmentData.sections) {
+      for (const question of section.questions) {
+        const visibility = getQuestionVisibility(question, answers);
+        if (!visibility.isVisible) continue;
+        total += 1;
+        const value = answers[question.id]?.value;
+        if (value !== null && value !== undefined && value !== '' && (!Array.isArray(value) || value.length > 0)) answered += 1;
+      }
+    }
+
+    return { total, answered, percent: total > 0 ? Math.round((answered / total) * 100) : 0 };
+  }, [assessmentData, answers]);
+
+  const handleAnswerChange = (question: PublicQuestionnaireQuestion, value: unknown) => {
+    setOperationError(null);
+    setAnswers((current) => ({
+      ...current,
+      [question.id]: {
+        ...(current[question.id] || {
+          questionId: question.id,
+          questionCode: question.code,
+          sectionId: question.sectionId,
           attachedEvidenceIds: [],
         }),
-        value,
+        value: sanitizeAnswerValue(value),
+        attachedEvidenceIds: [],
         updatedAt: new Date().toISOString(),
       },
     }));
   };
 
-  // Helper to handle simulated file upload
-  const handleFileUpload = (questionId: string, file: File) => {
-    const fileMeta = {
-      fileName: file.name,
-      fileSizeBytes: file.size,
-      mimeType: file.type || 'application/pdf',
-      storagePath: `evidence/uploads/${file.name}`,
-      uploadedAt: new Date().toISOString(),
-    };
-
-    setAnswers((prev) => ({
-      ...prev,
-      [questionId]: {
-        ...(prev[questionId] || {
-          questionId,
-          questionCode: '',
-          sectionId: activeSection?.id || '',
-          attachedEvidenceIds: [],
-        }),
-        value: file.name,
-        attachedEvidenceIds: [`ev_${Date.now()}`],
-        attachedFileMetadata: [fileMeta],
-        updatedAt: new Date().toISOString(),
-      },
-    }));
-  };
-
-  // Save draft
   const handleSaveDraft = async () => {
+    if (!assessmentData) return;
     setIsSavingDraft(true);
-    setValidationErrors([]);
+    setOperationError(null);
     try {
-      await new Promise((res) => setTimeout(res, 400));
-      setLastSavedTime(new Date().toLocaleTimeString());
-    } catch (err: any) {
-      alert(`Draft save failed: ${err.message}`);
+      const saveDraft = httpsCallable<
+        { tenantId: string; requestId: string; tokenId: string; rawToken: string; answers: Record<string, QuestionnaireAnswer> },
+        SaveDraftResult
+      >(functions, 'savePublicAssessmentDraft');
+      const response = await saveDraft({
+        tenantId,
+        requestId,
+        tokenId,
+        rawToken,
+        answers: createAnswerPayload(assessmentData.sections, answers),
+      });
+      if (!response.data.success || !response.data.savedAt) throw new Error('Draft save was not confirmed.');
+      setLastSavedAt(response.data.savedAt);
+    } catch (saveError) {
+      setOperationError(getSafePortalError('save', saveError));
     } finally {
       setIsSavingDraft(false);
     }
   };
 
-  // Submit assessment
   const handleSubmitAssessment = async () => {
     if (!assessmentData) return;
-
-    // Check all visible required questions across all sections
     const errors: string[] = [];
-    for (const sec of assessmentData.sections) {
-      for (const q of sec.questions) {
-        const vis = evaluateQuestionVisibility(q, answers);
-        if (vis.isVisible && vis.isRequired) {
-          const ans = answers[q.id];
-          const hasValue = ans && ans.value !== null && ans.value !== undefined && ans.value !== '';
-          if (!hasValue) {
-            errors.push(`${sec.title} → Question '${q.code}' (${q.title}) is required.`);
-          }
+    const answerPayload = createAnswerPayload(assessmentData.sections, answers);
+
+    for (const section of assessmentData.sections) {
+      for (const question of section.questions) {
+        const visibility = getQuestionVisibility(question, answerPayload);
+        if (!visibility.isVisible) continue;
+        if (question.questionType === 'file_upload' && (visibility.isRequired || question.requiresEvidence)) {
+          errors.push(`${section.title} → ${question.code}: secure document upload is required but is not available in this portal.`);
+          continue;
+        }
+        const validation = validateAnswer(question as DynamicQuestionnaireQuestion, answerPayload[question.id], {
+          checkRequired: visibility.isRequired,
+          checkEvidence: Boolean(question.requiresEvidence),
+        });
+        if (!validation.valid) {
+          errors.push(...validation.errors.map((message) => `${section.title} → ${question.code}: ${message}`));
         }
       }
     }
@@ -331,481 +353,272 @@ export function ExternalAssessmentPortalClient() {
       return;
     }
 
+    setValidationErrors([]);
+    setOperationError(null);
     setIsSubmitting(true);
     try {
-      await new Promise((res) => setTimeout(res, 800));
-      setSubmissionReceipt({
-        submissionId: `sub_${requestId.slice(0, 8)}_${Date.now()}`,
-        submittedAt: new Date().toISOString(),
-        scorePercent: 95,
+      const submitAssessment = httpsCallable<
+        {
+          tenantId: string;
+          requestId: string;
+          tokenId: string;
+          rawToken: string;
+          answers: Record<string, QuestionnaireAnswer>;
+          respondentInfo: { name: string; email: string; companyName: string };
+        },
+        SubmitAssessmentResult
+      >(functions, 'submitPublicAssessment');
+      const response = await submitAssessment({
+        tenantId,
+        requestId,
+        tokenId,
+        rawToken,
+        answers: answerPayload,
+        respondentInfo: {
+          name: assessmentData.recipientName,
+          email: assessmentData.recipientEmail,
+          companyName: assessmentData.thirdPartyName,
+        },
       });
-      setSubmissionComplete(true);
-    } catch (err: any) {
-      alert(`Submission failed: ${err.message}`);
+      if (!response.data.success || !response.data.submissionId || !response.data.submittedAt) {
+        throw new Error('Submission was not confirmed.');
+      }
+      setSubmissionReceipt({
+        submissionId: response.data.submissionId,
+        submittedAt: response.data.submittedAt,
+      });
+    } catch (submitError) {
+      setOperationError(getSafePortalError('submit', submitError));
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Calculate completion percentage
-  const completionStats = useMemo(() => {
-    if (!assessmentData) return { total: 0, answered: 0, percent: 0 };
-    let total = 0;
-    let answered = 0;
+  if (error) return <PortalState title="Access Link Unavailable" message={error} icon="🔒" tone="error" />;
+  if (loading || !assessmentData) return <PortalState title="Verifying assessment link" message="The questionnaire will appear only after the invitation token is validated." icon="⏳" />;
 
-    for (const sec of assessmentData.sections) {
-      for (const q of sec.questions) {
-        const vis = evaluateQuestionVisibility(q, answers);
-        if (vis.isVisible) {
-          total++;
-          const ans = answers[q.id];
-          if (ans && ans.value !== null && ans.value !== undefined && ans.value !== '') {
-            answered++;
-          }
-        }
-      }
-    }
-
-    const percent = total > 0 ? Math.round((answered / total) * 100) : 0;
-    return { total, answered, percent };
-  }, [assessmentData, answers]);
-
-  // Render Error State
-  if (error) {
+  if (submissionReceipt) {
     return (
-      <div style={{ minHeight: '100vh', background: '#0a0d14', color: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-        <div style={{ maxWidth: '520px', width: '100%', background: '#131824', border: '1px solid #dc2626', borderRadius: '12px', padding: '32px', textAlign: 'center' }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔒</div>
-          <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#f87171', marginBottom: '12px' }}>Access Link Invalid or Expired</h2>
-          <p style={{ fontSize: '14px', color: '#94a3b8', lineHeight: '1.6', marginBottom: '24px' }}>{error}</p>
-          <div style={{ fontSize: '12px', color: '#64748b' }}>
-            If you believe this is an error, please contact your compliance representative to request a regenerated assessment link.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Render Loading State
-  if (loading || !assessmentData) {
-    return (
-      <div style={{ minHeight: '100vh', background: '#0a0d14', color: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '28px', marginBottom: '12px' }}>⏳</div>
-          <div style={{ fontSize: '15px', color: '#94a3b8' }}>Loading secure assessment questionnaire...</div>
-        </div>
-      </div>
-    );
-  }
-
-  // Render Post-Submission Confirmation
-  if (submissionComplete && submissionReceipt) {
-    return (
-      <div style={{ minHeight: '100vh', background: '#0a0d14', color: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-        <div style={{ maxWidth: '640px', width: '100%', background: '#131824', border: '1px solid #10b981', borderRadius: '16px', padding: '40px', textAlign: 'center' }}>
-          <div style={{ width: '64px', height: '64px', background: 'rgba(16, 185, 129, 0.15)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: '32px', color: '#10b981' }}>
-            ✓
-          </div>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#ffffff', marginBottom: '12px' }}>
-            Assessment Submitted Successfully
-          </h1>
-          <p style={{ fontSize: '15px', color: '#94a3b8', lineHeight: '1.6', marginBottom: '28px' }}>
-            Thank you for completing the third-party compliance questionnaire for <strong style={{ color: '#e2e8f0' }}>{assessmentData.thirdPartyName}</strong>. Your responses and supporting evidence have been securely transmitted to the compliance review team.
-          </p>
-
-          <div style={{ background: '#0f1420', border: '1px solid #242f48', borderRadius: '10px', padding: '20px', textAlign: 'left', marginBottom: '28px', fontSize: '13px', lineHeight: '1.8' }}>
-            <div><strong>Submission ID:</strong> <span style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{submissionReceipt.submissionId}</span></div>
-            <div><strong>Submitted At:</strong> {new Date(submissionReceipt.submittedAt).toUTCString()}</div>
-            <div><strong>Respondent:</strong> {assessmentData.recipientName} ({assessmentData.recipientEmail})</div>
-            <div><strong>Status:</strong> <span style={{ color: '#10b981', fontWeight: 'bold' }}>Under Compliance Review</span></div>
-          </div>
-
-          <div style={{ fontSize: '13px', color: '#64748b' }}>
-            You may now safely close this window. A confirmation receipt has been recorded.
-          </div>
-        </div>
-      </div>
+      <PortalState
+        title="Assessment submitted"
+        message={`The server recorded submission ${submissionReceipt.submissionId} at ${new Date(submissionReceipt.submittedAt).toUTCString()}. It is awaiting compliance review.`}
+        icon="✓"
+        tone="success"
+      />
     );
   }
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0d14', color: '#e2e8f0', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      {/* Header Bar */}
-      <header style={{ background: '#131824', borderBottom: '1px solid #242f48', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <header style={{ background: '#131824', borderBottom: '1px solid #242f48', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', color: '#38bdf8', fontWeight: 'bold', marginBottom: '4px' }}>
-            EU Compliance & Third-Party Assurance Portal
-          </div>
-          <div style={{ fontSize: '17px', fontWeight: 'bold', color: '#ffffff' }}>
-            {assessmentData.thirdPartyName}
-          </div>
+          <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', color: '#38bdf8', fontWeight: 700 }}>Third-Party Assessment Portal</div>
+          <div style={{ fontSize: '17px', fontWeight: 700, color: '#fff', marginTop: '4px' }}>{assessmentData.thirdPartyName}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ fontSize: '12px', color: '#94a3b8', textAlign: 'right' }}>
-            <div>Due: <strong style={{ color: '#f59e0b' }}>{new Date(assessmentData.dueDate).toLocaleDateString()}</strong></div>
-            {lastSavedTime && <div style={{ fontSize: '11px', color: '#10b981' }}>✓ Saved {lastSavedTime}</div>}
+            <div>Due: <strong>{formatPortalDate(assessmentData.dueDate)}</strong></div>
+            {lastSavedAt && <div style={{ color: '#10b981' }}>Server saved: {formatPortalDateTime(lastSavedAt)}</div>}
           </div>
-          <button
-            onClick={handleSaveDraft}
-            disabled={isSavingDraft}
-            style={{
-              background: '#1e293b',
-              color: '#e2e8f0',
-              border: '1px solid #334155',
-              padding: '8px 16px',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: '500',
-            }}
-          >
-            {isSavingDraft ? 'Saving...' : '💾 Save Draft'}
+          <button type="button" onClick={handleSaveDraft} disabled={isSavingDraft || isSubmitting} style={buttonStyle('#1e293b')}>
+            {isSavingDraft ? 'Saving…' : 'Save draft'}
           </button>
         </div>
       </header>
 
-      {/* Progress & Title Banner */}
       <div style={{ background: '#0f1420', borderBottom: '1px solid #1e293b', padding: '24px 32px' }}>
         <div style={{ maxWidth: '960px', margin: '0 auto' }}>
-          <h1 style={{ fontSize: '22px', fontWeight: 'bold', color: '#ffffff', marginBottom: '8px' }}>
-            {assessmentData.templateTitle}
-          </h1>
-          {assessmentData.templateDescription && (
-            <p style={{ fontSize: '14px', color: '#94a3b8', lineHeight: '1.5', marginBottom: '20px' }}>
-              {assessmentData.templateDescription}
-            </p>
-          )}
-
-          {/* Progress Bar */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8', marginBottom: '6px' }}>
-              <span>Progress: {completionStats.answered} of {completionStats.total} questions answered</span>
-              <span style={{ fontWeight: 'bold', color: '#38bdf8' }}>{completionStats.percent}% Complete</span>
-            </div>
-            <div style={{ height: '6px', background: '#1e293b', borderRadius: '3px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${completionStats.percent}%`, background: '#38bdf8', transition: 'width 0.3s ease' }} />
-            </div>
+          <h1 style={{ fontSize: '22px', color: '#fff', margin: '0 0 8px' }}>{assessmentData.templateTitle}</h1>
+          {assessmentData.templateDescription && <p style={{ fontSize: '14px', color: '#94a3b8', lineHeight: 1.5 }}>{assessmentData.templateDescription}</p>}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8', marginTop: '18px' }}>
+            <span>{completionStats.answered} of {completionStats.total} visible questions answered</span>
+            <span>{completionStats.percent}% complete</span>
+          </div>
+          <div style={{ height: '6px', background: '#1e293b', borderRadius: '3px', overflow: 'hidden', marginTop: '6px' }}>
+            <div style={{ height: '100%', width: `${completionStats.percent}%`, background: '#38bdf8' }} />
           </div>
         </div>
       </div>
 
-      {/* Main Form Content */}
-      <main style={{ maxWidth: '960px', margin: '32px auto', padding: '0 24px' }}>
-        {/* Validation Errors Alert */}
-        {validationErrors.length > 0 && (
-          <div style={{ background: 'rgba(220, 38, 38, 0.1)', border: '1px solid #dc2626', borderRadius: '8px', padding: '16px', marginBottom: '24px' }}>
-            <div style={{ color: '#f87171', fontWeight: 'bold', fontSize: '14px', marginBottom: '8px' }}>
-              ⚠️ Please complete all required fields before submitting:
-            </div>
-            <ul style={{ margin: 0, paddingLeft: '20px', color: '#fca5a5', fontSize: '13px', lineHeight: '1.6' }}>
-              {validationErrors.map((err, idx) => (
-                <li key={idx}>{err}</li>
-              ))}
-            </ul>
-          </div>
-        )}
+      <main style={{ maxWidth: '960px', margin: '32px auto', padding: '0 24px 60px' }}>
+        {operationError && <Alert tone="error" title="Operation not completed" messages={[operationError]} />}
+        {validationErrors.length > 0 && <Alert tone="error" title="Resolve these items before submission" messages={validationErrors} />}
+        <Alert
+          tone="warning"
+          title="Document upload status"
+          messages={['Secure external file upload is not yet available. No selected file will be represented as uploaded evidence. Contact your compliance representative when a required document blocks submission.']}
+        />
 
-        {/* Section Tabs */}
-        <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #242f48', marginBottom: '28px', overflowX: 'auto' }}>
-          {assessmentData.sections.map((sec, idx) => {
-            const isActive = idx === activeSectionIndex;
-            return (
-              <button
-                key={sec.id}
-                onClick={() => setActiveSectionIndex(idx)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: isActive ? '2px solid #38bdf8' : '2px solid transparent',
-                  color: isActive ? '#38bdf8' : '#94a3b8',
-                  padding: '12px 18px',
-                  cursor: 'pointer',
-                  fontWeight: isActive ? 'bold' : 'normal',
-                  fontSize: '14px',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {sec.title}
-              </button>
-            );
-          })}
-        </div>
+        <nav aria-label="Questionnaire sections" style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #242f48', marginBottom: '28px', overflowX: 'auto' }}>
+          {assessmentData.sections.map((section, index) => (
+            <button
+              type="button"
+              key={section.id}
+              onClick={() => setActiveSectionIndex(index)}
+              style={{ background: 'none', border: 'none', borderBottom: index === activeSectionIndex ? '2px solid #38bdf8' : '2px solid transparent', color: index === activeSectionIndex ? '#38bdf8' : '#94a3b8', padding: '12px 18px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              {section.title}
+            </button>
+          ))}
+        </nav>
 
-        {/* Active Section Questions */}
         {activeSection && (
-          <div>
-            <div style={{ marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: '#ffffff', marginBottom: '4px' }}>
-                {activeSection.title}
-              </h2>
-              {activeSection.description && (
-                <p style={{ fontSize: '13px', color: '#94a3b8' }}>{activeSection.description}</p>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              {activeSection.questions.map((q) => {
-                const vis = evaluateQuestionVisibility(q, answers);
-                if (!vis.isVisible) return null;
-
-                const currentAnswer = answers[q.id]?.value;
-
+          <section>
+            <h2 style={{ fontSize: '18px', color: '#fff', marginBottom: '6px' }}>{activeSection.title}</h2>
+            {activeSection.description && <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '24px' }}>{activeSection.description}</p>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {activeSection.questions.map((question) => {
+                const visibility = getQuestionVisibility(question, answers);
+                if (!visibility.isVisible) return null;
                 return (
-                  <div
-                    key={q.id}
-                    style={{
-                      background: '#131824',
-                      border: '1px solid #242f48',
-                      borderRadius: '10px',
-                      padding: '24px',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '12px' }}>
-                      <label style={{ fontSize: '15px', fontWeight: '600', color: '#ffffff', lineHeight: '1.4' }}>
-                        <span style={{ color: '#38bdf8', marginRight: '8px' }}>[{q.code}]</span>
-                        {q.title}
-                        {vis.isRequired && <span style={{ color: '#ef4444', marginLeft: '4px' }}>*</span>}
-                      </label>
-                    </div>
-
-                    {q.guidanceNotes && (
-                      <div style={{ fontSize: '12px', color: '#94a3b8', background: '#0f1420', borderLeft: '3px solid #38bdf8', padding: '8px 12px', borderRadius: '4px', marginBottom: '16px' }}>
-                        💡 {q.guidanceNotes}
-                      </div>
-                    )}
-
-                    {/* Question Input Controls */}
-                    {q.questionType === 'yes_no' && (
-                      <div style={{ display: 'flex', gap: '12px' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleAnswerChange(q.id, true)}
-                          style={{
-                            flex: 1,
-                            padding: '12px',
-                            borderRadius: '6px',
-                            border: currentAnswer === true ? '2px solid #10b981' : '1px solid #334155',
-                            background: currentAnswer === true ? 'rgba(16, 185, 129, 0.15)' : '#1e293b',
-                            color: currentAnswer === true ? '#10b981' : '#e2e8f0',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          ✓ Yes
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAnswerChange(q.id, false)}
-                          style={{
-                            flex: 1,
-                            padding: '12px',
-                            borderRadius: '6px',
-                            border: currentAnswer === false ? '2px solid #ef4444' : '1px solid #334155',
-                            background: currentAnswer === false ? 'rgba(239, 68, 68, 0.15)' : '#1e293b',
-                            color: currentAnswer === false ? '#ef4444' : '#e2e8f0',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          ✕ No
-                        </button>
-                      </div>
-                    )}
-
-                    {q.questionType === 'single_select' && q.options && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {q.options.map((opt) => (
-                          <label
-                            key={opt.value}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px',
-                              padding: '12px 16px',
-                              background: currentAnswer === opt.value ? 'rgba(56, 189, 248, 0.1)' : '#1e293b',
-                              border: currentAnswer === opt.value ? '1px solid #38bdf8' : '1px solid #334155',
-                              borderRadius: '6px',
-                              cursor: 'pointer',
-                              fontSize: '14px',
-                            }}
-                          >
-                            <input
-                              type="radio"
-                              name={q.id}
-                              value={opt.value}
-                              checked={currentAnswer === opt.value}
-                              onChange={() => handleAnswerChange(q.id, opt.value)}
-                            />
-                            <span>{opt.label}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
-
-                    {q.questionType === 'numeric' && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input
-                          type="number"
-                          value={typeof currentAnswer === 'number' ? currentAnswer : ''}
-                          onChange={(e) => handleAnswerChange(q.id, e.target.value ? Number(e.target.value) : null)}
-                          placeholder="e.g. 24"
-                          style={{
-                            background: '#1e293b',
-                            border: '1px solid #334155',
-                            color: '#ffffff',
-                            padding: '10px 14px',
-                            borderRadius: '6px',
-                            width: '200px',
-                            fontSize: '14px',
-                          }}
-                        />
-                        {q.numericConstraints?.unit && (
-                          <span style={{ fontSize: '13px', color: '#94a3b8' }}>{q.numericConstraints.unit}</span>
-                        )}
-                      </div>
-                    )}
-
-                    {q.questionType === 'text' && (
-                      <input
-                        type="text"
-                        value={typeof currentAnswer === 'string' ? currentAnswer : ''}
-                        onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                        placeholder="Enter response..."
-                        style={{
-                          width: '100%',
-                          background: '#1e293b',
-                          border: '1px solid #334155',
-                          color: '#ffffff',
-                          padding: '10px 14px',
-                          borderRadius: '6px',
-                          fontSize: '14px',
-                        }}
-                      />
-                    )}
-
-                    {q.questionType === 'textarea' && (
-                      <textarea
-                        rows={4}
-                        value={typeof currentAnswer === 'string' ? currentAnswer : ''}
-                        onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                        placeholder="Provide detailed explanation..."
-                        style={{
-                          width: '100%',
-                          background: '#1e293b',
-                          border: '1px solid #334155',
-                          color: '#ffffff',
-                          padding: '10px 14px',
-                          borderRadius: '6px',
-                          fontSize: '14px',
-                          lineHeight: '1.5',
-                        }}
-                      />
-                    )}
-
-                    {q.questionType === 'file_upload' && (
-                      <div style={{ border: '2px dashed #334155', borderRadius: '8px', padding: '24px', textAlign: 'center', background: '#0f1420' }}>
-                        {answers[q.id]?.attachedFileMetadata?.[0] ? (
-                          <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                            <span>📄</span>
-                            <strong>{answers[q.id].attachedFileMetadata![0].fileName}</strong>
-                            <span style={{ fontSize: '12px', color: '#94a3b8' }}>
-                              ({Math.round(answers[q.id].attachedFileMetadata![0].fileSizeBytes / 1024)} KB)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleAnswerChange(q.id, null)}
-                              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', marginLeft: '12px' }}
-                            >
-                              ✕ Remove
-                            </button>
-                          </div>
-                        ) : (
-                          <div>
-                            <div style={{ fontSize: '24px', marginBottom: '8px' }}>📁</div>
-                            <div style={{ fontSize: '13px', color: '#cbd5e1', marginBottom: '12px' }}>
-                              Drag and drop your supporting document or click to browse
-                            </div>
-                            <input
-                              type="file"
-                              accept=".pdf,.docx,.xlsx,.png"
-                              onChange={(e) => {
-                                if (e.target.files && e.target.files[0]) {
-                                  handleFileUpload(q.id, e.target.files[0]);
-                                }
-                              }}
-                              style={{ fontSize: '12px', color: '#94a3b8' }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <QuestionField
+                    key={question.id}
+                    question={question}
+                    required={visibility.isRequired}
+                    value={answers[question.id]?.value ?? null}
+                    onChange={(value) => handleAnswerChange(question, value)}
+                  />
                 );
               })}
             </div>
-          </div>
+          </section>
         )}
 
-        {/* Bottom Navigation & Submission Buttons */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '40px', paddingBottom: '60px' }}>
-          <button
-            type="button"
-            disabled={activeSectionIndex === 0}
-            onClick={() => setActiveSectionIndex((prev) => Math.max(0, prev - 1))}
-            style={{
-              background: '#1e293b',
-              color: activeSectionIndex === 0 ? '#64748b' : '#e2e8f0',
-              border: '1px solid #334155',
-              padding: '10px 20px',
-              borderRadius: '6px',
-              cursor: activeSectionIndex === 0 ? 'not-allowed' : 'pointer',
-              fontSize: '14px',
-            }}
-          >
-            ← Previous Section
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: '36px' }}>
+          <button type="button" disabled={activeSectionIndex === 0} onClick={() => setActiveSectionIndex((index) => Math.max(0, index - 1))} style={buttonStyle('#1e293b')}>
+            Previous section
           </button>
-
-          <div style={{ display: 'flex', gap: '12px' }}>
-            {activeSectionIndex < assessmentData.sections.length - 1 ? (
-              <button
-                type="button"
-                onClick={() => setActiveSectionIndex((prev) => Math.min(assessmentData.sections.length - 1, prev + 1))}
-                style={{
-                  background: '#2563eb',
-                  color: '#ffffff',
-                  border: 'none',
-                  padding: '10px 24px',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '14px',
-                }}
-              >
-                Next Section →
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleSubmitAssessment}
-                style={{
-                  background: '#10b981',
-                  color: '#ffffff',
-                  border: 'none',
-                  padding: '12px 32px',
-                  borderRadius: '6px',
-                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '15px',
-                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
-                }}
-              >
-                {isSubmitting ? 'Submitting...' : '✓ Submit Final Assessment'}
-              </button>
-            )}
-          </div>
+          {activeSectionIndex < assessmentData.sections.length - 1 ? (
+            <button type="button" onClick={() => setActiveSectionIndex((index) => Math.min(assessmentData.sections.length - 1, index + 1))} style={buttonStyle('#2563eb')}>
+              Next section
+            </button>
+          ) : (
+            <button type="button" disabled={isSubmitting || isSavingDraft} onClick={handleSubmitAssessment} style={buttonStyle('#10b981')}>
+              {isSubmitting ? 'Submitting…' : 'Submit final assessment'}
+            </button>
+          )}
         </div>
       </main>
     </div>
   );
+}
+
+function QuestionField({
+  question,
+  required,
+  value,
+  onChange,
+}: {
+  question: PublicQuestionnaireQuestion;
+  required: boolean;
+  value: QuestionnaireAnswer['value'];
+  onChange: (value: unknown) => void;
+}) {
+  const cardStyle: React.CSSProperties = { background: '#131824', border: '1px solid #242f48', borderRadius: '10px', padding: '22px' };
+  const inputStyle: React.CSSProperties = { width: '100%', background: '#1e293b', border: '1px solid #334155', color: '#fff', padding: '10px 12px', borderRadius: '6px', fontSize: '14px' };
+
+  return (
+    <div style={cardStyle}>
+      <label style={{ display: 'block', fontSize: '15px', fontWeight: 600, color: '#fff', lineHeight: 1.4, marginBottom: '12px' }}>
+        <span style={{ color: '#38bdf8', marginRight: '8px' }}>[{question.code}]</span>
+        {question.title}{required && <span style={{ color: '#ef4444' }}> *</span>}
+      </label>
+      {question.guidanceNotes && <div style={{ color: '#94a3b8', fontSize: '12px', borderLeft: '3px solid #38bdf8', padding: '8px 12px', marginBottom: '14px' }}>{question.guidanceNotes}</div>}
+
+      {(question.questionType === 'yes_no' || question.questionType === 'boolean') && (
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button type="button" onClick={() => onChange(true)} style={buttonStyle(value === true ? '#047857' : '#1e293b')}>Yes</button>
+          <button type="button" onClick={() => onChange(false)} style={buttonStyle(value === false ? '#b91c1c' : '#1e293b')}>No</button>
+        </div>
+      )}
+
+      {question.questionType === 'single_select' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {(question.options || []).map((option) => (
+            <label key={option.value} style={{ padding: '10px 12px', background: value === option.value ? 'rgba(56,189,248,.12)' : '#1e293b', border: `1px solid ${value === option.value ? '#38bdf8' : '#334155'}`, borderRadius: '6px' }}>
+              <input type="radio" name={question.id} checked={value === option.value} onChange={() => onChange(option.value)} /> <span style={{ marginLeft: '8px' }}>{option.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {question.questionType === 'multi_select' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {(question.options || []).map((option) => {
+            const selected = Array.isArray(value) && value.includes(option.value);
+            return (
+              <label key={option.value} style={{ padding: '10px 12px', background: selected ? 'rgba(56,189,248,.12)' : '#1e293b', border: '1px solid #334155', borderRadius: '6px' }}>
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={() => onChange(selected ? (value as string[]).filter((item) => item !== option.value) : [...(Array.isArray(value) ? value : []), option.value])}
+                />{' '}
+                <span style={{ marginLeft: '8px' }}>{option.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      {question.questionType === 'numeric' && (
+        <input type="number" value={typeof value === 'number' ? value : ''} min={question.numericConstraints?.min} max={question.numericConstraints?.max} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} style={inputStyle} />
+      )}
+      {question.questionType === 'text' && (
+        <input type="text" value={typeof value === 'string' ? value : ''} maxLength={MAX_TEXT_LENGTH} onChange={(event) => onChange(event.target.value)} style={inputStyle} />
+      )}
+      {question.questionType === 'textarea' && (
+        <textarea rows={5} value={typeof value === 'string' ? value : ''} maxLength={MAX_TEXT_LENGTH} onChange={(event) => onChange(event.target.value)} style={{ ...inputStyle, resize: 'vertical' }} />
+      )}
+      {question.questionType === 'date' && (
+        <input type="date" value={typeof value === 'string' ? value : ''} min={question.dateConstraints?.minDate} max={question.dateConstraints?.maxDate} onChange={(event) => onChange(event.target.value)} style={inputStyle} />
+      )}
+      {question.questionType === 'rating_scale' && (
+        <input type="number" value={typeof value === 'number' ? value : ''} min={question.ratingConstraints?.minRating} max={question.ratingConstraints?.maxRating} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} style={inputStyle} />
+      )}
+      {question.questionType === 'file_upload' && (
+        <div style={{ border: '2px dashed #475569', borderRadius: '8px', padding: '18px', color: '#fbbf24', background: '#0f1420' }}>
+          Secure file upload is unavailable. No file has been uploaded or attached to this answer.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Alert({ tone, title, messages }: { tone: 'error' | 'warning'; title: string; messages: string[] }) {
+  const color = tone === 'error' ? '#f87171' : '#fbbf24';
+  return (
+    <div role="alert" style={{ border: `1px solid ${color}`, background: tone === 'error' ? 'rgba(220,38,38,.1)' : 'rgba(245,158,11,.1)', borderRadius: '8px', padding: '14px 16px', marginBottom: '20px', color }}>
+      <div style={{ fontWeight: 700, marginBottom: '6px' }}>{title}</div>
+      <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: 1.6 }}>
+        {messages.map((message, index) => <li key={`${index}-${message}`}>{message}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function PortalState({ title, message, icon, tone = 'neutral' }: { title: string; message: string; icon: string; tone?: 'neutral' | 'error' | 'success' }) {
+  const color = tone === 'error' ? '#f87171' : tone === 'success' ? '#10b981' : '#38bdf8';
+  return (
+    <div style={{ minHeight: '100vh', background: '#0a0d14', color: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+      <div style={{ maxWidth: '620px', width: '100%', background: '#131824', border: `1px solid ${color}`, borderRadius: '12px', padding: '36px', textAlign: 'center' }}>
+        <div style={{ fontSize: '44px', color, marginBottom: '14px' }}>{icon}</div>
+        <h1 style={{ fontSize: '22px', color: '#fff' }}>{title}</h1>
+        <p style={{ color: '#94a3b8', lineHeight: 1.65 }}>{message}</p>
+      </div>
+    </div>
+  );
+}
+
+function buttonStyle(background: string): React.CSSProperties {
+  return { background, color: '#fff', border: '1px solid #334155', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 };
+}
+
+function formatPortalDate(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleDateString() : 'Not recorded';
+}
+
+function formatPortalDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Unknown';
 }

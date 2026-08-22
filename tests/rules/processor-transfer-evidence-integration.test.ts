@@ -51,12 +51,14 @@ beforeEach(async () => {
 
     // 1. Tenants
     await db.doc(`tenants/${tenantA}`).set({
+      status: 'active',
       id: tenantA,
       name: 'EuroCorp Technologies SE',
       createdAt: now,
       updatedAt: now,
     });
     await db.doc(`tenants/${tenantB}`).set({
+      status: 'active',
       id: tenantB,
       name: 'MedTech France SAS',
       createdAt: now,
@@ -472,9 +474,12 @@ describe('Processor & Transfer Evidence Repository Integration Suite', () => {
         ownerId: PERSONAS.securityA.uid,
       };
 
-      await assertSucceeds(
+      await assertFails(
         securityDb.doc(`tenants/${tenantA}/evidence/${evidenceId}`).set(evidenceDoc)
       );
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/evidence/${evidenceId}`).set(evidenceDoc);
+      });
 
       // Verify read by Privacy Manager
       const privacyDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();

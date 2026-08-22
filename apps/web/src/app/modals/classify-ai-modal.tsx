@@ -55,15 +55,19 @@ export function ClassifyAIModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={loading}
-            className="btn-primary"
+            disabled
+            className="btn-secondary"
+            title="The condensed form cannot support a defensible EU AI Act classification."
           >
-            {loading ? 'Evaluating...' : 'Determine Risk Tier'}
+            Full Assessment Required
           </button>
         </>
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ padding: '12px', backgroundColor: 'var(--status-warning-bg)', border: '1px solid var(--status-warning-border)', borderRadius: '8px', fontSize: '12px', color: 'var(--text-primary)' }}>
+          This condensed screen is informational only. Classification is disabled until every Article 5 practice and Annex III category can be assessed and independently reviewed.
+        </div>
         <div style={{ padding: '12px', backgroundColor: 'var(--bg-canvas-subtle)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
             <input

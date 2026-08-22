@@ -896,9 +896,12 @@ export function validateAnswer(
   }
 
   const a = answer as Partial<QuestionnaireAnswer>;
-  const isAnswered = a.value !== null && a.value !== undefined && a.value !== '';
+  const isAnswered = isQuestionnaireAnswerValuePresent(a.value);
 
-  if (options.checkRequired && question.required && !isAnswered) {
+  // Callers pass the evaluated requirement state here. It may be stricter than
+  // question.required when a conditional rule makes an otherwise optional
+  // question mandatory.
+  if (options.checkRequired && !isAnswered) {
     errors.push(`Question '${question.code}' is mandatory and must be answered.`);
     return { valid: false, errors };
   }
@@ -958,6 +961,20 @@ export function validateAnswer(
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Canonical answer-presence predicate used by required-field gates and
+ * completion metrics. Whitespace-only text and empty selections are not
+ * evidence of an answered question.
+ */
+export function isQuestionnaireAnswerValuePresent(
+  value: QuestionnaireAnswer['value'] | undefined
+): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
 }
 
 // =============================================================================

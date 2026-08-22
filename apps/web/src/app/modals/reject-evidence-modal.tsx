@@ -20,11 +20,11 @@ export function RejectEvidenceModal({
   onReject,
   loading = false,
 }: RejectEvidenceModalProps) {
-  const [reason, setReason] = useState('Requires updated cryptographic signature and ISO control mapping.');
+  const [reason, setReason] = useState('');
 
   useEffect(() => {
     if (isOpen) {
-      setReason('Requires updated cryptographic signature and ISO control mapping.');
+      setReason('');
     }
   }, [isOpen]);
 

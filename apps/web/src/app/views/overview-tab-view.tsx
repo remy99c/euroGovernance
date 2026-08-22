@@ -12,6 +12,10 @@ import {
   RegulatoryLiabilityItem,
 } from '../components/ui-executive-posture';
 import { formatTime } from '../../lib/formatters';
+import {
+  calculateEvidenceReviewSchedule,
+  getRecordedComplianceScore,
+} from '../../lib/product-truth';
 
 export interface OverviewTabViewProps {
   userRole: string;
@@ -23,7 +27,6 @@ export interface OverviewTabViewProps {
   auditLogs: any[];
   onNavigateToTab: (tab: string) => void;
   onRecalculateMetrics: () => Promise<void>;
-  onRequestExport: (type: string) => Promise<void>;
   loadingAction?: string | null;
 }
 
@@ -37,10 +40,18 @@ export function OverviewTabView({
   auditLogs,
   onNavigateToTab,
   onRecalculateMetrics,
-  onRequestExport,
   loadingAction,
 }: OverviewTabViewProps) {
   const isAuditor = userRole === 'auditor';
+  const canMaterializeMetrics = [
+    'tenant_admin',
+    'compliance_manager',
+    'security_manager',
+    'privacy_manager',
+    'ai_governance_manager',
+  ].includes(userRole);
+  const recordedScore = getRecordedComplianceScore(metrics);
+  const evidenceReviewSchedule = calculateEvidenceReviewSchedule(evidenceList);
 
   // Compute regulatory liabilities
   const liabilities: RegulatoryLiabilityItem[] = [];
@@ -49,7 +60,7 @@ export function OverviewTabView({
     liabilities.push({
       id: 'liability_evidence',
       framework: 'ISO 27001 / SOC 2',
-      title: `${pendingEvidence.length} Evidence Artifact(s) Pending Four-Eyes Sign-Off`,
+      title: `${pendingEvidence.length} Evidence Artifact(s) Pending Review`,
       severity: 'high',
       actionLabel: 'Review Evidence',
       onAction: () => onNavigateToTab('evidence'),
@@ -101,18 +112,18 @@ export function OverviewTabView({
         }
         description={
           isAuditor
-            ? 'Inspect verified technical controls, four-eyes evidence lockers, deterministic scoping rationales, and generate compliance dossiers.'
+            ? 'Inspect recorded controls, evidence review states, scoping decisions, and available export jobs.'
             : userRole === 'tenant_admin'
-            ? 'Manage organization identity, enforce four-eyes approval policies, monitor team memberships, and audit global activity.'
+            ? 'Manage organization identity, review approval workflows, monitor memberships, and inspect recorded activity.'
             : userRole === 'compliance_manager' || userRole === 'security_manager'
-            ? 'Track framework readiness, process four-eyes evidence reviews, dispatch supplier questionnaires, and synchronize risks.'
+            ? 'Track recorded framework status, review evidence, dispatch supplier questionnaires, and inspect risks.'
             : userRole === 'privacy_manager'
             ? 'Maintain GDPR Article 30 ROPA activities, evaluate Schrems II international transfers, and verify Article 28 DPA execution.'
             : userRole === 'ai_governance_manager'
             ? 'Classify AI model risk tiers (Annex III), enforce prohibited practice guardrails, and compile Annex IV technical documentation.'
             : userRole === 'contributor'
-            ? 'Fulfill assigned evidence requests, answer control audit questions, and view feedback notes from compliance reviewers.'
-            : 'Materialized compliance health metrics verified across live regulatory registers.'
+            ? 'Review the compliance records and work currently available to your account.'
+            : 'Review recorded compliance metrics and their underlying registers.'
         }
         badge={
           <UIBadge variant={isAuditor ? 'review' : 'compliant'}>
@@ -120,14 +131,8 @@ export function OverviewTabView({
           </UIBadge>
         }
         primaryAction={
-          isAuditor
-            ? {
-                label: '1-Click Audit Dossier (ZIP)',
-                icon: '📦',
-                onClick: () => onRequestExport('framework_soc2_dossier'),
-                loading: loadingAction === 'export_framework_soc2_dossier',
-                variant: 'success',
-              }
+          !canMaterializeMetrics
+            ? undefined
             : {
                 label: 'Recalculate Posture Score',
                 icon: '🔄',
@@ -159,12 +164,11 @@ export function OverviewTabView({
 
       {/* 1. Decisive Executive Compliance Posture Hero */}
       <UIExecutivePostureHero
-        score={metrics?.overallComplianceScore ?? 92}
-        verifiedControlsCount={controlsList.filter((c) => c.status === 'implemented').length}
-        totalControlsCount={controlsList.length || 85}
-        fourEyesEvidenceCount={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
+        score={recordedScore}
+        implementedControlsCount={controlsList.filter((c) => c.status === 'implemented').length}
+        totalControlsCount={controlsList.length}
+        approvedEvidenceCount={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
         openGapsCount={issuesList.filter((i) => i.status === 'open').length}
-        sovereignRegion="FRA-WEST3 (Frankfurt Sovereign Zone)"
       />
 
       {/* 2. Regulatory Liabilities & Enforcement Risks Matrix */}
@@ -173,10 +177,11 @@ export function OverviewTabView({
       {/* 3. Evidence & Assurance Expiry Forecast */}
       <div style={{ marginBottom: '24px' }}>
         <UIEvidenceExpiryForecast
-          expiredCount={evidenceList.filter((e) => e.status === 'expired').length}
-          expiringIn30DaysCount={evidenceList.filter((e) => e.status === 'under_review').length || 1}
-          expiringIn90DaysCount={3}
-          validCount={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length || 38}
+          overdueCount={evidenceReviewSchedule.overdueCount}
+          dueIn30DaysCount={evidenceReviewSchedule.dueIn30DaysCount}
+          dueIn90DaysCount={evidenceReviewSchedule.dueIn90DaysCount}
+          scheduledAfter90DaysCount={evidenceReviewSchedule.scheduledAfter90DaysCount}
+          noReviewDateCount={evidenceReviewSchedule.noReviewDateCount}
           onViewExpiring={() => onNavigateToTab('evidence')}
         />
       </div>
@@ -187,15 +192,15 @@ export function OverviewTabView({
         primary={
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <UIDashboardSection
-              title="Recent Four-Eyes Evidence Lockers"
-              subtitle="Cryptographically signed verification artifacts."
+              title="Recent Evidence Records"
+              subtitle="Repository records and their recorded review status."
             >
               <div className="card-modern" style={{ padding: '14px' }}>
                 {evidenceList.length === 0 ? (
                   <UIEmptyState
                     icon="📁"
-                    title="No Evidence In Lockers"
-                    description="Evidence uploaded by contributors will appear here for Four-Eyes sign-off."
+                    title="No Evidence Recorded"
+                    description="No evidence records exist for this tenant yet."
                     compact
                   />
                 ) : (
@@ -219,12 +224,12 @@ export function OverviewTabView({
                           <div>
                             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{ev.title || ev.id}</div>
                             <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                              {ev.category} • SHA-256: {ev.fileHashSha256 ? `${ev.fileHashSha256.slice(0, 14)}...` : 'Verified'}
+                              {ev.category || 'Uncategorized'} • Declared hash (not server-verified): {ev.fileHashSha256 ? `${ev.fileHashSha256.slice(0, 14)}...` : 'Not recorded'}
                             </div>
                           </div>
                         </div>
-                        <UIBadge variant={ev.status === 'approved' || ev.status === 'valid' ? 'compliant' : 'warning'}>
-                          {(ev.status || 'valid').toUpperCase()}
+                        <UIBadge variant={ev.status === 'approved' || ev.status === 'valid' ? 'compliant' : ev.status ? 'warning' : 'neutral'}>
+                          {(ev.status || 'unknown').toUpperCase()}
                         </UIBadge>
                       </div>
                     ))}
@@ -244,7 +249,7 @@ export function OverviewTabView({
                 <UIEmptyState
                   icon="📜"
                   title="Audit Ledger Awaiting Events"
-                  description="Privileged actions, four-eyes sign-offs, and automated control validations will append here in real-time."
+                  description="Audit events emitted by supported server workflows will appear here."
                   type="audit"
                   compact
                 />

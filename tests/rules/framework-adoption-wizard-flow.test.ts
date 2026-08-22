@@ -49,6 +49,8 @@ beforeEach(async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
 
+    await db.doc(`tenants/${tenantId}`).set({ id: tenantId, status: 'active' });
+
     // Tenant Admin Membership
     await db.doc(`tenants/${tenantId}/memberships/${userAdmin}`).set({
       userId: userAdmin,

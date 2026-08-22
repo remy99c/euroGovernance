@@ -51,12 +51,14 @@ beforeEach(async () => {
 
     // 0. Seed Root Tenant Docs
     await db.doc(`tenants/${tenantA}`).set({
+      status: 'active',
       id: tenantA,
       name: 'Alignment Tenant Alpha',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
     await db.doc(`tenants/${tenantB}`).set({
+      status: 'active',
       id: tenantB,
       name: 'Alignment Tenant Beta',
       createdAt: new Date().toISOString(),

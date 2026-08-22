@@ -47,6 +47,9 @@ describe('Tenant Framework Adoption Lifecycle & Multi-Tenant RBAC', () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
 
+      await db.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+      await db.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
+
       // Seed global frameworks
       for (const fw of CANONICAL_FRAMEWORKS) {
         await db.doc(`frameworks/${fw.id}`).set(fw);

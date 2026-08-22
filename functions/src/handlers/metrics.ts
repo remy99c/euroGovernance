@@ -1,7 +1,11 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import {
+  auditActorFromVerifiedContext,
+  recordAuditLog,
+  VerifiedAuditActor,
+} from '../lib/audit.js';
 import {
   TenantSummaryMetrics,
   Control,
@@ -36,8 +40,7 @@ export interface GetMetricsInput {
  */
 export async function computeAndStoreTenantMetrics(
   tenantId: string,
-  actorId = 'system',
-  actorEmail = 'system@eurogovernance.local'
+  auditActor: VerifiedAuditActor
 ): Promise<TenantSummaryMetrics> {
   const tenantRef = db.collection('tenants').doc(tenantId);
 
@@ -142,9 +145,7 @@ export async function computeAndStoreTenantMetrics(
 
   await recordAuditLog({
     tenantId,
-    actorId,
-    actorEmail,
-    actorRole: 'tenant_admin',
+    ...auditActorFromVerifiedContext(auditActor),
     entityType: 'summary_metrics',
     entityId: 'current',
     action: 'update',
@@ -179,13 +180,14 @@ export const materializeTenantMetrics = onCall<MaterializeMetricsInput>(async (r
     'ai_governance_manager',
   ]);
 
-  const metrics = await computeAndStoreTenantMetrics(tenantId, authContext.userId, authContext.email);
+  const metrics = await computeAndStoreTenantMetrics(tenantId, authContext);
   return { success: true, metrics };
 });
 
 /**
  * Callable Function: getTenantSummaryMetrics
- * Retrieves the latest materialized metrics or computes them if none exist
+ * Retrieves the latest materialized metrics without mutating tenant state.
+ * Materialization is a separate manager-only command.
  */
 export const getTenantSummaryMetrics = onCall<GetMetricsInput>(async (request) => {
   const { tenantId } = request.data;
@@ -202,9 +204,7 @@ export const getTenantSummaryMetrics = onCall<GetMetricsInput>(async (request) =
     return { success: true, metrics: snap.data() as TenantSummaryMetrics };
   }
 
-  // Compute on-the-fly if not yet materialized
-  const metrics = await computeAndStoreTenantMetrics(tenantId, 'auto_init');
-  return { success: true, metrics };
+  return { success: true, metrics: null, materialized: false };
 });
 
 /**

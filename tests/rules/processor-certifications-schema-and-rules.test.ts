@@ -2466,7 +2466,9 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
 
         // Setup Tenant Alpha
         await db.collection('tenants').doc(tenantA).set({
+          id: tenantA,
           name: 'Alpha Corp',
+          status: 'active',
           subscriptionTier: 'enterprise',
           primaryContactEmail: 'admin@alpha.de',
           createdAt: new Date().toISOString(),

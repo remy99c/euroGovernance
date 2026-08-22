@@ -56,6 +56,9 @@ describe('Scope Questionnaire System Suite', () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
 
+      await db.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+      await db.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
+
       // Seed global questionnaires
       for (const qnr of CANONICAL_SCOPE_QUESTIONNAIRES) {
         await db.doc(`scope_questionnaires/${qnr.id}`).set(qnr);

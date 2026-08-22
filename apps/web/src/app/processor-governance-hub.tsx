@@ -1167,7 +1167,7 @@ export default function ProcessorGovernanceHub({
                                       <strong>{ev.title}</strong> • <code>{ev.category}</code>
                                     </div>
                                     <div style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                                      {ev.fileHashSha256 ? `SHA-256: ${ev.fileHashSha256.slice(0, 12)}...` : 'Status: valid'}
+                                      {ev.fileHashSha256 ? `Declared hash (unverified): ${ev.fileHashSha256.slice(0, 12)}...` : `Recorded status: ${ev.status || 'unknown'}`}
                                     </div>
                                   </div>
                                 ))}

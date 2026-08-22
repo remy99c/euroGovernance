@@ -1,10 +1,20 @@
 import React, { Suspense } from 'react';
-import { ExternalAssessmentPortalClient } from './portal-client';
+import type { Metadata } from 'next';
+import { ExternalAssessmentPortalClient } from './[id]/portal-client';
 
-export function generateStaticParams() {
-  return [{ id: 'demo' }, { id: 'default' }];
-}
+export const metadata: Metadata = {
+  referrer: 'no-referrer',
+  robots: {
+    index: false,
+    follow: false,
+    noarchive: true,
+  },
+};
 
+/**
+ * Stable static-export entry point. Assessment identity is supplied through
+ * non-secret query parameters and the bearer token through the URL fragment.
+ */
 export default function ExternalAssessmentPortalPage() {
   return (
     <Suspense

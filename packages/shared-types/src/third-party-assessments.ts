@@ -254,6 +254,8 @@ export interface ThirdPartyAssessmentRequest extends BaseEntity {
 
   // Final Review Summary (Mirrored from SubmissionReview for quick filtering)
   finalScorePercent?: number | null;
+  respondentScorePercent?: number | null;
+  respondentPassedThreshold?: boolean | null;
   overallRiskRating?: AssessmentRiskTier | null;
   isCompliant?: boolean | null;
   reviewedBy?: string | null;

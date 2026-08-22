@@ -42,6 +42,7 @@ export interface ProcessorAssessmentWorkspaceProps {
   ) => Promise<void>;
   onRenewAssessment?: (previousAssessmentId: string, dueDate: string) => Promise<{ newAssessmentId: string; accessToken?: string }>;
   onRequestExport?: (exportType: ExportType) => Promise<void>;
+  externalDispatchEnabled?: boolean;
 }
 
 export function ProcessorAssessmentWorkspace({
@@ -54,6 +55,7 @@ export function ProcessorAssessmentWorkspace({
   onReviewAssessment,
   onRenewAssessment,
   onRequestExport,
+  externalDispatchEnabled = false,
 }: ProcessorAssessmentWorkspaceProps) {
   // Filters
   const [filterType, setFilterType] = useState<string>('all');
@@ -66,7 +68,6 @@ export function ProcessorAssessmentWorkspace({
   const [wizardStep, setWizardStep] = useState<number>(0);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [reviewingAssessment, setReviewingAssessment] = useState<ProcessorAssessment | null>(null);
-  const [copiedTokenAssessmentId, setCopiedTokenAssessmentId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'assessments' | 'templates'>('assessments');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('templ_gdpr_art28_due_diligence');
 
@@ -256,14 +257,6 @@ export function ProcessorAssessmentWorkspace({
     }
   };
 
-  // Copy Magic Link Helper
-  const handleCopyLink = (assessmentId: string) => {
-    const link = `${window.location.origin}/portal/assessments/${assessmentId}?tenantId=${tenantId}`;
-    navigator.clipboard.writeText(link);
-    setCopiedTokenAssessmentId(assessmentId);
-    setTimeout(() => setCopiedTokenAssessmentId(null), 3000);
-  };
-
   return (
     <div style={{ color: 'var(--text-primary)' }}>
       {/* 1. Standardized Page Header */}
@@ -297,15 +290,15 @@ export function ProcessorAssessmentWorkspace({
         <UIStatCard
           label="Total Assessments"
           value={metrics.total}
-          subtext="Questionnaires dispatched & logged"
+          subtext="Draft and historical assessment records"
           valueColor="var(--accent-primary)"
         />
         <UIStatCard
           label="Completed & Accepted"
           value={metrics.completed}
-          subtext="Art. 28 assurance verified"
+          subtext="Reviewer acceptance recorded"
           valueColor="var(--status-compliant-fg)"
-          progressPercentage={metrics.total > 0 ? (metrics.completed / metrics.total) * 100 : 100}
+          progressPercentage={metrics.total > 0 ? (metrics.completed / metrics.total) * 100 : 0}
         />
         <UIStatCard
           label="Under Review"
@@ -418,8 +411,8 @@ export function ProcessorAssessmentWorkspace({
                 onAction={() => setIsCreateModalOpen(true)}
                 hints={[
                   { label: 'Select a canonical template', sublabel: 'GDPR Art. 28, ISO 27001 Annex A, or Schrems II TIA' },
-                  { label: 'Generate vendor access link', sublabel: 'Tokenized supplier portal without password overhead' },
-                  { label: 'Review findings & lock assurance', sublabel: 'Deterministic scoring with four-eyes reviewer sign-off' },
+                  { label: 'Prepare the questionnaire', sublabel: 'External dispatch remains unavailable until the hardened portal migration is complete' },
+                  { label: 'Review answers and findings', sublabel: 'Record an attributed reviewer decision' },
                 ]}
               />
             ) : (
@@ -513,19 +506,22 @@ export function ProcessorAssessmentWorkspace({
                   <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
                     {a.status === 'draft' && onSendAssessment && (
                       <button
-                        onClick={() => onSendAssessment(a.id)}
-                        className="btn-primary"
+                        onClick={() => externalDispatchEnabled && onSendAssessment(a.id)}
+                        className="btn-secondary"
+                        disabled={!externalDispatchEnabled}
+                        title={externalDispatchEnabled ? 'Issue an external access link' : 'External dispatch is unavailable during the secure portal migration'}
                         style={{ padding: '3px 8px', fontSize: '11px' }}
                       >
-                        Send Link
+                        Dispatch unavailable
                       </button>
                     )}
                     <button
-                      onClick={() => handleCopyLink(a.id)}
+                      disabled
+                      title="No external access link has been issued for this legacy assessment record"
                       className="btn-secondary"
                       style={{ padding: '3px 8px', fontSize: '11px' }}
                     >
-                      {copiedTokenAssessmentId === a.id ? 'Copied!' : '🔗 Copy'}
+                      No link issued
                     </button>
                     <button
                       onClick={() => handleOpenReview(a)}
@@ -534,7 +530,7 @@ export function ProcessorAssessmentWorkspace({
                     >
                       🔍 Review
                     </button>
-                    {a.isRecurring && a.status === 'accepted' && (
+                    {externalDispatchEnabled && a.isRecurring && a.status === 'accepted' && (
                       <button
                         onClick={() => {
                           setRenewingAssessment(a);
@@ -819,7 +815,7 @@ export function ProcessorAssessmentWorkspace({
                   {/* Progressive Disclosure: Recurring Cadence */}
                   <UIFormSection
                     title="Recurring Assurance Cycle"
-                    description="Automatically trigger reassessment questionnaires on a defined interval."
+                    description="Record the intended reassessment cadence. Automated dispatch is not enabled yet."
                   >
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-primary)' }}>
                       <input
@@ -891,7 +887,7 @@ export function ProcessorAssessmentWorkspace({
                   >
                     <span>🛡️</span>
                     <div>
-                      A 256-bit cryptographically signed magic access token will be generated. The supplier will submit responses securely without requiring portal credentials.
+                      This creates an internal draft only. External dispatch is unavailable until this workflow is migrated to the hardened supplier portal.
                     </div>
                   </div>
                 </div>
@@ -974,12 +970,12 @@ export function ProcessorAssessmentWorkspace({
                     </button>
                     <button
                       type="button"
-                      disabled={isSubmittingCreate}
-                      onClick={() => handleCreateSubmit(true)}
-                      className="btn-primary"
+                      disabled
+                      className="btn-secondary"
+                      title="External dispatch is unavailable during the secure portal migration"
                       style={{ fontSize: '12px', padding: '6px 16px', fontWeight: 700 }}
                     >
-                      {isSubmittingCreate ? 'Generating...' : 'Confirm & Dispatch Magic Link 🚀'}
+                      Dispatch unavailable
                     </button>
                   </>
                 )}

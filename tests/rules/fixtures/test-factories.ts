@@ -28,6 +28,7 @@ export async function seedTenantWithMembers(
     await adminDb.doc(`tenants/${tenant.tenantId}`).set({
       id: tenant.tenantId,
       name: tenant.name,
+      status: 'active',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });

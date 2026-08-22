@@ -20,11 +20,11 @@ export function ApproveEvidenceModal({
   onApprove,
   loading = false,
 }: ApproveEvidenceModalProps) {
-  const [notes, setNotes] = useState('Verified compliance with European regulatory safeguards.');
+  const [notes, setNotes] = useState('');
 
   useEffect(() => {
     if (isOpen) {
-      setNotes('Verified compliance with European regulatory safeguards.');
+      setNotes('');
     }
   }, [isOpen]);
 
@@ -36,8 +36,8 @@ export function ApproveEvidenceModal({
     <UIModal
       isOpen={isOpen}
       onClose={onClose}
-      title="Four-Eyes Evidence Approval"
-      subtitle={`Signing off evidence: ${title || evidenceId}`}
+      title="Evidence Approval"
+      subtitle={`Record a review decision for: ${title || evidenceId}`}
       footerActions={
         <>
           <button onClick={onClose} className="btn-secondary" disabled={loading}>
@@ -48,7 +48,7 @@ export function ApproveEvidenceModal({
             disabled={loading}
             className="btn-success"
           >
-            {loading ? 'Signing off...' : 'Authorize & Sign Off'}
+            {loading ? 'Recording...' : 'Record Approval'}
           </button>
         </>
       }
@@ -63,7 +63,7 @@ export function ApproveEvidenceModal({
           rows={4}
           className="input-modern"
           style={{ width: '100%', resize: 'vertical' }}
-          placeholder="Document verification of cryptographic hashes and control satisfaction..."
+          placeholder="Describe the file version inspected, review performed, and conclusion reached."
         />
       </div>
     </UIModal>

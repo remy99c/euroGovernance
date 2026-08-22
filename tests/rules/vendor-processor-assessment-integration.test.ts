@@ -51,12 +51,14 @@ beforeEach(async () => {
 
     // 1. Tenants
     await db.doc(`tenants/${tenantA}`).set({
+      status: 'active',
       id: tenantA,
       name: 'EuroCorp Technologies SE',
       createdAt: now,
       updatedAt: now,
     });
     await db.doc(`tenants/${tenantB}`).set({
+      status: 'active',
       id: tenantB,
       name: 'Nordic AI Health AB',
       createdAt: now,

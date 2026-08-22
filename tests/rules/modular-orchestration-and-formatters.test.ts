@@ -8,7 +8,7 @@ import {
   formatRelativeTime,
   formatSha256,
   formatPercent,
-} from '../../apps/web/src/lib/formatters';
+} from '../../apps/web/src/lib/formatters.js';
 
 describe('UI Formatters Suite', () => {
   describe('formatDate', () => {

@@ -88,6 +88,13 @@ const ALLOWED_MIME_PATTERNS = [
   /^application\/vnd\.ms-excel$/,
 ];
 
+function requireVerifiedEvidencePipeline(): never {
+  throw new HttpsError(
+    'failed-precondition',
+    'Evidence file mutation is temporarily unavailable until a server-verified upload session binds metadata to an immutable Storage object.'
+  );
+}
+
 function validateStorageFile(mimeType: string, fileSizeBytes: number, storagePath: string, tenantId: string) {
   if (fileSizeBytes > MAX_FILE_SIZE_BYTES) {
     throw new HttpsError('invalid-argument', `File size ${fileSizeBytes} exceeds maximum allowed 50MB limit.`);
@@ -112,6 +119,7 @@ function validateStorageFile(mimeType: string, fileSizeBytes: number, storagePat
  * Initializes an evidence record and its initial immutable v1 version document
  */
 export const createEvidence = onCall<CreateEvidenceInput>(async (request) => {
+  requireVerifiedEvidencePipeline();
   const {
     tenantId,
     title,
@@ -230,6 +238,7 @@ export const createEvidence = onCall<CreateEvidenceInput>(async (request) => {
  * Adds a new immutable version to an existing evidence record
  */
 export const createEvidenceVersion = onCall<CreateEvidenceVersionInput>(async (request) => {
+  requireVerifiedEvidencePipeline();
   const {
     tenantId,
     evidenceId,
@@ -322,6 +331,7 @@ export const createEvidenceVersion = onCall<CreateEvidenceVersionInput>(async (r
  * Privileged state transition with Four-Eyes separation and status transition validation
  */
 export const approveEvidence = onCall<ApproveEvidenceInput>(async (request) => {
+  requireVerifiedEvidencePipeline();
   const { tenantId, evidenceId, nextReviewDate, decisionNotes } = request.data;
   if (!tenantId || !evidenceId) {
     throw new HttpsError('invalid-argument', 'tenantId and evidenceId are required.');
@@ -408,6 +418,7 @@ export const approveEvidence = onCall<ApproveEvidenceInput>(async (request) => {
  * Rejects an evidence submission and captures audit rationale and decision comments
  */
 export const rejectEvidence = onCall<RejectEvidenceInput>(async (request) => {
+  requireVerifiedEvidencePipeline();
   const { tenantId, evidenceId, rejectionReason, decisionNotes } = request.data;
   if (!tenantId || !evidenceId || !rejectionReason) {
     throw new HttpsError('invalid-argument', 'tenantId, evidenceId, and rejectionReason are required.');

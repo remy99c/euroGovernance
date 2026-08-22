@@ -1,28 +1,28 @@
 'use client';
 
 /**
- * euroGovernance - Sovereign EU GRC Enterprise Operating System
+ * euroGovernance - EU GRC Operations Platform
  *
  * Core Dashboard Orchestrator
  *
  * Security & Governance Invariants:
  * 1. Multi-Tenant Isolation: All Firestore listeners and callable invocations are strictly
  *    scoped to the authenticated tenant (`/tenants/{tenantId}/...`).
- * 2. Four-Eyes Verification: Direct client-side state transitions on evidence or assessment
- *    approvals are blocked by Firestore security rules. Status transitions must occur through
- *    privileged Cloud Functions (`approveEvidence`, `reviewProcessorAssessment`).
- * 3. Immutable Audit Trails: Privileged state alterations append tamper-evident logs
- *    via backend Admin SDK execution.
+ * 2. Server-Side Review: Evidence and assessment decisions must be submitted
+ *    through authorized Cloud Functions rather than direct client writes.
+ * 3. Audit Events: Privileged state alterations request server-side audit events
+ *    through backend Admin SDK execution.
  */
 
 import React, { useState, useEffect } from 'react';
-import { useAuth, availableTenantsList } from '../lib/auth-context';
+import { useAuth } from '../lib/auth-context';
 import { db, functions } from '../lib/firebase';
 import {
   collection,
   query,
   orderBy,
   limit,
+  where,
   onSnapshot,
   doc,
 } from 'firebase/firestore';
@@ -52,7 +52,6 @@ import { ExportsTabView } from './views/exports-tab-view';
 // Modular Dialog Modals
 import { CreateControlModal } from './modals/create-control-modal';
 import { InviteMemberModal } from './modals/invite-member-modal';
-import { ApproveEvidenceModal } from './modals/approve-evidence-modal';
 import { RejectEvidenceModal } from './modals/reject-evidence-modal';
 import { ClassifyAIModal } from './modals/classify-ai-modal';
 import { AdoptFrameworkModal } from './modals/adopt-framework-modal';
@@ -82,22 +81,93 @@ export type TabType =
   | 'members'
   | 'exports';
 
+function AccessStatePanel({
+  icon,
+  title,
+  description,
+  children,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <main
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        padding: '24px',
+        backgroundColor: 'var(--surface-l1-canvas)',
+      }}
+    >
+      <section
+        className="card-modern"
+        aria-live="polite"
+        style={{ width: 'min(440px, 100%)', padding: '32px' }}
+      >
+        <div aria-hidden="true" style={{ fontSize: '30px', marginBottom: '16px' }}>{icon}</div>
+        <h1 style={{ fontSize: '22px', color: 'var(--text-primary)', marginBottom: '8px' }}>{title}</h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: 1.6, marginBottom: children ? '22px' : 0 }}>
+          {description}
+        </p>
+        {children}
+      </section>
+    </main>
+  );
+}
+
 export default function DashboardPage() {
-  const { user, userRole, tenantId: currentTenantId, loginDevUser } = useAuth();
-  const [tenantId, setTenantId] = useState<string>(currentTenantId || 'tenant_eurocorp_de');
+  const {
+    user,
+    userRole,
+    tenantId,
+    setTenantId,
+    availableTenants,
+    membershipsTruncated,
+    membershipError,
+    loading: authLoading,
+    devPersonasEnabled,
+    loginWithEmail,
+    loginDevUser,
+    refreshMemberships,
+    logout,
+  } = useAuth();
+  const canViewMembers =
+    userRole === 'tenant_admin' ||
+    userRole === 'compliance_manager' ||
+    userRole === 'auditor';
+  const canInviteMembers = userRole === 'tenant_admin';
+  const canRequestExport =
+    userRole === 'tenant_admin' ||
+    userRole === 'compliance_manager' ||
+    userRole === 'security_manager' ||
+    userRole === 'privacy_manager' ||
+    userRole === 'ai_governance_manager';
+  const canReadAuditLogs =
+    userRole === 'tenant_admin' ||
+    userRole === 'compliance_manager' ||
+    userRole === 'security_manager' ||
+    userRole === 'auditor';
+  const canReadBreaches =
+    userRole === 'tenant_admin' ||
+    userRole === 'privacy_manager' ||
+    userRole === 'security_manager' ||
+    userRole === 'compliance_manager' ||
+    userRole === 'auditor';
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [selectedHubProcessorProfileId, setSelectedHubProcessorProfileId] = useState<string | undefined>();
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Modals visibility state
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [onboardingWizardOpen, setOnboardingWizardOpen] = useState(false);
   const [createControlModalOpen, setCreateControlModalOpen] = useState(false);
   const [inviteMemberModalOpen, setInviteMemberModalOpen] = useState(false);
-  const [approveEvidenceModal, setApproveEvidenceModal] = useState<{ open: boolean; evidenceId: string; title: string }>({
-    open: false,
-    evidenceId: '',
-    title: '',
-  });
   const [rejectEvidenceModal, setRejectEvidenceModal] = useState<{ open: boolean; evidenceId: string; title: string }>({
     open: false,
     evidenceId: '',
@@ -134,6 +204,12 @@ export default function DashboardPage() {
   const [adoptedFrameworksList, setAdoptedFrameworksList] = useState<any[]>([]);
   const [certificationsList, setCertificationsList] = useState<any[]>([]);
   const [assessmentsList, setAssessmentsList] = useState<any[]>([]);
+  const [tenantDataScopeId, setTenantDataScopeId] = useState('');
+  const [tenantDataError, setTenantDataError] = useState<string | null>(null);
+  const [tenantDataReloadKey, setTenantDataReloadKey] = useState(0);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [membersRefreshKey, setMembersRefreshKey] = useState(0);
 
   // Resumable Onboarding State Hook
   const {
@@ -147,18 +223,11 @@ export default function DashboardPage() {
     markStepComplete: onboardingMarkStepComplete,
     dismissBanner: onboardingDismissBanner,
     completeOnboarding: onboardingCompleteOnboarding,
-  } = useOnboarding(tenantId, user?.uid || 'usr_admin_01', (userRole as any) || 'tenant_admin');
+  } = useOnboarding(tenantId, user?.uid ?? '', userRole ?? 'viewer');
 
   // Action status state
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
-
-  // Sync tenant ID with auth context
-  useEffect(() => {
-    if (currentTenantId && currentTenantId !== tenantId) {
-      setTenantId(currentTenantId);
-    }
-  }, [currentTenantId, tenantId]);
 
   // Global ⌘K keyboard shortcut listener
   useEffect(() => {
@@ -172,107 +241,289 @@ export default function DashboardPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (activeTab === 'members' && !canViewMembers) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, canViewMembers]);
+
+  // A tenant switch is a hard workspace boundary. Record identifiers held by
+  // drawers or child workflows must never survive into a different tenant
+  // context, even when two tenants happen to use the same document ID.
+  useEffect(() => {
+    setActiveTab('overview');
+    setSelectedHubProcessorProfileId(undefined);
+    setSearchModalOpen(false);
+    setOnboardingWizardOpen(false);
+    setCreateControlModalOpen(false);
+    setInviteMemberModalOpen(false);
+    setRejectEvidenceModal({ open: false, evidenceId: '', title: '' });
+    setClassifyAIModal({ open: false, systemId: '', name: '' });
+    setAdoptFrameworkModal({ open: false, frameworkId: '', frameworkName: '' });
+    setLoadingAction(null);
+    setActionNotice(null);
+  }, [tenantId]);
+
   const showNotice = (msg: string) => {
     setActionNotice(msg);
     setTimeout(() => setActionNotice(null), 6000);
   };
 
+  const handleLoginSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginSubmitting(true);
+    setLoginError(null);
+    try {
+      await loginWithEmail(loginEmail, loginPassword);
+      setLoginPassword('');
+    } catch {
+      setLoginError('Sign-in failed. Check your credentials and try again.');
+    } finally {
+      setLoginSubmitting(false);
+    }
+  };
+
+  const handleDevPersonaLogin = async (role: string) => {
+    setLoginSubmitting(true);
+    setLoginError(null);
+    try {
+      await loginDevUser(role);
+      setLoginPassword('');
+    } catch {
+      setLoginError('The emulator persona could not be authenticated.');
+    } finally {
+      setLoginSubmitting(false);
+    }
+  };
+
   // Subscriptions to Firestore Collections rooted at /tenants/{tenantId}
   useEffect(() => {
-    if (!tenantId) return;
+    const hasSelectedMembership = availableTenants.some(
+      (membership) => membership.id === tenantId && membership.role === userRole
+    );
+
+    if (authLoading || !user || !tenantId || !userRole || !hasSelectedMembership) {
+      setTenantDataScopeId('');
+      setTenantDataError(null);
+      setMetrics(null);
+      setControlsList([]);
+      setEvidenceList([]);
+      setRisksList([]);
+      setTasksList([]);
+      setIssuesList([]);
+      setAuditLogs([]);
+      setRopaList([]);
+      setBreachesList([]);
+      setAiSystemsList([]);
+      setExportJobsList([]);
+      setAdoptedFrameworksList([]);
+      setCertificationsList([]);
+      setAssessmentsList([]);
+      return;
+    }
 
     // 1. Summary Metrics
+    // Clear every prior-tenant value before the new subscription can be shown.
+    setTenantDataScopeId('');
+    setTenantDataError(null);
+    setMetrics(null);
+    setControlsList([]);
+    setEvidenceList([]);
+    setRisksList([]);
+    setTasksList([]);
+    setIssuesList([]);
+    setAuditLogs([]);
+    setRopaList([]);
+    setBreachesList([]);
+    setAiSystemsList([]);
+    setExportJobsList([]);
+    setAdoptedFrameworksList([]);
+    setCertificationsList([]);
+    setAssessmentsList([]);
+
+    let subscriptionActive = true;
+    const initializedSubscriptions = new Set<string>();
+    const expectedInitialSubscriptions =
+      12 + (canReadAuditLogs ? 1 : 0) + (canReadBreaches ? 1 : 0);
+    const markSubscriptionInitialized = (key: string) => {
+      if (!subscriptionActive || initializedSubscriptions.has(key)) return;
+      initializedSubscriptions.add(key);
+      if (initializedSubscriptions.size === expectedInitialSubscriptions) {
+        setTenantDataScopeId(tenantId);
+      }
+    };
+    const handleSubscriptionError = (key: string) => {
+      if (!subscriptionActive) return;
+      setTenantDataScopeId('');
+      setTenantDataError('The organization workspace could not be loaded completely. No partial tenant data is being shown.');
+      markSubscriptionInitialized(key);
+    };
+
     const metricsRef = doc(db, 'tenants', tenantId, 'summary_metrics', 'current');
-    const unsubMetrics = onSnapshot(metricsRef, (snap) => {
-      if (snap.exists()) setMetrics(snap.data());
-    });
+    const unsubMetrics = onSnapshot(
+      metricsRef,
+      (snap) => {
+        setMetrics(snap.exists() ? snap.data() : null);
+        markSubscriptionInitialized('metrics');
+      },
+      () => handleSubscriptionError('metrics')
+    );
 
     // 2. Controls
     const controlsRef = collection(db, 'tenants', tenantId, 'controls');
-    const unsubControls = onSnapshot(controlsRef, (snap) => {
-      setControlsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubControls = onSnapshot(
+      controlsRef,
+      (snap) => {
+        setControlsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('controls');
+      },
+      () => handleSubscriptionError('controls')
+    );
 
     // 3. Evidence
     const evidenceRef = collection(db, 'tenants', tenantId, 'evidence');
-    const unsubEvidence = onSnapshot(evidenceRef, (snap) => {
-      setEvidenceList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubEvidence = onSnapshot(
+      evidenceRef,
+      (snap) => {
+        setEvidenceList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('evidence');
+      },
+      () => handleSubscriptionError('evidence')
+    );
 
     // 4. Risks
     const risksRef = collection(db, 'tenants', tenantId, 'risks');
-    const unsubRisks = onSnapshot(risksRef, (snap) => {
-      setRisksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubRisks = onSnapshot(
+      risksRef,
+      (snap) => {
+        setRisksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('risks');
+      },
+      () => handleSubscriptionError('risks')
+    );
 
     // 5. Tasks
     const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-    const unsubTasks = onSnapshot(tasksRef, (snap) => {
-      setTasksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubTasks = onSnapshot(
+      tasksRef,
+      (snap) => {
+        setTasksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('tasks');
+      },
+      () => handleSubscriptionError('tasks')
+    );
 
     // 6. Issues
     const issuesRef = collection(db, 'tenants', tenantId, 'issues');
-    const unsubIssues = onSnapshot(issuesRef, (snap) => {
-      setIssuesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubIssues = onSnapshot(
+      issuesRef,
+      (snap) => {
+        setIssuesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('issues');
+      },
+      () => handleSubscriptionError('issues')
+    );
 
     // 7. Audit Logs
-    const auditLogsRef = collection(db, 'tenants', tenantId, 'audit_logs');
-    const auditQuery = query(auditLogsRef, orderBy('timestamp', 'desc'), limit(15));
-    const unsubAudit = onSnapshot(auditQuery, (snap) => {
-      setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    let unsubAudit = () => {};
+    if (canReadAuditLogs) {
+      const auditLogsRef = collection(db, 'tenants', tenantId, 'audit_logs');
+      const auditQuery = query(auditLogsRef, orderBy('timestamp', 'desc'), limit(15));
+      unsubAudit = onSnapshot(
+        auditQuery,
+        (snap) => {
+          setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          markSubscriptionInitialized('audit');
+        },
+        () => handleSubscriptionError('audit')
+      );
+    }
 
     // 8. ROPA (Article 30 Activities)
     const ropaRef = collection(db, 'tenants', tenantId, 'ropa_entries');
-    const unsubRopa = onSnapshot(ropaRef, (snap) => {
-      setRopaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubRopa = onSnapshot(
+      ropaRef,
+      (snap) => {
+        setRopaList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('ropa');
+      },
+      () => handleSubscriptionError('ropa')
+    );
 
     // 9. Breaches
-    const breachesRef = collection(db, 'tenants', tenantId, 'breaches');
-    const unsubBreaches = onSnapshot(breachesRef, (snap) => {
-      setBreachesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    let unsubBreaches = () => {};
+    if (canReadBreaches) {
+      const breachesRef = collection(db, 'tenants', tenantId, 'breaches');
+      unsubBreaches = onSnapshot(
+        breachesRef,
+        (snap) => {
+          setBreachesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          markSubscriptionInitialized('breaches');
+        },
+        () => handleSubscriptionError('breaches')
+      );
+    }
 
     // 10. AI Systems
     const aiSystemsRef = collection(db, 'tenants', tenantId, 'ai_systems');
-    const unsubAI = onSnapshot(aiSystemsRef, (snap) => {
-      setAiSystemsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubAI = onSnapshot(
+      aiSystemsRef,
+      (snap) => {
+        setAiSystemsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('ai_systems');
+      },
+      () => handleSubscriptionError('ai_systems')
+    );
 
-    // 11. Members
-    const membersRef = collection(db, 'tenants', tenantId, 'members');
-    const unsubMembers = onSnapshot(membersRef, (snap) => {
-      setMembersList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-
-    // 12. Export Jobs
+    // 11. Export Jobs
     const exportJobsRef = collection(db, 'tenants', tenantId, 'export_jobs');
-    const unsubExports = onSnapshot(exportJobsRef, (snap) => {
-      setExportJobsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const exportJobsQuery = userRole === 'tenant_admin'
+      ? exportJobsRef
+      : query(exportJobsRef, where('requestedBy', '==', user.uid));
+    const unsubExports = onSnapshot(
+      exportJobsQuery,
+      (snap) => {
+        setExportJobsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('exports');
+      },
+      () => handleSubscriptionError('exports')
+    );
 
-    // 13. Adopted Frameworks
+    // 12. Adopted Frameworks
     const adoptedFrameworksRef = collection(db, 'tenants', tenantId, 'adopted_frameworks');
-    const unsubFrameworks = onSnapshot(adoptedFrameworksRef, (snap) => {
-      setAdoptedFrameworksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubFrameworks = onSnapshot(
+      adoptedFrameworksRef,
+      (snap) => {
+        setAdoptedFrameworksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('frameworks');
+      },
+      () => handleSubscriptionError('frameworks')
+    );
 
-    // 14. Certifications
+    // 13. Certifications
     const certsRef = collection(db, 'tenants', tenantId, 'certifications');
-    const unsubCerts = onSnapshot(certsRef, (snap) => {
-      setCertificationsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubCerts = onSnapshot(
+      certsRef,
+      (snap) => {
+        setCertificationsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('certifications');
+      },
+      () => handleSubscriptionError('certifications')
+    );
 
-    // 15. Processor Assessments
+    // 14. Processor Assessments
     const assessmentsRef = collection(db, 'tenants', tenantId, 'processor_assessments');
-    const unsubAssessments = onSnapshot(assessmentsRef, (snap) => {
-      setAssessmentsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsubAssessments = onSnapshot(
+      assessmentsRef,
+      (snap) => {
+        setAssessmentsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        markSubscriptionInitialized('assessments');
+      },
+      () => handleSubscriptionError('assessments')
+    );
 
     return () => {
+      subscriptionActive = false;
       unsubMetrics();
       unsubControls();
       unsubEvidence();
@@ -283,13 +534,64 @@ export default function DashboardPage() {
       unsubRopa();
       unsubBreaches();
       unsubAI();
-      unsubMembers();
       unsubExports();
       unsubFrameworks();
       unsubCerts();
       unsubAssessments();
     };
-  }, [tenantId]);
+  }, [authLoading, availableTenants, canReadAuditLogs, canReadBreaches, tenantDataReloadKey, tenantId, user, userRole]);
+
+  // Membership administration is a privileged server workflow. Never query a
+  // browser-readable `/members` or `/memberships` collection for this screen.
+  useEffect(() => {
+    setMembersList([]);
+    setMembersError(null);
+
+    if (authLoading || !user || !tenantId || !canViewMembers) {
+      setMembersLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setMembersLoading(true);
+
+    const loadMembers = async () => {
+      try {
+        const listMembers = httpsCallable<
+          { tenantId: string },
+          { success: true; count: number; members: any[] }
+        >(functions, 'listTenantMembers');
+        const response = await listMembers({ tenantId });
+        const rawMembers = Array.isArray(response.data?.members) ? response.data.members : [];
+        const scopedMembers = rawMembers.filter(
+          (member) =>
+            member &&
+            typeof member === 'object' &&
+            member.tenantId === tenantId &&
+            typeof member.userId === 'string' &&
+            member.userId.length > 0
+        );
+
+        if (!cancelled) {
+          setMembersList(scopedMembers);
+        }
+      } catch {
+        if (!cancelled) {
+          setMembersList([]);
+          setMembersError('Organization memberships could not be loaded.');
+        }
+      } finally {
+        if (!cancelled) {
+          setMembersLoading(false);
+        }
+      }
+    };
+
+    void loadMembers();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, canViewMembers, membersRefreshKey, tenantId, user]);
 
   // Privileged Backend Actions
   const handleRecalculateMetrics = async () => {
@@ -300,20 +602,6 @@ export default function DashboardPage() {
       showNotice('✅ Summary compliance metrics successfully re-materialized from live database records.');
     } catch (err: any) {
       showNotice(`❌ Error recalculating metrics: ${err.message}`);
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  const handleApproveEvidence = async (evidenceId: string, notes: string) => {
-    setLoadingAction(`approve_${evidenceId}`);
-    try {
-      const fn = httpsCallable(functions, 'approveEvidence');
-      await fn({ tenantId, evidenceId, decisionNotes: notes || 'Verified.' });
-      showNotice('✅ Evidence signed off via Four-Eyes authorization! Immutable audit log recorded.');
-      setApproveEvidenceModal({ open: false, evidenceId: '', title: '' });
-    } catch (err: any) {
-      showNotice(`❌ Approval failed: ${err.message}`);
     } finally {
       setLoadingAction(null);
     }
@@ -333,7 +621,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleCreateControl = async (control: { code: string; title: string; domain: string; frameworkIds: string[] }) => {
+  const handleCreateControl = async (control: { code: string; title: string; description: string; domain: string; frameworkIds: string[] }) => {
     setLoadingAction('create_control');
     try {
       const fn = httpsCallable(functions, 'createTenantControl');
@@ -341,15 +629,11 @@ export default function DashboardPage() {
         tenantId,
         code: control.code,
         title: control.title,
-        description: 'Enforces hardware security key token authentication across all administrative interfaces.',
+        description: control.description,
         domain: control.domain,
         frameworkIds: control.frameworkIds,
-        requirementIds: ['A.9.1', 'Art. 32'],
-        status: 'implemented',
-        healthScore: 100,
-        enforcementMechanism: 'automated',
       });
-      showNotice(`✅ Control ${control.code} created successfully!`);
+      showNotice(`✅ Control ${control.code} created as not started. Implementation and effectiveness require separate review.`);
       setCreateControlModalOpen(false);
     } catch (err: any) {
       showNotice(`❌ Control creation failed: ${err.message}`);
@@ -368,7 +652,8 @@ export default function DashboardPage() {
         role: member.role,
         department: member.department,
       });
-      showNotice(`✅ Invitation dispatched to ${member.email} with role ${member.role}!`);
+      showNotice(`✅ Invitation record created for ${member.email} with role ${member.role}. Email delivery is not configured.`);
+      setMembersRefreshKey((current) => current + 1);
       setInviteMemberModalOpen(false);
     } catch (err: any) {
       showNotice(`❌ Invitation failed: ${err.message}`);
@@ -386,7 +671,7 @@ export default function DashboardPage() {
         exportType,
         filters: {},
       });
-      showNotice(`📦 Export queued & compiled! Storage Path: ${res.data.fileStoragePath || 'Generated successfully'}`);
+      showNotice(`📦 Export job completed with recorded path: ${res.data.fileStoragePath || 'No download path returned'}. Verify the artifact before audit use.`);
     } catch (err: any) {
       showNotice(`❌ Export failed: ${err.message}`);
     } finally {
@@ -398,8 +683,33 @@ export default function DashboardPage() {
     setLoadingAction('create_assessment');
     try {
       const fn = httpsCallable(functions, 'createProcessorAssessment');
-      const res: any = await fn({ tenantId, ...assessment, autoSend });
-      showNotice(`✅ Assessment ${res.data.title || res.data.id} created!`);
+      const respondent = assessment.respondent || {};
+      const res: any = await fn({
+        tenantId,
+        title: assessment.title,
+        assessmentType: assessment.assessmentType,
+        templateId: assessment.templateId,
+        vendorId: assessment.vendorId,
+        vendorName: assessment.vendorName,
+        processorProfileId: assessment.processorProfileId,
+        processorEngagementName: assessment.processorEngagementName,
+        transferArrangementId: assessment.transferArrangementId,
+        linkedSystemAssetIds: assessment.linkedSystemAssetIds,
+        linkedControlIds: assessment.linkedControlIds,
+        linkedEvidenceIds: assessment.linkedEvidenceIds,
+        isRecurring: assessment.isRecurring,
+        recurrenceCadence: assessment.recurrenceCadence,
+        nextDueDate: assessment.nextDueDate,
+        respondentName: respondent.name,
+        respondentEmail: respondent.email,
+        respondentTitle: respondent.title,
+        respondentCompanyName: respondent.companyName,
+        dueDate: assessment.dueDate,
+        reviewOwnerUserId: assessment.reviewOwnerUserId,
+        customSections: assessment.sections,
+        autoSend,
+      });
+      showNotice(`✅ Assessment ${res.data.assessmentId} created.`);
       return res.data;
     } catch (err: any) {
       showNotice(`❌ Creation failed: ${err.message}`);
@@ -438,9 +748,11 @@ export default function DashboardPage() {
       await fn({
         tenantId,
         assessmentId,
-        reviewDecision: decision === 'accept' ? 'approved' : decision === 'reject' ? 'rejected' : decision === 'request_revision' ? 'remediation_required' : 'in_review',
-        reviewNotes: reviewNotes || revisionRequestNotes || rejectionReason,
-        findings: questionReviews ? Object.entries(questionReviews).map(([qId, val]) => ({ questionId: qId, ...val })) : [],
+        decision,
+        reviewNotes,
+        rejectionReason,
+        revisionRequestNotes,
+        questionReviews: questionReviews || {},
       });
       showNotice(`✅ Assessment review updated!`);
     } catch (err: any) {
@@ -471,32 +783,9 @@ export default function DashboardPage() {
   };
 
   const handleClassifyAI = async (params: { systemId: string; isProhibited: boolean; annexThreeCategory: string }) => {
-    setLoadingAction(`classify_${params.systemId}`);
-    try {
-      const fn = httpsCallable(functions, 'classifyTenantAISystem');
-      const res: any = await fn({
-        tenantId,
-        aiSystemId: params.systemId,
-        prohibitedPracticesCheck: {
-          cognitiveBehavioralManipulation: params.isProhibited,
-          vulnerabilityExploitation: false,
-          socialScoring: false,
-          predictivePolicing: false,
-          untargetedFacialScraping: false,
-          emotionRecognitionInWorkplaceOrEducation: false,
-          biometricCategorizationSensitive: false,
-          realTimeRemoteBiometricIdentification: false,
-        },
-        annexThreeCategory: params.annexThreeCategory,
-        justificationSummary: 'Classification determination processed via automated governance matrix.',
-      });
-      showNotice(`✅ AI System reclassified to: ${res.data.determinedRiskTier.toUpperCase()}!`);
-      setClassifyAIModal({ open: false, systemId: '', name: '' });
-    } catch (err: any) {
-      showNotice(`❌ AI classification failed: ${err.message}`);
-    } finally {
-      setLoadingAction(null);
-    }
+    void params;
+    showNotice('AI classification is unavailable until the full Article 5 and Annex III assessment is completed. No legal determination was recorded.');
+    setClassifyAIModal({ open: false, systemId: '', name: '' });
   };
 
   const handleAdoptFramework = async (params: { frameworkId: string; frameworkName: string; scope: string }) => {
@@ -507,9 +796,9 @@ export default function DashboardPage() {
         tenantId,
         frameworkId: params.frameworkId,
         scopeDescription: params.scope,
-        scopingBoundaries: ['Frankfurt Production Cloud', 'EU Data Centers'],
+        scopingBoundaries: [],
       });
-      showNotice(`✅ Successfully adopted ${params.frameworkName}! Initialized scoping and applicability matrix.`);
+      showNotice(`✅ ${params.frameworkName} adoption recorded. Complete and approve scoping before relying on applicability results.`);
       setAdoptFrameworkModal({ open: false, frameworkId: '', frameworkName: '' });
     } catch (err: any) {
       showNotice(`❌ Framework adoption failed: ${err.message}`);
@@ -530,8 +819,6 @@ export default function DashboardPage() {
       setLoadingAction(null);
     }
   };
-
-  const availableTenants = availableTenantsList;
 
   // Map activeTab to Top-Level Navigation Area
   const getTopLevelArea = (tab: TabType): string => {
@@ -559,7 +846,7 @@ export default function DashboardPage() {
     { id: 'operations', label: 'Operations', icon: '⚙️', defaultTab: 'evidence' as TabType },
     { id: 'reports', label: 'Reports', icon: '📦', defaultTab: 'exports' as TabType },
     { id: 'settings', label: 'Settings', icon: '👥', defaultTab: 'members' as TabType },
-  ];
+  ].filter((area) => area.id !== 'settings' || canViewMembers);
 
   const subNavMap: Record<string, { id: TabType; label: string }[]> = {
     frameworks: [
@@ -580,6 +867,153 @@ export default function DashboardPage() {
       { id: 'risks_tasks', label: 'Risks & Tasks' },
     ],
   };
+
+  const selectedTenantMembership = availableTenants.find(
+    (membership) => membership.id === tenantId && membership.role === userRole
+  );
+
+  if (authLoading) {
+    return (
+      <AccessStatePanel
+        icon="⏳"
+        title="Verifying access"
+        description="Authentication and active organization memberships are being verified. Organization records remain unavailable until this check completes."
+      />
+    );
+  }
+
+  if (!user) {
+    return (
+      <AccessStatePanel
+        icon="🔐"
+        title="Sign in to euroGovernance"
+        description="Use your organization account. No tenant is selected and no organization data is loaded before authentication succeeds."
+      >
+        <form onSubmit={handleLoginSubmit} style={{ display: 'grid', gap: '12px' }}>
+          <label style={{ display: 'grid', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px' }}>
+            Email
+            <input
+              type="email"
+              autoComplete="username"
+              value={loginEmail}
+              onChange={(event) => setLoginEmail(event.target.value)}
+              className="input-modern"
+              required
+              disabled={loginSubmitting}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px' }}>
+            Password
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={loginPassword}
+              onChange={(event) => setLoginPassword(event.target.value)}
+              className="input-modern"
+              required
+              disabled={loginSubmitting}
+            />
+          </label>
+          {loginError && (
+            <p role="alert" style={{ color: 'var(--status-critical-fg)', fontSize: '12px' }}>{loginError}</p>
+          )}
+          <button type="submit" className="btn-primary" disabled={loginSubmitting}>
+            {loginSubmitting ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+
+        {devPersonasEnabled && (
+          <div style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid var(--border-subtle)' }}>
+            <p style={{ fontSize: '11px', color: 'var(--status-warning-fg)', marginBottom: '10px' }}>
+              Local Auth emulator personas
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px' }}>
+              {[
+                { id: 'tenant_admin', label: 'Admin' },
+                { id: 'compliance_manager', label: 'Compliance' },
+                { id: 'security_manager', label: 'Security' },
+                { id: 'privacy_manager', label: 'Privacy' },
+                { id: 'ai_governance_manager', label: 'AI Lead' },
+                { id: 'approver', label: 'Approver' },
+                { id: 'auditor', label: 'Auditor' },
+                { id: 'contributor', label: 'Contributor' },
+              ].map((persona) => (
+                <button
+                  key={persona.id}
+                  type="button"
+                  className="btn-secondary"
+                  disabled={loginSubmitting}
+                  onClick={() => void handleDevPersonaLogin(persona.id)}
+                  style={{ fontSize: '11px' }}
+                >
+                  {persona.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </AccessStatePanel>
+    );
+  }
+
+  if (membershipError) {
+    return (
+      <AccessStatePanel icon="⚠️" title="Organization access could not be verified" description={membershipError}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn-primary" onClick={() => void refreshMemberships()}>Retry verification</button>
+          <button className="btn-secondary" onClick={() => void logout()}>Sign out</button>
+        </div>
+      </AccessStatePanel>
+    );
+  }
+
+  if (availableTenants.length === 0 || !tenantId || !userRole) {
+    return (
+      <AccessStatePanel
+        icon="🚫"
+        title="No active organization access"
+        description="Your account is authenticated but has no verified active tenant membership. Ask an organization administrator to grant or reactivate access."
+      >
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn-primary" onClick={() => void refreshMemberships()}>Check again</button>
+          <button className="btn-secondary" onClick={() => void logout()}>Sign out</button>
+        </div>
+      </AccessStatePanel>
+    );
+  }
+
+  if (!selectedTenantMembership) {
+    return (
+      <AccessStatePanel
+        icon="🔒"
+        title="Tenant selection rejected"
+        description="The selected tenant is not present in your verified active memberships. No organization records have been loaded."
+      >
+        <button className="btn-primary" onClick={() => void refreshMemberships()}>Reload memberships</button>
+      </AccessStatePanel>
+    );
+  }
+
+  if (tenantDataError) {
+    return (
+      <AccessStatePanel icon="⚠️" title="Workspace unavailable" description={tenantDataError}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn-primary" onClick={() => setTenantDataReloadKey((current) => current + 1)}>Retry workspace</button>
+          <button className="btn-secondary" onClick={() => void logout()}>Sign out</button>
+        </div>
+      </AccessStatePanel>
+    );
+  }
+
+  if (tenantDataScopeId !== tenantId) {
+    return (
+      <AccessStatePanel
+        icon="⏳"
+        title="Loading organization workspace"
+        description="Required tenant records are loading. The dashboard will remain hidden until every required data source responds."
+      />
+    );
+  }
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--surface-l1-canvas)' }}>
@@ -620,7 +1054,7 @@ export default function DashboardPage() {
               <div style={{ fontWeight: 700, fontSize: '14px', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
                 euroGovernance
               </div>
-              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Sovereign GRC Operating System</div>
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Governance &amp; Compliance Workspace</div>
             </div>
           </div>
 
@@ -631,12 +1065,14 @@ export default function DashboardPage() {
                 Tenant Context
               </span>
               <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '4px', backgroundColor: 'var(--surface-subtle)', color: 'var(--text-muted)' }}>
-                FRA-WEST3
+                VERIFIED
               </span>
             </div>
             <select
+              aria-label="Active organization"
               value={tenantId}
               onChange={(e) => setTenantId(e.target.value)}
+              disabled={availableTenants.length < 2 || loadingAction !== null}
               className="input-modern"
               style={{
                 width: '100%',
@@ -651,6 +1087,11 @@ export default function DashboardPage() {
                 </option>
               ))}
             </select>
+            {membershipsTruncated && (
+              <p style={{ marginTop: '6px', color: 'var(--status-warning-fg)', fontSize: '10px' }}>
+                Membership list limited to the first 250 active organizations.
+              </p>
+            )}
           </div>
 
           {/* 9 Scannable Navigation Links */}
@@ -691,7 +1132,7 @@ export default function DashboardPage() {
           </nav>
         </div>
 
-        {/* Role Context & Dev Persona Switcher */}
+        {/* Verified role context; emulator persona controls are explicitly gated. */}
         <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', paddingLeft: '2px' }}>
           <div style={{ fontSize: '10.5px', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Role Context:</span>
@@ -699,36 +1140,48 @@ export default function DashboardPage() {
               {userRole?.replace('_', ' ')}
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '3px' }}>
-            {[
-              { id: 'tenant_admin', label: 'Admin' },
-              { id: 'compliance_manager', label: 'Compliance' },
-              { id: 'security_manager', label: 'Security' },
-              { id: 'privacy_manager', label: 'Privacy' },
-              { id: 'ai_governance_manager', label: 'AI Lead' },
-              { id: 'auditor', label: 'Auditor' },
-              { id: 'contributor', label: 'Contrib' },
-            ].map((r) => (
-              <button
-                key={r.id}
-                onClick={() => loginDevUser(r.id)}
-                style={{
-                  fontSize: '9.5px',
-                  fontWeight: userRole === r.id ? 700 : 500,
-                  padding: '4px 2px',
-                  textAlign: 'center',
-                  borderRadius: '4px',
-                  border: '1px solid var(--border-default)',
-                  backgroundColor: userRole === r.id ? 'var(--accent-primary)' : 'var(--surface-subtle)',
-                  color: userRole === r.id ? '#ffffff' : 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  transition: 'background-color 0.15s ease',
-                }}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
+          {devPersonasEnabled && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '3px', marginBottom: '8px' }}>
+              {[
+                { id: 'tenant_admin', label: 'Admin' },
+                { id: 'compliance_manager', label: 'Compliance' },
+                { id: 'security_manager', label: 'Security' },
+                { id: 'privacy_manager', label: 'Privacy' },
+                { id: 'ai_governance_manager', label: 'AI Lead' },
+                { id: 'approver', label: 'Approver' },
+                { id: 'auditor', label: 'Auditor' },
+                { id: 'contributor', label: 'Contrib' },
+              ].map((persona) => (
+                <button
+                  key={persona.id}
+                  type="button"
+                  disabled={loginSubmitting || loadingAction !== null}
+                  onClick={() => void handleDevPersonaLogin(persona.id)}
+                  style={{
+                    fontSize: '9.5px',
+                    fontWeight: 500,
+                    padding: '4px 2px',
+                    textAlign: 'center',
+                    borderRadius: '4px',
+                    border: '1px solid var(--border-default)',
+                    backgroundColor: 'var(--surface-subtle)',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {persona.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void logout().catch(() => showNotice('Sign-out failed. Your authenticated session remains active.'))}
+            style={{ width: '100%', fontSize: '10.5px', padding: '5px 8px' }}
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -887,7 +1340,6 @@ export default function DashboardPage() {
               auditLogs={auditLogs}
               onNavigateToTab={(tab) => setActiveTab(tab as TabType)}
               onRecalculateMetrics={handleRecalculateMetrics}
-              onRequestExport={handleRequestExport}
               loadingAction={loadingAction}
             />
           )}
@@ -914,13 +1366,7 @@ export default function DashboardPage() {
           {activeTab === 'evidence' && (
             <EvidenceTabView
               evidenceList={evidenceList}
-              onOpenApproveModal={(ev) =>
-                setApproveEvidenceModal({
-                  open: true,
-                  evidenceId: ev.id,
-                  title: ev.title,
-                })
-              }
+              onOpenApproveModal={() => undefined}
               onOpenRejectModal={(ev) =>
                 setRejectEvidenceModal({
                   open: true,
@@ -946,7 +1392,7 @@ export default function DashboardPage() {
               <CertificationsManager
                 tenantId={tenantId}
                 userRole={userRole}
-                userId={user?.uid || 'usr_admin_01'}
+                userId={user.uid}
                 certifications={certificationsList}
                 evidenceList={evidenceList}
                 controlsList={controlsList}
@@ -1045,6 +1491,10 @@ export default function DashboardPage() {
             <MembersTabView
               membersList={membersList}
               onOpenInviteModal={() => setInviteMemberModalOpen(true)}
+              canInvite={canInviteMembers}
+              loading={membersLoading}
+              error={membersError}
+              onRetry={() => setMembersRefreshKey((current) => current + 1)}
             />
           )}
 
@@ -1053,6 +1503,7 @@ export default function DashboardPage() {
             <ExportsTabView
               exportJobsList={exportJobsList}
               onRequestExport={handleRequestExport}
+              canRequestExport={canRequestExport}
               loadingAction={loadingAction}
             />
           )}
@@ -1094,15 +1545,6 @@ export default function DashboardPage() {
         onClose={() => setInviteMemberModalOpen(false)}
         onSubmit={handleInviteMember}
         loading={loadingAction === 'invite_member'}
-      />
-
-      <ApproveEvidenceModal
-        isOpen={approveEvidenceModal.open}
-        evidenceId={approveEvidenceModal.evidenceId}
-        title={approveEvidenceModal.title}
-        onClose={() => setApproveEvidenceModal({ open: false, evidenceId: '', title: '' })}
-        onApprove={handleApproveEvidence}
-        loading={loadingAction?.startsWith('approve_')}
       />
 
       <RejectEvidenceModal

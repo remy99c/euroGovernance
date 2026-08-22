@@ -55,7 +55,7 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
       const adminDb = context.firestore();
 
       // Seed Tenant A
-      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, name: 'EuroCorp Technologies SE' });
+      await adminDb.doc(`tenants/${tenantA}`).set({ status: 'active', id: tenantA, name: 'EuroCorp Technologies SE' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${userAdminA}`).set({
         userId: userAdminA,
         tenantId: tenantA,
@@ -100,7 +100,7 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
       });
 
       // Seed Tenant B
-      await adminDb.doc(`tenants/${tenantB}`).set({ id: tenantB, name: 'MedTech France SAS' });
+      await adminDb.doc(`tenants/${tenantB}`).set({ status: 'active', id: tenantB, name: 'MedTech France SAS' });
       await adminDb.doc(`tenants/${tenantB}/memberships/${userAdminB}`).set({
         userId: userAdminB,
         tenantId: tenantB,

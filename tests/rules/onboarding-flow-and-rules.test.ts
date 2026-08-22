@@ -91,16 +91,42 @@ describe('Onboarding State Security Rules & State Invariants', () => {
           tenantId: 'tenant_alpha',
           role: 'compliance_manager',
           status: 'in_progress',
+          currentStepId: 'comp_scoping',
           currentStepIndex: 1,
           completedStepIds: ['comp_scoping'],
           totalSteps: 4,
+          hasDismissedBanner: false,
           startedAt: new Date().toISOString(),
+          completedAt: null,
           lastActiveAt: new Date().toISOString(),
         })
       );
 
       const snap = await assertSucceeds(ref.get());
       expect(snap.exists).toBe(true);
+    });
+
+    it('DENIES forged roles, unknown fields, and invalid onboarding bounds', async () => {
+      const aliceDb = testEnv.authenticatedContext('usr_alice').firestore();
+      const ref = aliceDb.collection('tenants').doc('tenant_alpha').collection('onboarding_state').doc('usr_alice');
+      const baseline = {
+        userId: 'usr_alice',
+        tenantId: 'tenant_alpha',
+        role: 'compliance_manager',
+        status: 'in_progress',
+        currentStepId: 'comp_scoping',
+        currentStepIndex: 0,
+        completedStepIds: [],
+        totalSteps: 4,
+        hasDismissedBanner: false,
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        lastActiveAt: new Date().toISOString(),
+      };
+
+      await assertFails(ref.set({ ...baseline, role: 'tenant_admin' }));
+      await assertFails(ref.set({ ...baseline, serverOwned: true }));
+      await assertFails(ref.set({ ...baseline, currentStepIndex: 4 }));
     });
 
     it('DENIES a user from writing onboarding state for another user in the same tenant', async () => {

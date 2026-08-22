@@ -1,7 +1,11 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db, storage } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import {
+  appendAuditLogInTransaction,
+  auditActorFromVerifiedContext,
+  VerifiedAuditActor,
+} from '../lib/audit.js';
 import { createNotification } from '../lib/notifications.js';
 import {
   ExportJob,
@@ -59,7 +63,11 @@ export interface ListExportJobsInput {
 /**
  * Executes the backend export compilation job, assembling real tenant data into a tenant-scoped artifact.
  */
-export async function processExportJob(tenantId: string, jobId: string): Promise<ExportJob> {
+export async function processExportJob(
+  tenantId: string,
+  jobId: string,
+  auditActor: VerifiedAuditActor
+): Promise<ExportJob> {
   const jobRef = db.collection('tenants').doc(tenantId).collection('export_jobs').doc(jobId);
   const snap = await jobRef.get();
   if (!snap.exists) {
@@ -1182,22 +1190,19 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
     const fileBuffer = Buffer.from(fileContent, 'utf8');
     const fileSizeBytes = fileBuffer.length;
 
-    // Save artifact into tenant-scoped storage location
-    try {
-      const bucket = storage.bucket();
-      const file = bucket.file(storagePath);
-      await file.save(fileBuffer, {
-        contentType,
-        metadata: {
-          tenantId,
-          jobId,
-          exportType: job.exportType,
-          generatedAt: processingTime,
-        },
-      });
-    } catch {
-      // If storage emulator bucket is not loaded, fallback gracefully with virtual storage path
-    }
+    // A job is never marked complete unless the server actually persisted the
+    // artifact. A synthetic path is not evidence that an export exists.
+    const bucket = storage.bucket();
+    const file = bucket.file(storagePath);
+    await file.save(fileBuffer, {
+      contentType,
+      metadata: {
+        tenantId,
+        jobId,
+        exportType: job.exportType,
+        generatedAt: processingTime,
+      },
+    });
 
     const completedAt = new Date().toISOString();
 
@@ -1209,38 +1214,49 @@ export async function processExportJob(tenantId: string, jobId: string): Promise
       errorMessage: null,
     };
 
-    await jobRef.update(updatedJob);
-
-    await recordAuditLog({
-      tenantId,
-      actorId: job.requestedBy,
-      actorEmail: 'export-service@eurogovernance.local',
-      actorRole: 'tenant_admin',
-      entityType: 'export_job',
-      entityId: jobId,
-      action: 'export_generated',
-      afterSummary: {
-        exportType: job.exportType,
-        storagePath,
-        fileSizeBytes,
-        status: 'completed',
-      },
-      source: 'cloud_function',
-      workflowContext: 'export_generation_completed',
+    await db.runTransaction(async (transaction) => {
+      transaction.update(jobRef, updatedJob);
+      appendAuditLogInTransaction(transaction, {
+        tenantId,
+        ...auditActorFromVerifiedContext(auditActor),
+        entityType: 'export_job',
+        entityId: jobId,
+        action: 'export_generated',
+        afterSummary: {
+          exportType: job.exportType,
+          storagePath,
+          fileSizeBytes,
+          status: 'completed',
+          format: 'json',
+          browserDownloadAvailable: false,
+        },
+        source: 'cloud_function',
+        workflowContext: 'export_generation_completed',
+      });
     });
 
     if (job.requestedBy) {
-      await createNotification({
-        tenantId,
-        recipientId: job.requestedBy,
-        title: 'Compliance Export Ready',
-        message: `Your export "${job.exportType}" has completed processing and is ready for download.`,
-        type: 'export_ready',
-        priority: 'medium',
-        linkUrl: storagePath,
-        sourceEntityType: 'export_job',
-        sourceEntityId: jobId,
-      });
+      try {
+        await createNotification({
+          tenantId,
+          recipientId: job.requestedBy,
+          title: 'Structured Export Draft Generated',
+          message: `A server-side JSON draft for "${job.exportType}" was generated. Browser download is unavailable until the authorized download pipeline is released.`,
+          type: 'export_ready',
+          priority: 'medium',
+          linkUrl: null,
+          sourceEntityType: 'export_job',
+          sourceEntityId: jobId,
+        });
+      } catch (notificationError) {
+        // Delivery is best-effort after the authoritative job and audit event
+        // commit; it must not rewrite a successful export as failed.
+        console.error('Failed to create export notification', {
+          tenantId,
+          jobId,
+          notificationError,
+        });
+      }
     }
 
     return { ...job, ...updatedJob } as ExportJob;
@@ -1272,7 +1288,6 @@ export const generateTenantEvidenceExport = onCall<RequestExportInput>(async (re
     'security_manager',
     'privacy_manager',
     'ai_governance_manager',
-    'auditor',
   ]);
 
   const jobRef = db.collection('tenants').doc(tenantId).collection('export_jobs').doc();
@@ -1296,7 +1311,7 @@ export const generateTenantEvidenceExport = onCall<RequestExportInput>(async (re
   await jobRef.set(exportJobDoc);
 
   // Execute processing
-  const completedJob = await processExportJob(tenantId, jobRef.id);
+  const completedJob = await processExportJob(tenantId, jobRef.id, authContext);
 
   return {
     success: true,
@@ -1323,8 +1338,6 @@ export const generateFrameworkReadinessReport = onCall<{ tenantId: string; frame
     'security_manager',
     'privacy_manager',
     'ai_governance_manager',
-    'auditor',
-    'approver',
   ]);
 
   const jobRef = db.collection('tenants').doc(tenantId).collection('export_jobs').doc();
@@ -1347,7 +1360,7 @@ export const generateFrameworkReadinessReport = onCall<{ tenantId: string; frame
 
   await jobRef.set(exportJobDoc);
 
-  const completedJob = await processExportJob(tenantId, jobRef.id);
+  const completedJob = await processExportJob(tenantId, jobRef.id, authContext);
 
   return {
     success: true,

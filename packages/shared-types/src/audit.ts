@@ -1,5 +1,8 @@
 import { ActionSource, UserRole } from './core.js';
 
+export type AuditActorRole = UserRole | 'external_respondent' | 'system';
+export type AuditActorType = 'tenant_user' | 'external_respondent' | 'system';
+
 export type AuditActionType =
   | 'create'
   | 'update'
@@ -110,7 +113,8 @@ export interface AuditLogEvent {
   tenantId: string;
   actorId: string;
   actorEmail: string;
-  actorRole: UserRole;
+  actorRole: AuditActorRole;
+  actorType?: AuditActorType;
   entityType: string; // e.g. 'control', 'evidence', 'ropa_entry', 'ai_system', 'tenant_membership'
   entityId: string;
   action: AuditActionType;

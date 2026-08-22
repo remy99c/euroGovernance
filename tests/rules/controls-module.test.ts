@@ -50,7 +50,11 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
       const adminDb = context.firestore();
 
       // Seed Tenant
-      await adminDb.doc(`tenants/${tenantOrg}`).set({ id: tenantOrg, name: 'EuroCorp Technologies SE' });
+      await adminDb.doc(`tenants/${tenantOrg}`).set({
+        status: 'active',
+        id: tenantOrg,
+        name: 'EuroCorp Technologies SE',
+      });
 
       // Seed Memberships
       await adminDb.doc(`tenants/${tenantOrg}/memberships/${userAdmin}`).set({
@@ -215,23 +219,36 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
   });
 
   // 5. Control Review Subcollection Permissions
-  test('Auditors and Compliance Managers can submit review logs; reviews are append-only', async () => {
+  test('Compliance Managers can submit append-only review logs; Auditors and Contributors cannot', async () => {
+    const complianceDb = testEnv.authenticatedContext(userCompliance, { email: 'comp@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditor, { email: 'auditor@kpmg.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributor, { email: 'dev@eurocorp.de' }).firestore();
 
-    const reviewRef = auditorDb.doc(`tenants/${tenantOrg}/controls/${controlId}/reviews/rev_01`);
+    const reviewRef = complianceDb.doc(`tenants/${tenantOrg}/controls/${controlId}/reviews/rev_01`);
 
-    // Auditor CAN create review log
+    // Compliance Manager CAN create review log
     await assertSucceeds(
       reviewRef.set({
         id: 'rev_01',
         tenantId: tenantOrg,
         controlId,
         status: 'approved',
-        reviewerId: userAuditor,
+        reviewerId: userCompliance,
         effectiveness: 'effective',
         notes: 'Verified processing register completeness according to Art. 30(1)(a)-(g).',
         reviewedAt: new Date().toISOString(),
+      })
+    );
+
+    // Auditor is a read-only assurance persona and CANNOT create review logs
+    await assertFails(
+      auditorDb.doc(`tenants/${tenantOrg}/controls/${controlId}/reviews/rev_auditor`).set({
+        id: 'rev_auditor',
+        tenantId: tenantOrg,
+        controlId,
+        status: 'approved',
+        reviewerId: userAuditor,
+        effectiveness: 'effective',
       })
     );
 
@@ -257,7 +274,7 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
   test('User from outsider organization cannot read controls in Tenant A', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
-      await adminDb.doc(`tenants/${outsiderOrg}`).set({ id: outsiderOrg, name: 'MedTech France SAS' });
+      await adminDb.doc(`tenants/${outsiderOrg}`).set({ status: 'active', id: outsiderOrg, name: 'MedTech France SAS' });
       await adminDb.doc(`tenants/${outsiderOrg}/memberships/${userOutsider}`).set({
         userId: userOutsider,
         tenantId: outsiderOrg,

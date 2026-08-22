@@ -14,20 +14,17 @@ export interface EvidenceTabViewProps {
 
 export function EvidenceTabView({
   evidenceList,
-  onOpenApproveModal,
-  onOpenRejectModal,
-  loadingAction,
 }: EvidenceTabViewProps) {
   const pendingCount = evidenceList.filter((e) => e.status === 'in_review' || e.status === 'under_review').length;
 
   return (
     <div>
       <UIPageHeader
-        title="Evidence Review & Four-Eyes Queue"
-        description="Privileged verification workflows with SHA-256 integrity checks. Direct client status jumps are blocked by security rules."
+        title="Evidence Review Queue"
+        description="Recorded evidence metadata awaiting review. Approval and rejection are disabled until the referenced file version can be securely inspected and server-verified."
         badge={
           <UIBadge variant={pendingCount > 0 ? 'warning' : 'compliant'}>
-            {pendingCount} Awaiting Four-Eyes Review
+            {pendingCount} Awaiting Review
           </UIBadge>
         }
       />
@@ -37,7 +34,7 @@ export function EvidenceTabView({
           <UIEmptyState
             icon="📁"
             title="No Evidence In Queue"
-            description="Evidence artifacts submitted by contributors will appear here for four-eyes validation."
+            description="No evidence records are currently available for review."
           />
         ) : (
           evidenceList.map((ev) => (
@@ -69,37 +66,17 @@ export function EvidenceTabView({
 
               <div style={{ display: 'flex', gap: '8px' }}>
                 {ev.status === 'under_review' || ev.status === 'in_review' ? (
-                  <>
-                    <button
-                      onClick={() =>
-                        onOpenApproveModal({
-                          id: ev.id,
-                          title: ev.title || ev.id,
-                        })
-                      }
-                      disabled={loadingAction === `approve_${ev.id}`}
-                      className="btn-success"
-                      style={{ padding: '6px 14px', fontSize: '12px' }}
-                    >
-                      Approve (Four-Eyes)
-                    </button>
-                    <button
-                      onClick={() =>
-                        onOpenRejectModal({
-                          id: ev.id,
-                          title: ev.title || ev.id,
-                        })
-                      }
-                      disabled={loadingAction === `reject_${ev.id}`}
-                      className="btn-danger"
-                      style={{ padding: '6px 14px', fontSize: '12px' }}
-                    >
-                      Reject
-                    </button>
-                  </>
+                  <button
+                    disabled
+                    className="btn-secondary"
+                    title="Approval and rejection are unavailable until secure file inspection and server-side integrity verification are implemented."
+                    style={{ padding: '6px 14px', fontSize: '12px' }}
+                  >
+                    Review Decisions Unavailable
+                  </button>
                 ) : (
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    {ev.status === 'valid' || ev.status === 'approved' ? '✅ Signed off & Active' : '❌ Revision Pending'}
+                    {ev.status === 'valid' || ev.status === 'approved' ? 'Approval status recorded' : 'Revision pending'}
                   </span>
                 )}
               </div>

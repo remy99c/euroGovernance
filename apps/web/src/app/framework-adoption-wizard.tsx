@@ -82,66 +82,59 @@ interface QuestionnaireQuestion {
 const DEFAULT_QUESTIONS: QuestionnaireQuestion[] = [
   {
     id: 'q_gdpr_personal_data',
-    factKey: 'processesPersonalData',
+    factKey: 'processes_personal_data',
     category: 'Data Processing',
     prompt: 'Does your organization process personal data of EU/EEA citizens?',
     helpText: 'Includes customer accounts, employee records, or tracking telemetry.',
     responseType: 'boolean',
-    defaultValue: true,
   },
   {
     id: 'q_gdpr_special_cat',
-    factKey: 'processesSpecialCategoryData',
+    factKey: 'processes_special_category_data',
     category: 'Data Processing',
     prompt: 'Do you process special category data (health, biometric, religious, or political)?',
     helpText: 'Triggers mandatory Article 35 Data Protection Impact Assessments (DPIAs).',
     responseType: 'boolean',
-    defaultValue: false,
   },
   {
     id: 'q_gdpr_transfers',
-    factKey: 'internationalDataTransfers',
+    factKey: 'has_international_transfers',
     category: 'Data Processing',
     prompt: 'Do you transfer personal data outside the European Economic Area (EEA)?',
     helpText: 'Triggers Chapter V Transfer Impact Assessments (TIAs) and SCC safeguards.',
     responseType: 'boolean',
-    defaultValue: true,
   },
   {
     id: 'q_ai_deploys',
-    factKey: 'deploysAISystems',
+    factKey: 'deploys_ai_systems',
     category: 'AI Governance',
     prompt: 'Does your organization deploy or develop AI models or LLM integrations?',
     helpText: 'Triggers Article 49 AI System Register and Article 73 Serious Incident logging.',
     responseType: 'boolean',
-    defaultValue: true,
   },
   {
     id: 'q_ai_high_risk',
-    factKey: 'highRiskAIUsage',
+    factKey: 'deploys_high_risk_ai',
     category: 'AI Governance',
     prompt: 'Are any AI models used for credit scoring, hiring/HR, biometrics, or critical infra?',
     helpText: 'Classified under Annex III high-risk; triggers FRIA and Post-Market Monitoring.',
     responseType: 'boolean',
-    defaultValue: false,
   },
   {
     id: 'q_data_act_connected',
-    factKey: 'manufacturesConnectedProducts',
+    factKey: 'is_b2b_data_holder',
     category: 'Data Act & Cloud',
     prompt: 'Do you manufacture connected IoT hardware or provide data-generating connected services?',
     helpText: 'Triggers Chapter II Connected Product & IoT Data Asset Registers.',
     responseType: 'boolean',
-    defaultValue: false,
   },
   {
     id: 'q_data_act_cloud',
-    factKey: 'usesCloudInfrastructure',
+    factKey: 'uses_cloud_infrastructure',
     category: 'Data Act & Cloud',
     prompt: 'Do you utilize public cloud infrastructure (AWS, GCP, Azure, Hetzner)?',
     helpText: 'Triggers Chapter VI Cloud Switching & Provider Interoperability Records.',
     responseType: 'boolean',
-    defaultValue: true,
   },
 ];
 
@@ -152,16 +145,8 @@ interface WizardProps {
 
 export default function FrameworkAdoptionWizard({ tenantId, onComplete }: WizardProps) {
   const [currentStep, setCurrentStep] = useState<number>(1);
-  const [selectedFrameworkIds, setSelectedFrameworkIds] = useState<string[]>(['gdpr', 'iso_27001']);
-  const [answers, setAnswers] = useState<Record<string, any>>({
-    processesPersonalData: true,
-    processesSpecialCategoryData: false,
-    internationalDataTransfers: true,
-    deploysAISystems: true,
-    highRiskAIUsage: false,
-    manufacturesConnectedProducts: false,
-    usesCloudInfrastructure: true,
-  });
+  const [selectedFrameworkIds, setSelectedFrameworkIds] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<Record<string, boolean>>({});
 
   // Loading & Error States
   const [loading, setLoading] = useState<boolean>(false);
@@ -210,8 +195,9 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
         await adoptFn({
           tenantId,
           frameworkId: fwId,
-          versionPinned: fw?.version || '1.0',
-          scopeDescription: `Enterprise operational compliance scope for ${fw?.name}`,
+          pinnedVersion: fw?.version || '1.0',
+          scopeDescription: `Scope definition for ${fw?.name} is pending documented review and approval.`,
+          scopingBoundaries: [],
         });
       }
       showToast(`✅ Successfully adopted ${selectedFrameworkIds.length} framework(s)!`);
@@ -227,6 +213,14 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
 
   // Step 3 -> 4: Submit Scope Questionnaire & Run Applicability Evaluation
   const handleEvaluateApplicability = async () => {
+    const unansweredQuestions = DEFAULT_QUESTIONS.filter(
+      (question) => typeof answers[question.factKey] !== 'boolean'
+    );
+    if (unansweredQuestions.length > 0) {
+      setError(`Answer all ${DEFAULT_QUESTIONS.length} scope questions before evaluation.`);
+      return;
+    }
+
     setLoading(true);
     setLoadingMessage('Processing scope questionnaire answers and evaluating deterministic applicability rules...');
     setError(null);
@@ -237,10 +231,16 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
       const formattedFacts = Object.entries(answers).map(([key, val]) => ({
         factKey: key,
         category:
-          key.includes('AI') ? 'ai_systems' : key.includes('Cloud') ? 'infrastructure' : 'data_processing',
+          key.includes('ai')
+            ? 'ai_systems'
+            : key.includes('cloud') || key.includes('b2b')
+              ? 'infrastructure'
+              : 'data_processing',
         dataType: 'boolean',
         valueBoolean: typeof val === 'boolean' ? val : null,
         valueString: typeof val === 'string' ? val : null,
+        source: 'questionnaire',
+        confidence: 'self_declared',
       }));
 
       await batchFactsFn({
@@ -250,7 +250,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
 
       // 2. Run Applicability Engine
       const evalFn = httpsCallable(functions, 'evaluateTenantApplicability');
-      const evalRes: any = await evalFn({ tenantId, overrideExistingDecisions: true });
+      const evalRes: any = await evalFn({ tenantId, overrideExistingDecisions: false });
 
       // 3. Derive Statutory Obligations (GDPR, AI Act, Data Act)
       const oblFn = httpsCallable(functions, 'evaluateStatutoryObligations');
@@ -273,7 +273,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
   // Step 4 -> 5 & 6: Confirm Generation of Tenant Controls & Obligations
   const handleConfirmGeneration = async () => {
     setLoading(true);
-    setLoadingMessage('Instantiating tenant controls, harmonizing obligations, and persisting registers...');
+    setLoadingMessage('Instantiating recorded controls and persisting derived obligation flags...');
     setError(null);
 
     try {
@@ -283,17 +283,21 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
 
       // 2. Persist Statutory Obligations
       const oblFn = httpsCallable(functions, 'evaluateStatutoryObligations');
-      await oblFn({ tenantId, persistFlags: true });
+      const persistedObligations: any = await oblFn({ tenantId, persistFlags: true });
 
       // 3. Fetch summary for coverage dashboard
-      const summaryList = instRes.data.instantiatedControls || [];
+      const summaryList = Array.isArray(instRes.data.controlInstances)
+        ? instRes.data.controlInstances
+        : [];
       setCoverageData({
-        totalControls: instRes.data.createdControlsCount + instRes.data.updatedControlsCount,
+        totalControls: summaryList.length,
         harmonizedControlsCount: instRes.data.harmonizedControlsCount,
+        excludedControlsCount: summaryList.filter((control: any) => control.status === 'not_applicable').length,
         controls: summaryList,
       });
+      setStatutoryObligations(persistedObligations.data.obligationFlags || []);
 
-      showToast('🎉 Tenant controls and statutory obligation registers successfully instantiated!');
+      showToast('✅ Recorded controls and derived statutory obligation flags were persisted. No control was marked implemented by this action.');
       setCurrentStep(6); // Land on Coverage Dashboard
       if (onComplete) onComplete();
     } catch (err: any) {
@@ -784,7 +788,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 Applicable Obligations
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--status-success)', marginTop: '4px' }}>
-                {evaluationSummary?.applicableCount ?? 14}
+                {evaluationSummary ? evaluationSummary.applicableCount : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                 Mandatory & active controls
@@ -803,7 +807,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 Excluded / Not Applicable
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--status-danger)', marginTop: '4px' }}>
-                {evaluationSummary?.notApplicableCount ?? 3}
+                {evaluationSummary ? evaluationSummary.notApplicableCount : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                 Exclusions with recorded rationale
@@ -822,7 +826,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 Review Required
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--status-warning)', marginTop: '4px' }}>
-                {evaluationSummary?.reviewRequiredCount ?? 1}
+                {evaluationSummary ? evaluationSummary.reviewRequiredCount : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                 Ambiguous scope or manual check
@@ -841,7 +845,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 Statutory Registers
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '4px' }}>
-                {statutoryObligations.length > 0 ? statutoryObligations.length : 5}
+                {evaluationSummary ? statutoryObligations.length : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                 ROPA, DPIA, AI System Registers
@@ -855,39 +859,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
               Required Statutory Registers & Assessments
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {(statutoryObligations.length > 0
-                ? statutoryObligations
-                : [
-                    {
-                      id: 'obl_gdpr_ropa',
-                      title: 'Records of Processing Activities (ROPA)',
-                      statutoryBasis: 'GDPR Article 30',
-                      targetCollection: 'ropa_entries',
-                      rationale: 'Personal data processing scope fact active.',
-                    },
-                    {
-                      id: 'obl_gdpr_breach',
-                      title: 'Personal Data Breach Incident Register',
-                      statutoryBasis: 'GDPR Articles 33 & 34',
-                      targetCollection: 'breach_logs',
-                      rationale: '72h mandatory notification tracking.',
-                    },
-                    {
-                      id: 'obl_ai_reg',
-                      title: 'EU AI Act AI System Register',
-                      statutoryBasis: 'EU AI Act Article 49',
-                      targetCollection: 'ai_systems',
-                      rationale: 'Organizational AI deployment scope fact active.',
-                    },
-                    {
-                      id: 'obl_da_switching',
-                      title: 'Cloud Switching & Provider Interoperability Register',
-                      statutoryBasis: 'EU Data Act Chapter VI',
-                      targetCollection: 'switching_dependencies',
-                      rationale: 'Cloud infrastructure usage scope fact active.',
-                    },
-                  ]
-              ).map((obl: any) => (
+              {statutoryObligations.map((obl: any) => (
                 <div
                   key={obl.id}
                   style={{
@@ -920,6 +892,11 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                   </span>
                 </div>
               ))}
+              {statutoryObligations.length === 0 && (
+                <div style={{ padding: '14px', color: 'var(--text-muted)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+                  No statutory obligation flags were derived from the recorded answers. Review the scope facts before relying on this result.
+                </div>
+              )}
             </div>
           </div>
 
@@ -947,7 +924,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 fontSize: '13px',
               }}
             >
-              Confirm & Generate Tenant Controls & Registers →
+              Instantiate Controls & Persist Obligation Flags →
             </button>
           </div>
         </div>
@@ -1030,10 +1007,10 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 Active Tenant Controls
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '4px' }}>
-                {coverageData?.totalControls ?? 14}
+                {coverageData ? coverageData.totalControls : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--status-success)', marginTop: '4px' }}>
-                {coverageData?.harmonizedControlsCount ?? 3} harmonized multi-framework
+                {coverageData ? `${coverageData.harmonizedControlsCount} harmonized multi-framework` : 'Not calculated'}
               </div>
             </div>
 
@@ -1049,10 +1026,10 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 Statutory Registers
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--status-success)', marginTop: '4px' }}>
-                {statutoryObligations.length > 0 ? statutoryObligations.length : 4} Active
+                {coverageData ? `${statutoryObligations.length} Recorded` : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                ROPA, DPIA, AI Incidents, Switching
+                Derived flags; registers require separate operational records
               </div>
             </div>
 
@@ -1068,10 +1045,10 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                 Excluded Controls
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-muted)', marginTop: '4px' }}>
-                3
+                {coverageData ? coverageData.excludedControlsCount : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Documented in SoA / Decisions
+                Recorded as not applicable in generated controls
               </div>
             </div>
           </div>
@@ -1091,44 +1068,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
             </h3>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {[
-                {
-                  id: 'ctl_enc_01',
-                  code: 'CTL-SEC-ENC-01',
-                  title: 'Production Data at Rest and in Transit Encryption',
-                  frameworks: ['gdpr', 'iso_27001'],
-                  isHarmonized: true,
-                  obligationsCount: 2,
-                  status: 'implemented',
-                },
-                {
-                  id: 'ctl_inc_01',
-                  code: 'CTL-SEC-INC-01',
-                  title: 'Security Incident Triage & Statutory Notification Protocol',
-                  frameworks: ['gdpr', 'iso_27001', 'eu_ai_act'],
-                  isHarmonized: true,
-                  obligationsCount: 3,
-                  status: 'implemented',
-                },
-                {
-                  id: 'ctl_ropa_01',
-                  code: 'CTL-PRIV-ROPA-01',
-                  title: 'Records of Processing Activities (ROPA) Maintenance',
-                  frameworks: ['gdpr'],
-                  isHarmonized: false,
-                  obligationsCount: 1,
-                  status: 'implemented',
-                },
-                {
-                  id: 'ctl_ai_gov_01',
-                  code: 'CTL-AI-GOV-01',
-                  title: 'AI Model Risk Tier Classification & Governance Protocol',
-                  frameworks: ['eu_ai_act', 'iso_42001'],
-                  isHarmonized: true,
-                  obligationsCount: 2,
-                  status: 'implemented',
-                },
-              ].map((c) => (
+              {(coverageData?.controls || []).map((c: any) => (
                 <div
                   key={c.id}
                   style={{
@@ -1156,13 +1096,13 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                             fontWeight: 600,
                           }}
                         >
-                          Harmonized (Satisfies {c.obligationsCount} Obligations)
+                          Harmonized ({c.requirementIds?.length || 0} mapped requirements)
                         </span>
                       )}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      Mapped Frameworks: {c.frameworks.join(', ').toUpperCase()} • Status:{' '}
-                      <span style={{ color: 'var(--status-success)' }}>{c.status}</span>
+                      Mapped Frameworks: {(c.frameworkIds || []).join(', ').toUpperCase()} • Recorded Status:{' '}
+                      <span>{c.status}</span>
                     </div>
                   </div>
 
@@ -1182,6 +1122,11 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                   </button>
                 </div>
               ))}
+              {(!coverageData?.controls || coverageData.controls.length === 0) && (
+                <div style={{ padding: '14px', color: 'var(--text-muted)' }}>
+                  No tenant controls were returned by the instantiation command.
+                </div>
+              )}
             </div>
           </div>
 

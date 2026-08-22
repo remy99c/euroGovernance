@@ -1,7 +1,7 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import { appendAuditLogInBatch, recordAuditLog } from '../lib/audit.js';
 import {
   TenantScopeProfile,
   TenantScopeFact,
@@ -22,6 +22,7 @@ import {
   composeTenantQuestionnaire,
   CANONICAL_SCOPE_QUESTIONNAIRES,
   CANONICAL_SCOPE_QUESTIONS,
+  VALID_SCOPE_FACT_CATEGORIES,
 } from '@eurogovernance/shared-types';
 
 const SCOPING_ADMIN_ROLES = [
@@ -31,6 +32,7 @@ const SCOPING_ADMIN_ROLES = [
   'privacy_manager',
   'ai_governance_manager',
 ] as const;
+const SCOPE_FACT_KEY_PATTERN = /^[a-z][a-z0-9_.-]{0,127}$/;
 
 export interface CreateScopeProfileInput {
   tenantId: string;
@@ -377,10 +379,7 @@ export const recordScopeFact = onCall<RecordScopeFactInput>(async (request) => {
     valueString = null,
     valueNumber = null,
     valueArray = null,
-    source = 'manual_entry',
     sourceQuestionId = null,
-    confidence = 'verified',
-    verificationEvidenceId = null,
   } = request.data || {};
 
   if (!tenantId || !factKey || !category || !dataType) {
@@ -392,8 +391,16 @@ export const recordScopeFact = onCall<RecordScopeFactInput>(async (request) => {
     'contributor',
   ]);
 
+  const cleanFactKey = typeof factKey === 'string' ? factKey.trim() : '';
+  if (!SCOPE_FACT_KEY_PATTERN.test(cleanFactKey)) {
+    throw new HttpsError('invalid-argument', 'factKey must use the registered lowercase fact-key format.');
+  }
+  if (!VALID_SCOPE_FACT_CATEGORIES.includes(category)) {
+    throw new HttpsError('invalid-argument', 'Scope fact category is not recognized.');
+  }
+
   const rawFact: Partial<TenantScopeFact> = {
-    factKey: factKey.trim(),
+    factKey: cleanFactKey,
     dataType,
     valueBoolean,
     valueString,
@@ -407,27 +414,27 @@ export const recordScopeFact = onCall<RecordScopeFactInput>(async (request) => {
   }
 
   const now = new Date().toISOString();
-  const factRef = db.collection('tenants').doc(tenantId).collection('scope_facts').doc(factKey.trim());
+  const factRef = db.collection('tenants').doc(tenantId).collection('scope_facts').doc(cleanFactKey);
   const existingSnap = await factRef.get();
 
   const factDoc: TenantScopeFact = {
-    id: factKey.trim(),
+    id: cleanFactKey,
     tenantId,
     ownerId: authCtx.userId,
     scopeProfileId,
     frameworkId,
-    factKey: factKey.trim(),
-    factTitle: factTitle ? factTitle.trim() : factKey.trim(),
+    factKey: cleanFactKey,
+    factTitle: factTitle ? factTitle.trim().slice(0, 300) : cleanFactKey,
     category,
     dataType,
     valueBoolean,
     valueString,
     valueNumber,
     valueArray,
-    source,
+    source: 'manual_entry',
     sourceQuestionId,
-    confidence,
-    verificationEvidenceId,
+    confidence: 'self_declared',
+    verificationEvidenceId: null,
     assessedBy: authCtx.userId,
     assessedAt: now,
     status: 'active',
@@ -437,25 +444,26 @@ export const recordScopeFact = onCall<RecordScopeFactInput>(async (request) => {
     updatedBy: authCtx.userId,
   };
 
-  await factRef.set(factDoc, { merge: true });
-
-  await recordAuditLog({
+  const batch = db.batch();
+  batch.set(factRef, factDoc);
+  appendAuditLogInBatch(batch, {
     tenantId,
     actorId: authCtx.userId,
     actorEmail: authCtx.email,
     actorRole: authCtx.role,
     entityType: 'scope_fact',
-    entityId: factKey.trim(),
+    entityId: cleanFactKey,
     action: existingSnap.exists ? 'update' : 'create',
     afterSummary: {
-      factKey,
+      factKey: cleanFactKey,
       category,
       dataType,
       value: valueBoolean ?? valueString ?? valueNumber ?? valueArray,
     },
     source: 'cloud_function',
-    workflowContext: `Recorded scope fact '${factKey}'`,
+    workflowContext: `Recorded self-declared scope fact '${cleanFactKey}'`,
   });
+  await batch.commit();
 
   return { success: true, fact: factDoc };
 });
@@ -466,8 +474,8 @@ export const recordScopeFact = onCall<RecordScopeFactInput>(async (request) => {
 export const batchRecordScopeFacts = onCall<BatchRecordScopeFactsInput>(async (request) => {
   const { tenantId, facts } = request.data || {};
 
-  if (!tenantId || !Array.isArray(facts) || facts.length === 0) {
-    throw new HttpsError('invalid-argument', 'tenantId and non-empty facts array are required.');
+  if (!tenantId || !Array.isArray(facts) || facts.length === 0 || facts.length > 100) {
+    throw new HttpsError('invalid-argument', 'tenantId and between 1 and 100 scope facts are required.');
   }
 
   const authCtx = await requireTenantMember(request, tenantId, [
@@ -475,12 +483,33 @@ export const batchRecordScopeFacts = onCall<BatchRecordScopeFactsInput>(async (r
     'contributor',
   ]);
 
+  const normalizedItems = facts.map((item) => {
+    if (!item || typeof item !== 'object') {
+      throw new HttpsError('invalid-argument', 'Every scope fact must be an object.');
+    }
+    const cleanFactKey = typeof item.factKey === 'string' ? item.factKey.trim() : '';
+    if (!SCOPE_FACT_KEY_PATTERN.test(cleanFactKey)) {
+      throw new HttpsError('invalid-argument', 'Every factKey must use the registered lowercase fact-key format.');
+    }
+    if (!VALID_SCOPE_FACT_CATEGORIES.includes(item.category)) {
+      throw new HttpsError('invalid-argument', `Fact '${cleanFactKey}' has an unrecognized category.`);
+    }
+    return { item, cleanFactKey };
+  });
+  if (new Set(normalizedItems.map(({ cleanFactKey }) => cleanFactKey)).size !== normalizedItems.length) {
+    throw new HttpsError('invalid-argument', 'Duplicate fact keys are not allowed in one batch.');
+  }
+
+  const refs = normalizedItems.map(({ cleanFactKey }) =>
+    db.collection('tenants').doc(tenantId).collection('scope_facts').doc(cleanFactKey)
+  );
+  const existingSnapshots = refs.length > 0 ? await db.getAll(...refs) : [];
   const batch = db.batch();
   const now = new Date().toISOString();
 
-  for (const item of facts) {
+  normalizedItems.forEach(({ item, cleanFactKey }, index) => {
     const rawFact: Partial<TenantScopeFact> = {
-      factKey: item.factKey.trim(),
+      factKey: cleanFactKey,
       dataType: item.dataType,
       valueBoolean: item.valueBoolean ?? null,
       valueString: item.valueString ?? null,
@@ -490,43 +519,42 @@ export const batchRecordScopeFacts = onCall<BatchRecordScopeFactsInput>(async (r
 
     const validation = validateScopeFactValue(rawFact);
     if (!validation.valid) {
-      throw new HttpsError('invalid-argument', `Fact '${item.factKey}': ${validation.error}`);
+      throw new HttpsError('invalid-argument', `Fact '${cleanFactKey}': ${validation.error}`);
     }
 
-    const ref = db.collection('tenants').doc(tenantId).collection('scope_facts').doc(item.factKey.trim());
+    const ref = refs[index]!;
+    const existing = existingSnapshots[index];
     const factDoc: TenantScopeFact = {
-      id: item.factKey.trim(),
+      id: cleanFactKey,
       tenantId,
-      ownerId: authCtx.userId,
+      ownerId: existing?.data()?.ownerId || authCtx.userId,
       scopeProfileId: item.scopeProfileId || null,
       frameworkId: item.frameworkId || null,
-      factKey: item.factKey.trim(),
-      factTitle: item.factTitle ? item.factTitle.trim() : item.factKey.trim(),
+      factKey: cleanFactKey,
+      factTitle: item.factTitle ? item.factTitle.trim().slice(0, 300) : cleanFactKey,
       category: item.category,
       dataType: item.dataType,
       valueBoolean: item.valueBoolean ?? null,
       valueString: item.valueString ?? null,
       valueNumber: item.valueNumber ?? null,
       valueArray: item.valueArray ?? null,
-      source: item.source || 'questionnaire',
+      source: 'questionnaire',
       sourceQuestionId: item.sourceQuestionId || null,
-      confidence: item.confidence || 'verified',
-      verificationEvidenceId: item.verificationEvidenceId || null,
+      confidence: 'self_declared',
+      verificationEvidenceId: null,
       assessedBy: authCtx.userId,
       assessedAt: now,
       status: 'active',
-      createdAt: now,
+      createdAt: existing?.data()?.createdAt || now,
       updatedAt: now,
-      createdBy: authCtx.userId,
+      createdBy: existing?.data()?.createdBy || authCtx.userId,
       updatedBy: authCtx.userId,
     };
 
-    batch.set(ref, factDoc, { merge: true });
-  }
+    batch.set(ref, factDoc);
+  });
 
-  await batch.commit();
-
-  await recordAuditLog({
+  appendAuditLogInBatch(batch, {
     tenantId,
     actorId: authCtx.userId,
     actorEmail: authCtx.email,
@@ -536,8 +564,9 @@ export const batchRecordScopeFacts = onCall<BatchRecordScopeFactsInput>(async (r
     action: 'create',
     afterSummary: { factsRecorded: facts.length },
     source: 'cloud_function',
-    workflowContext: `Batch recorded ${facts.length} scope facts`,
+    workflowContext: `Batch recorded ${facts.length} self-declared questionnaire scope facts`,
   });
+  await batch.commit();
 
   return { success: true, count: facts.length };
 });

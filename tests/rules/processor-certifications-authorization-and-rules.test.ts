@@ -48,12 +48,14 @@ beforeEach(async () => {
 
     // 1. Tenants
     await db.doc(`tenants/${tenantA}`).set({
+      status: 'active',
       id: tenantA,
       name: 'EuroCorp Technologies SE',
       createdAt: now,
       updatedAt: now,
     });
     await db.doc(`tenants/${tenantB}`).set({
+      status: 'active',
       id: tenantB,
       name: 'Nordic AI Health AB',
       createdAt: now,
@@ -311,10 +313,10 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
   // 3. Linked Evidence References & Evidence Security Rules
   // ===========================================================================
   describe('3. Linked Evidence References & Evidence Security Rules', () => {
-    test('Contributors can upload evidence with initial status under_review', async () => {
+    test('Contributors cannot create evidence metadata before a verified server upload completes', async () => {
       const contribDb = testEnv.authenticatedContext(PERSONAS.contributorA.uid).firestore();
 
-      await assertSucceeds(
+      await assertFails(
         contribDb.doc(`tenants/${tenantA}/evidence/ev_iso_cert_doc`).set({
           id: 'ev_iso_cert_doc',
           tenantId: tenantA,
@@ -474,8 +476,8 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
   // 5. Export Access & Security Rules
   // ===========================================================================
   describe('5. Export Job Creation & Access Controls', () => {
-    test('Auditor, Compliance Manager, and Security Manager can request export jobs for assurance reports', async () => {
-      const authRoles = [PERSONAS.auditorA, PERSONAS.complianceA, PERSONAS.securityA];
+    test('Compliance and Security Managers can request export jobs; direct Auditor requests are denied', async () => {
+      const authRoles = [PERSONAS.complianceA, PERSONAS.securityA];
 
       for (const p of authRoles) {
         const db = testEnv.authenticatedContext(p.uid).firestore();
@@ -498,6 +500,24 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
           })
         );
       }
+
+      const auditorDb = testEnv.authenticatedContext(PERSONAS.auditorA.uid).firestore();
+      await assertFails(
+        auditorDb.doc(`tenants/${tenantA}/export_jobs/exp_job_auditor`).set({
+          id: 'exp_job_auditor',
+          tenantId: tenantA,
+          exportType: 'processor_assurance_register',
+          status: 'queued',
+          requestedBy: PERSONAS.auditorA.uid,
+          requestedAt: now,
+          completedAt: null,
+          fileStoragePath: null,
+          fileDownloadUrl: null,
+          fileSizeBytes: null,
+          errorMessage: null,
+          filtersApplied: {},
+        })
+      );
     });
 
     test('Non-manager (contributor) cannot request export jobs', async () => {

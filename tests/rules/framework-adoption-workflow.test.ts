@@ -43,6 +43,9 @@ describe('Framework Adoption, Scoping & Applicability Security Rules', () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
 
+      await db.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
+      await db.doc(`tenants/${tenantB}`).set({ id: tenantB, status: 'active' });
+
       // Seed global frameworks
       await db.doc('frameworks/gdpr').set({
         id: 'gdpr',

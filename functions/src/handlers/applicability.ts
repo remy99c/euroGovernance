@@ -1,7 +1,7 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import { appendAuditLogInBatch, recordAuditLog } from '../lib/audit.js';
 import {
   ApplicabilityRule,
   TenantScopeFact,
@@ -46,16 +46,42 @@ export interface TestRuleEvaluationInput {
  * 1. Evaluate Applicability Rules for a Tenant and Synchronize Decisions & Requirements
  */
 export const evaluateTenantApplicability = onCall<EvaluateTenantApplicabilityInput>(async (request) => {
-  const { tenantId, frameworkId, overrideExistingDecisions = true } = request.data || {};
+  const { tenantId, frameworkId } = request.data || {};
 
   if (!tenantId || typeof tenantId !== 'string') {
     throw new HttpsError('invalid-argument', 'Missing or invalid tenantId.');
   }
 
   const authCtx = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
+  const tenantRef = db.collection('tenants').doc(tenantId);
+
+  // Applicability is evaluated only for explicitly adopted, non-retired
+  // frameworks. An empty adoption set must never silently activate every
+  // canonical regulatory regime.
+  const adoptedSnap = await tenantRef.collection('adopted_frameworks').get();
+  const adoptedFrameworkIds = new Set(
+    adoptedSnap.docs
+      .filter((doc) => doc.data().status !== 'retired')
+      .map((doc) => String(doc.data().frameworkId || doc.id))
+  );
+  if (frameworkId && !adoptedFrameworkIds.has(frameworkId)) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Framework '${frameworkId}' must be adopted before applicability can be evaluated.`
+    );
+  }
+  const evaluatedFrameworkIds = frameworkId
+    ? new Set([frameworkId])
+    : adoptedFrameworkIds;
+  if (evaluatedFrameworkIds.size === 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Adopt at least one framework before running applicability evaluation.'
+    );
+  }
 
   // 1. Fetch all tenant scope facts
-  const factsSnap = await db.collection('tenants').doc(tenantId).collection('scope_facts').get();
+  const factsSnap = await tenantRef.collection('scope_facts').get();
   const factsMap: Record<string, TenantScopeFact> = {};
   for (const doc of factsSnap.docs) {
     factsMap[doc.id] = doc.data() as TenantScopeFact;
@@ -77,14 +103,37 @@ export const evaluateTenantApplicability = onCall<EvaluateTenantApplicabilityInp
       ? CANONICAL_APPLICABILITY_RULES.filter((r) => r.frameworkId === frameworkId)
       : CANONICAL_APPLICABILITY_RULES;
   }
+  rules = rules.filter((rule) => evaluatedFrameworkIds.has(rule.frameworkId));
+  if (rules.length === 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      'No applicability rules are available for the selected adopted framework scope.'
+    );
+  }
 
   // 3. Evaluate rules
   const evaluationResults = evaluateFrameworkApplicabilityRules(rules, factsMap);
   const now = new Date().toISOString();
   const batch = db.batch();
+  const [existingDecisionsSnap, existingRequirementApplicabilitySnap] = await Promise.all([
+    tenantRef.collection('applicability_decisions').get(),
+    tenantRef.collection('requirement_applicability').get(),
+  ]);
+  const existingDecisions = new Map(
+    existingDecisionsSnap.docs.map((doc) => [doc.id, doc.data() as TenantApplicabilityDecision])
+  );
+  const existingRequirementApplicability = new Map(
+    existingRequirementApplicabilitySnap.docs.map((doc) => [
+      doc.id,
+      doc.data() as RequirementApplicability,
+    ])
+  );
+  let preservedOverrideCount = 0;
 
   for (const res of evaluationResults) {
-    const isApplicable = res.resultingOutcome === 'applicable' || res.resultingOutcome === 'conditionally_applicable';
+    const isApplicable = !['not_applicable', 'deferred', 'pending_evaluation'].includes(
+      res.resultingOutcome
+    );
 
     const decisionRef = db
       .collection('tenants')
@@ -92,17 +141,23 @@ export const evaluateTenantApplicability = onCall<EvaluateTenantApplicabilityInp
       .collection('applicability_decisions')
       .doc(res.targetRequirementId);
 
-    if (!overrideExistingDecisions) {
-      const existingSnap = await decisionRef.get();
-      if (existingSnap.exists && existingSnap.data()?.applicabilityType === 'manual_exclusion') {
-        continue;
-      }
+    const existingDecision = existingDecisions.get(res.targetRequirementId);
+    const isProtectedOverride =
+      existingDecision?.isOverridden === true ||
+      existingDecision?.decisionSource === 'user_override' ||
+      existingDecision?.decisionSource === 'reviewer_override' ||
+      existingDecision?.applicabilityType === 'manual_exclusion' ||
+      existingDecision?.applicabilityType === 'manual_inclusion';
+    if (isProtectedOverride) {
+      preservedOverrideCount += 1;
+      continue;
     }
 
     const decisionPayload: TenantApplicabilityDecision = {
+      ...existingDecision,
       id: res.targetRequirementId,
       tenantId,
-      ownerId: authCtx.userId,
+      ownerId: existingDecision?.ownerId || authCtx.userId,
       requirementId: res.targetRequirementId,
       frameworkId: res.frameworkId,
       sectionCode: res.targetRequirementId,
@@ -110,22 +165,32 @@ export const evaluateTenantApplicability = onCall<EvaluateTenantApplicabilityInp
       isApplicable,
       status: res.resultingOutcome,
       applicabilityType: 'rule_derived',
+      decisionSource: 'auto',
+      isOverridden: false,
+      autoResult: {
+        isApplicable,
+        status: res.resultingOutcome,
+        matchedRuleId: res.ruleId,
+        ruleEvaluationSummary: res.explanation,
+        evaluatedAt: now,
+      },
       matchedRuleId: res.ruleId,
       ruleEvaluationSummary: res.explanation,
       rationale: res.explanation,
       overrideReason: null,
-      previousStatus: null,
+      previousStatus: existingDecision?.status || null,
       assessedBy: authCtx.userId,
       assessedAt: now,
       reviewedBy: null,
       reviewedAt: null,
-      createdAt: now,
+      history: existingDecision?.history || [],
+      createdAt: existingDecision?.createdAt || now,
       updatedAt: now,
-      createdBy: authCtx.userId,
+      createdBy: existingDecision?.createdBy || authCtx.userId,
       updatedBy: authCtx.userId,
     };
 
-    batch.set(decisionRef, decisionPayload, { merge: true });
+    batch.set(decisionRef, decisionPayload);
 
     // Update /tenants/{tenantId}/requirement_applicability/{reqId}
     const reqAppRef = db
@@ -134,22 +199,32 @@ export const evaluateTenantApplicability = onCall<EvaluateTenantApplicabilityInp
       .collection('requirement_applicability')
       .doc(res.targetRequirementId);
 
-    const reqAppUpdate: Partial<RequirementApplicability> = {
+    const existingReqApp = existingRequirementApplicability.get(res.targetRequirementId);
+    const reqAppUpdate: RequirementApplicability = {
+      ...existingReqApp,
+      id: res.targetRequirementId,
+      tenantId,
+      ownerId: existingReqApp?.ownerId || authCtx.userId,
+      requirementId: res.targetRequirementId,
+      frameworkId: res.frameworkId,
+      sectionCode: res.targetRequirementId,
+      requirementTitle: res.ruleName,
       isApplicable,
-      status: isApplicable ? 'implemented' : 'not_applicable',
+      status: res.resultingOutcome,
       justification: res.explanation,
+      scopingNotes: existingReqApp?.scopingNotes || '',
       assessedBy: authCtx.userId,
       assessedAt: now,
+      createdAt: existingReqApp?.createdAt || now,
       updatedAt: now,
+      createdBy: existingReqApp?.createdBy || authCtx.userId,
       updatedBy: authCtx.userId,
     };
 
-    batch.set(reqAppRef, reqAppUpdate, { merge: true });
+    batch.set(reqAppRef, reqAppUpdate);
   }
 
-  await batch.commit();
-
-  await recordAuditLog({
+  appendAuditLogInBatch(batch, {
     tenantId,
     actorId: authCtx.userId,
     actorEmail: authCtx.email,
@@ -161,15 +236,19 @@ export const evaluateTenantApplicability = onCall<EvaluateTenantApplicabilityInp
       rulesEvaluated: evaluationResults.length,
       matchedCount: evaluationResults.filter((r) => r.matched).length,
       frameworkId: frameworkId || 'all',
+      evaluatedFrameworkIds: Array.from(evaluatedFrameworkIds),
+      preservedOverrideCount,
     },
     source: 'cloud_function',
     workflowContext: `Automated applicability evaluation for ${evaluationResults.length} statutory rules`,
   });
+  await batch.commit();
 
   return {
     success: true,
     totalEvaluated: evaluationResults.length,
     matchedCount: evaluationResults.filter((r) => r.matched).length,
+    preservedOverrideCount,
     results: evaluationResults,
   };
 });
@@ -459,17 +538,18 @@ export const evaluateStatutoryObligations = onCall(async (request) => {
   const authContext = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
 
   // 1. Fetch Adopted Frameworks
-  const adoptSnap = await db.collection('tenants').doc(tenantId).collection('adopted_frameworks').get();
-  const adoptedFrameworks: string[] = adoptSnap.empty
-    ? ['gdpr', 'eu_ai_act', 'eu_data_act', 'iso_27001']
-    : adoptSnap.docs.map((d) => d.data().frameworkId || d.id);
+  const tenantRef = db.collection('tenants').doc(tenantId);
+  const adoptSnap = await tenantRef.collection('adopted_frameworks').get();
+  const adoptedFrameworks: string[] = adoptSnap.docs
+    .filter((doc) => doc.data().status !== 'retired')
+    .map((doc) => doc.data().frameworkId || doc.id);
 
   // 2. Fetch Scope Facts
-  const factsSnap = await db.collection('tenants').doc(tenantId).collection('scope_facts').get();
+  const factsSnap = await tenantRef.collection('scope_facts').get();
   const scopeFacts: TenantScopeFact[] = factsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
 
   // 3. Fetch Applicability Decisions
-  const decSnap = await db.collection('tenants').doc(tenantId).collection('applicability_decisions').get();
+  const decSnap = await tenantRef.collection('applicability_decisions').get();
   const decisions: TenantApplicabilityDecision[] = decSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
 
   // 4. Derive Statutory Obligations
@@ -482,32 +562,54 @@ export const evaluateStatutoryObligations = onCall(async (request) => {
   });
 
   // 5. Batch Persist Obligation Flags if requested
-  if (persistFlags && result.obligationFlags.length > 0) {
+  if (persistFlags) {
+    const existingFlagsSnap = await tenantRef.collection('statutory_obligations').get();
+    const existingFlags = new Map(existingFlagsSnap.docs.map((doc) => [doc.id, doc.data()]));
+    const activeFlagIds = new Set(result.obligationFlags.map((flag) => flag.id));
     const batch = db.batch();
     for (const flag of result.obligationFlags) {
-      const docRef = db.collection('tenants').doc(tenantId).collection('statutory_obligations').doc(flag.id);
-      batch.set(docRef, flag, { merge: true });
+      const existing = existingFlags.get(flag.id);
+      const docRef = tenantRef.collection('statutory_obligations').doc(flag.id);
+      batch.set(docRef, {
+        ...flag,
+        ownerId: existing?.ownerId || flag.ownerId,
+        createdAt: existing?.createdAt || flag.createdAt,
+        createdBy: existing?.createdBy || flag.createdBy,
+      });
     }
+    let retiredFlagsCount = 0;
+    for (const existingDoc of existingFlagsSnap.docs) {
+      if (!activeFlagIds.has(existingDoc.id) && existingDoc.data().status !== 'retired') {
+        batch.update(existingDoc.ref, {
+          status: 'retired',
+          rationale: `${existingDoc.data().rationale || ''}\nNo longer derived from the current adopted-framework and scope-fact set.`.trim(),
+          updatedAt: new Date().toISOString(),
+          updatedBy: authContext.userId,
+        });
+        retiredFlagsCount += 1;
+      }
+    }
+    appendAuditLogInBatch(batch, {
+      tenantId,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.role,
+      entityType: 'tenant_statutory_obligations',
+      entityId: `stat_obl_${tenantId}`,
+      action: 'update',
+      afterSummary: {
+        activeObligations: result.obligationFlags.length,
+        retiredObligations: retiredFlagsCount,
+        adoptedFrameworks,
+        requiredRegisters: result.requiredRegisters.length,
+        requiredAssessments: result.requiredAssessments.length,
+        requiredOperationalRecords: result.requiredOperationalRecords.length,
+      },
+      source: 'cloud_function',
+      workflowContext: 'statutory_obligation_reconciliation',
+    });
     await batch.commit();
   }
-
-  await recordAuditLog({
-    tenantId,
-    actorId: authContext.userId,
-    actorEmail: authContext.email,
-    actorRole: authContext.role,
-    entityType: 'tenant_statutory_obligations',
-    entityId: `stat_obl_${tenantId}`,
-    action: 'update',
-    afterSummary: {
-      totalObligations: result.obligationFlags.length,
-      requiredRegisters: result.requiredRegisters.length,
-      requiredAssessments: result.requiredAssessments.length,
-      requiredOperationalRecords: result.requiredOperationalRecords.length,
-    },
-    source: 'cloud_function',
-    workflowContext: 'statutory_obligation_evaluation',
-  });
 
   return { success: true, ...result };
 });

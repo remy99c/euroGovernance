@@ -1,22 +1,24 @@
 import {
-  initializeTestEnvironment,
-  RulesTestEnvironment,
   assertFails,
   assertSucceeds,
+  initializeTestEnvironment,
+  RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import { getStorageRules } from './fixtures/test-factories.js';
 
 let testEnv: RulesTestEnvironment | null = null;
 let storageAvailable = true;
 
+const TENANT_A = 'tenant_eurocorp_de';
+const TENANT_B = 'tenant_medtech_fr';
+const SAMPLE_PDF = Buffer.from('%PDF-1.4 Mock PDF Content', 'utf8');
+
 beforeAll(async () => {
   try {
-    const storageRules = getStorageRules();
-
     testEnv = await initializeTestEnvironment({
       projectId: 'eurogovernance-storage-test',
       storage: {
-        rules: storageRules,
+        rules: getStorageRules(),
         host: '127.0.0.1',
         port: 9199,
       },
@@ -38,97 +40,152 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  if (testEnv && storageAvailable) {
-    await testEnv.clearStorage();
+  if (!testEnv || !storageAvailable) {
+    return;
   }
+
+  await testEnv.clearStorage();
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const storage = context.storage();
+    await storage
+      .ref(`tenants/${TENANT_A}/evidence/existing_evidence/report.pdf`)
+      .put(SAMPLE_PDF, { contentType: 'application/pdf' });
+    await storage
+      .ref(`tenants/${TENANT_A}/exports/existing_export/dossier.zip`)
+      .put(Buffer.from('server-generated export', 'utf8'), { contentType: 'application/zip' });
+  });
 });
 
-describe('Cloud Storage Security Rules & Tenant Isolation', () => {
-  const tenantA = 'tenant_eurocorp_de';
-  const tenantB = 'tenant_medtech_fr';
+async function assertDirectEvidenceAccessDenied(
+  uid: string,
+  claims: Record<string, unknown>,
+  targetTenantId = TENANT_A
+): Promise<void> {
+  if (!testEnv || !storageAvailable) {
+    return;
+  }
 
-  const userAdminA = 'usr_admin_01';
-  const userContribA = 'usr_contrib_01';
-  const userAdminB = 'usr_admin_b';
+  const storage = testEnv.authenticatedContext(uid, claims).storage();
+  const existing = storage.ref(`tenants/${targetTenantId}/evidence/existing_evidence/report.pdf`);
+  const attempted = storage.ref(`tenants/${targetTenantId}/evidence/attempted_evidence/new.pdf`);
 
-  const samplePdfBytes = Buffer.from('%PDF-1.4 Mock PDF Content', 'utf8');
+  await assertFails(existing.getDownloadURL());
+  await assertFails(Promise.resolve(attempted.put(SAMPLE_PDF, { contentType: 'application/pdf' })));
+  await assertFails(existing.updateMetadata({ customMetadata: { tampered: 'true' } }));
+  await assertFails(existing.delete());
+}
 
-  // 1. Evidence Storage Isolation & File Uploads
-  test('Tenant A user can upload valid evidence to their own tenant path, but not to Tenant B path', async () => {
-    if (!storageAvailable || !testEnv) {
-      console.warn('Storage emulator offline; skipping.');
-      return;
-    }
-    const userAContext = testEnv.authenticatedContext(userContribA, {
-      tenantId: tenantA,
-      tenants: [tenantA],
-      role: 'contributor',
-    });
-
-    const userBContext = testEnv.authenticatedContext(userAdminB, {
-      tenantId: tenantB,
-      tenants: [tenantB],
-      role: 'tenant_admin',
-    });
-
-    const storageA = userAContext.storage();
-    const storageB = userBContext.storage();
-
-    // User A uploading to Tenant A path SUCCEEDS
-    const validEvidenceRef = storageA.ref(`tenants/${tenantA}/evidence/ev_01/audit_report.pdf`);
-    await assertSucceeds(Promise.resolve(validEvidenceRef.put(samplePdfBytes, { contentType: 'application/pdf' })));
-
-    // User A attempting to upload to Tenant B path FAILS (Cross-tenant breach blocked)
-    const crossTenantRef = storageA.ref(`tenants/${tenantB}/evidence/ev_foreign/stolen_report.pdf`);
-    await assertFails(Promise.resolve(crossTenantRef.put(samplePdfBytes, { contentType: 'application/pdf' })));
-
-    // User B attempting to read Tenant A evidence FAILS
-    const foreignReadRef = storageB.ref(`tenants/${tenantA}/evidence/ev_01/audit_report.pdf`);
-    await assertFails(foreignReadRef.getDownloadURL());
+describe('Cloud Storage server-only authorization boundary', () => {
+  test.each([
+    [
+      'active tenant admin with current-looking tenant claims',
+      'active_admin_a',
+      { tenantId: TENANT_A, tenants: [TENANT_A], role: 'tenant_admin', membershipStatus: 'active' },
+    ],
+    [
+      'active contributor with current-looking tenant claims',
+      'active_contributor_a',
+      { tenantId: TENANT_A, tenants: [TENANT_A], role: 'contributor', membershipStatus: 'active' },
+    ],
+    [
+      'suspended administrator retaining stale privileged claims',
+      'suspended_admin_a',
+      { tenantId: TENANT_A, tenants: [TENANT_A], role: 'tenant_admin', membershipStatus: 'suspended' },
+    ],
+    ['authenticated nonmember without tenant claims', 'authenticated_nonmember', {}],
+    [
+      'forged tenant administrator claim without tenant binding',
+      'forged_admin',
+      { role: 'tenant_admin', membershipStatus: 'active' },
+    ],
+    [
+      'client presenting a platform administrator claim',
+      'claimed_platform_admin',
+      { platform_admin: true },
+    ],
+  ])('%s cannot directly read, create, update, or delete evidence', async (_label, uid, claims) => {
+    await assertDirectEvidenceAccessDenied(uid, claims);
   });
 
-  // 2. Evidence Immutability on Storage
-  test('Direct overwrite of evidence files is strictly blocked', async () => {
-    if (!storageAvailable || !testEnv) {
-      console.warn('Storage emulator offline; skipping.');
+  test('Tenant B administrator cannot access Tenant A and cannot use Tenant A-style claims to delete either tenant', async () => {
+    if (!testEnv || !storageAvailable) {
       return;
     }
-    const adminAContext = testEnv.authenticatedContext(userAdminA, {
-      tenantId: tenantA,
-      tenants: [tenantA],
+
+    const claims = {
+      tenantId: TENANT_B,
+      tenants: [TENANT_B],
       role: 'tenant_admin',
-    });
+      membershipStatus: 'active',
+    };
+    await assertDirectEvidenceAccessDenied('active_admin_b', claims, TENANT_A);
 
-    const storage = adminAContext.storage();
-    const fileRef = storage.ref(`tenants/${tenantA}/evidence/ev_01/initial_doc.pdf`);
-
-    // Initial upload succeeds
-    await assertSucceeds(
-      new Promise<any>((res, rej) => fileRef.put(samplePdfBytes, { contentType: 'application/pdf' }).then(res, rej))
-    );
-
-    // Direct metadata/file tamper attempt is forbidden by rules (immutable storage)
-    await assertFails(fileRef.updateMetadata({ customMetadata: { tampered: 'true' } }));
+    const storage = testEnv.authenticatedContext('active_admin_b', claims).storage();
+    const ownTenantAttempt = storage.ref(`tenants/${TENANT_B}/evidence/attempted_evidence/own.pdf`);
+    await assertFails(Promise.resolve(ownTenantAttempt.put(SAMPLE_PDF, { contentType: 'application/pdf' })));
   });
 
-  // 3. Export Artifacts Backend-Only Write Protection
-  test('Direct client writes to export directories are completely forbidden', async () => {
-    if (!storageAvailable || !testEnv) {
-      console.warn('Storage emulator offline; skipping.');
+  test.each([
+    ['active tenant admin', 'active_admin_a', { tenantId: TENANT_A, tenants: [TENANT_A], role: 'tenant_admin' }],
+    ['suspended tenant admin with stale claims', 'suspended_admin_a', { tenantId: TENANT_A, tenants: [TENANT_A], role: 'tenant_admin' }],
+    ['Tenant B administrator', 'active_admin_b', { tenantId: TENANT_B, tenants: [TENANT_B], role: 'tenant_admin' }],
+    ['authenticated nonmember', 'authenticated_nonmember', {}],
+  ])('%s cannot directly read or write export artifacts', async (_label, uid, claims) => {
+    if (!testEnv || !storageAvailable) {
       return;
     }
-    const adminAContext = testEnv.authenticatedContext(userAdminA, {
-      tenantId: tenantA,
-      tenants: [tenantA],
-      role: 'tenant_admin',
-    });
 
-    const storage = adminAContext.storage();
-    const exportFileRef = storage.ref(`tenants/${tenantA}/exports/exp_01/forged_dossier.zip`);
+    const storage = testEnv.authenticatedContext(uid, claims).storage();
+    const existing = storage.ref(`tenants/${TENANT_A}/exports/existing_export/dossier.zip`);
+    const attempted = storage.ref(`tenants/${TENANT_A}/exports/attempted_export/forged.zip`);
 
-    // Direct client upload to /exports/ is blocked (Cloud Functions Admin SDK write only)
+    await assertFails(existing.getDownloadURL());
     await assertFails(
-      Promise.resolve(exportFileRef.put(Buffer.from('fake zip content', 'utf8'), { contentType: 'application/zip' }))
+      Promise.resolve(attempted.put(Buffer.from('forged export', 'utf8'), { contentType: 'application/zip' }))
     );
+    await assertFails(existing.delete());
+  });
+
+  test('default deny also blocks authenticated and anonymous clients outside managed artifact paths', async () => {
+    if (!testEnv || !storageAvailable) {
+      return;
+    }
+
+    const authenticated = testEnv.authenticatedContext('active_admin_a', {
+      tenantId: TENANT_A,
+      tenants: [TENANT_A],
+      role: 'tenant_admin',
+    }).storage();
+    const anonymous = testEnv.unauthenticatedContext().storage();
+
+    await assertFails(
+      Promise.resolve(
+        authenticated.ref(`tenants/${TENANT_A}/unmanaged/file.txt`).put(Buffer.from('blocked'), {
+          contentType: 'text/plain',
+        })
+      )
+    );
+    await assertFails(anonymous.ref(`tenants/${TENANT_A}/evidence/existing_evidence/report.pdf`).getDownloadURL());
+  });
+
+  test('privileged backend context can still manage evidence and exports', async () => {
+    if (!testEnv || !storageAvailable) {
+      return;
+    }
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const storage = context.storage();
+      const evidence = storage.ref(`tenants/${TENANT_A}/evidence/server_evidence/report.pdf`);
+      const exportArtifact = storage.ref(`tenants/${TENANT_A}/exports/server_export/dossier.zip`);
+
+      await assertSucceeds(Promise.resolve(evidence.put(SAMPLE_PDF, { contentType: 'application/pdf' })));
+      await assertSucceeds(
+        Promise.resolve(
+          exportArtifact.put(Buffer.from('trusted export', 'utf8'), { contentType: 'application/zip' })
+        )
+      );
+      await assertSucceeds(evidence.delete());
+      await assertSucceeds(exportArtifact.delete());
+    });
   });
 });

@@ -1,6 +1,10 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
-import { requireAuth, requireTenantMember } from '../lib/auth-helpers.js';
+import {
+  requireAuth,
+  requireTenantMember,
+  verifyActiveTenantMembership,
+} from '../lib/auth-helpers.js';
 import { recordAuditLog } from '../lib/audit.js';
 import {
   Tenant,
@@ -8,9 +12,9 @@ import {
   TenantInvitation,
   UserProfile,
   UserRole,
-  TenantSubscriptionTier,
   isValidUserRole,
 } from '@eurogovernance/shared-types';
+import { appendAuditLogInTransaction } from '../lib/audit.js';
 
 export interface SyncUserProfileInput {
   displayName?: string;
@@ -21,9 +25,6 @@ export interface SyncUserProfileInput {
 export interface CreateTenantInput {
   name: string;
   slug: string;
-  tier?: TenantSubscriptionTier;
-  dataRegion?: 'europe-west3' | 'europe-west1';
-  enabledFrameworks?: string[];
 }
 
 export interface InviteUserInput {
@@ -70,6 +71,56 @@ export interface ListMembersInput {
 
 export interface ListInvitationsInput {
   tenantId: string;
+}
+
+const TENANT_MEMBERSHIP_ROLES = new Set<UserRole>([
+  'tenant_admin',
+  'compliance_manager',
+  'privacy_manager',
+  'ai_governance_manager',
+  'security_manager',
+  'auditor',
+  'contributor',
+  'viewer',
+  'approver',
+]);
+
+function assertTenantMembershipRole(role: UserRole): void {
+  if (!TENANT_MEMBERSHIP_ROLES.has(role)) {
+    throw new HttpsError(
+      'invalid-argument',
+      'platform_admin is an identity claim and cannot be assigned as a tenant membership role.'
+    );
+  }
+}
+
+export interface MyTenantMembershipSummary {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  role: UserRole;
+  department: string;
+  title: string;
+  joinedAt: string;
+}
+
+export interface ListMyTenantMembershipsResult {
+  success: true;
+  count: number;
+  truncated: boolean;
+  memberships: MyTenantMembershipSummary[];
+}
+
+const MAX_DISCOVERABLE_TENANT_MEMBERSHIPS = 250;
+const TENANT_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{2,62}$/;
+const DEFAULT_TENANT_CREATION_LIMIT = 1;
+const DEFAULT_PLATFORM_TENANT_CREATION_LIMIT = 100;
+const MAX_TENANT_CREATION_LIMIT = 1_000;
+
+function boundedSummaryString(value: unknown, fallback: string, maxLength: number): string {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().slice(0, maxLength)
+    : fallback;
 }
 
 /**
@@ -123,23 +174,53 @@ export const syncUserProfile = onCall<SyncUserProfileInput>(async (request) => {
  */
 export const createTenant = onCall<CreateTenantInput>(async (request) => {
   const authContext = requireAuth(request);
-  const { name, slug, tier = 'professional', dataRegion = 'europe-west3', enabledFrameworks = ['gdpr', 'eu_ai_act', 'eu_data_act'] } = request.data;
+  const input = request.data as CreateTenantInput & Record<string, unknown>;
+  const allowedInputKeys = new Set(['name', 'slug']);
+  const unexpectedInputKeys = Object.keys(input || {}).filter((key) => !allowedInputKeys.has(key));
 
-  if (!name || !slug) {
-    throw new HttpsError('invalid-argument', 'Tenant name and unique slug are required.');
+  if (unexpectedInputKeys.length > 0) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Tenant plan, region, and framework configuration are server-owned. Unexpected fields: ${unexpectedInputKeys.join(', ')}.`
+    );
+  }
+  if (!authContext.email || !authContext.emailVerified) {
+    throw new HttpsError(
+      'permission-denied',
+      'A verified email address is required before an organization can be provisioned.'
+    );
   }
 
-  const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
+  const canCreateTenant =
+    authContext.isPlatformAdmin || request.auth?.token.tenant_creator === true;
+  if (!canCreateTenant) {
+    throw new HttpsError(
+      'permission-denied',
+      'Tenant provisioning requires an explicit server-issued tenant_creator entitlement.'
+    );
+  }
+
+  const name = typeof input?.name === 'string' ? input.name.trim() : '';
+  const slug = typeof input?.slug === 'string' ? input.slug.trim() : '';
+  if (name.length < 2 || name.length > 160) {
+    throw new HttpsError('invalid-argument', 'Tenant name must be between 2 and 160 characters.');
+  }
+  if (!TENANT_SLUG_PATTERN.test(slug)) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Tenant slug must be 3–63 lowercase letters, numbers, or hyphens and start with a letter or number.'
+    );
+  }
+
+  const cleanSlug = slug;
   const tenantRef = db.collection('tenants').doc(cleanSlug);
-  const existing = await tenantRef.get();
-  if (existing.exists) {
-    throw new HttpsError('already-exists', `Tenant with slug '${cleanSlug}' already exists.`);
-  }
-
   const now = new Date().toISOString();
+  const tier = 'starter' as const;
+  const dataRegion = 'europe-west3' as const;
+  const enabledFrameworks: string[] = [];
   const tenantDoc: Tenant = {
     id: tenantRef.id,
-    name: name.trim(),
+    name,
     slug: cleanSlug,
     tier,
     status: 'active',
@@ -185,24 +266,77 @@ export const createTenant = onCall<CreateTenantInput>(async (request) => {
     lastAggregatedAt: now,
   };
 
-  const batch = db.batch();
-  batch.set(tenantRef, tenantDoc);
-  batch.set(tenantRef.collection('memberships').doc(authContext.userId), membershipDoc);
-  batch.set(summaryMetricsRef, initialMetrics);
+  const rawClaimLimit = request.auth?.token.tenant_creation_limit;
+  const claimLimit =
+    typeof rawClaimLimit === 'number' &&
+    Number.isSafeInteger(rawClaimLimit) &&
+    rawClaimLimit > 0
+      ? Math.min(rawClaimLimit, MAX_TENANT_CREATION_LIMIT)
+      : null;
+  const tenantCreationLimit =
+    claimLimit ??
+    (authContext.isPlatformAdmin
+      ? DEFAULT_PLATFORM_TENANT_CREATION_LIMIT
+      : DEFAULT_TENANT_CREATION_LIMIT);
+  const quotaRef = db.collection('tenant_creation_quotas').doc(authContext.userId);
 
-  await batch.commit();
+  await db.runTransaction(async (transaction) => {
+    const [existingTenant, quotaSnapshot] = await Promise.all([
+      transaction.get(tenantRef),
+      transaction.get(quotaRef),
+    ]);
+    if (existingTenant.exists) {
+      throw new HttpsError('already-exists', `Tenant with slug '${cleanSlug}' already exists.`);
+    }
 
-  await recordAuditLog({
-    tenantId: tenantDoc.id,
-    actorId: authContext.userId,
-    actorEmail: authContext.email,
-    actorRole: 'tenant_admin',
-    entityType: 'tenant',
-    entityId: tenantDoc.id,
-    action: 'create',
-    afterSummary: { name: tenantDoc.name, slug: cleanSlug, tier, dataRegion, enabledFrameworks },
-    source: 'cloud_function',
-    workflowContext: 'tenant_creation',
+    const quotaData = quotaSnapshot.data();
+    const createdTenants =
+      typeof quotaData?.createdTenants === 'number' &&
+      Number.isSafeInteger(quotaData.createdTenants) &&
+      quotaData.createdTenants >= 0
+        ? quotaData.createdTenants
+        : 0;
+    if (createdTenants >= tenantCreationLimit) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'The authenticated account has reached its tenant provisioning entitlement.'
+      );
+    }
+
+    transaction.create(tenantRef, tenantDoc);
+    transaction.create(
+      tenantRef.collection('memberships').doc(authContext.userId),
+      membershipDoc
+    );
+    transaction.create(summaryMetricsRef, initialMetrics);
+    transaction.set(
+      quotaRef,
+      {
+        userId: authContext.userId,
+        createdTenants: createdTenants + 1,
+        entitlementLimit: tenantCreationLimit,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    appendAuditLogInTransaction(transaction, {
+      tenantId: tenantDoc.id,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.isPlatformAdmin ? 'platform_admin' : 'tenant_admin',
+      entityType: 'tenant',
+      entityId: tenantDoc.id,
+      action: 'create',
+      afterSummary: {
+        name: tenantDoc.name,
+        slug: cleanSlug,
+        tier,
+        dataRegion,
+        enabledFrameworks,
+      },
+      source: 'cloud_function',
+      workflowContext: 'tenant_creation',
+    });
   });
 
   return { success: true, tenantId: tenantDoc.id, role: 'tenant_admin' };
@@ -223,11 +357,7 @@ export const inviteUserToTenant = onCall<InviteUserInput>(async (request) => {
   if (!isValidUserRole(role)) {
     throw new HttpsError('invalid-argument', `Invalid role '${role}'. Must be one of the recognized standard roles.`);
   }
-
-  // Privilege Guardrail: Only platform_admin can invite another platform_admin
-  if (role === 'platform_admin' && !request.auth?.token.platform_admin) {
-    throw new HttpsError('permission-denied', 'Only platform administrators can assign the platform_admin role.');
-  }
+  assertTenantMembershipRole(role);
 
   const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
 
@@ -344,58 +474,73 @@ export const acceptTenantInvite = onCall<AcceptInviteInput>(async (request) => {
     throw new HttpsError('invalid-argument', 'invitationId is required.');
   }
 
-  const inviteRef = db.collection('invitations').doc(invitationId);
-  const inviteSnap = await inviteRef.get();
-  if (!inviteSnap.exists) {
-    throw new HttpsError('not-found', 'Invitation not found.');
-  }
-
-  const invite = inviteSnap.data() as TenantInvitation;
-
-  // Intended Recipient Check
-  if (authContext.email.toLowerCase().trim() !== invite.email.toLowerCase().trim()) {
+  if (!authContext.email || !authContext.emailVerified) {
     throw new HttpsError(
       'permission-denied',
-      `This invitation was issued to '${invite.email}'. You are signed in as '${authContext.email}'.`
+      'A verified email address is required to accept a tenant invitation.'
     );
   }
 
-  if (invite.status !== 'pending') {
-    throw new HttpsError('failed-precondition', `Invitation is already ${invite.status}.`);
-  }
+  const inviteRef = db.collection('invitations').doc(invitationId);
+  const transactionResult = await db.runTransaction(async (transaction) => {
+    const inviteSnap = await transaction.get(inviteRef);
+    if (!inviteSnap.exists) {
+      throw new HttpsError('not-found', 'Invitation not found.');
+    }
 
-  // Expiry check
-  if (new Date(invite.expiresAt).getTime() < Date.now()) {
-    await inviteRef.update({ status: 'expired' });
+    const invite = inviteSnap.data() as TenantInvitation;
+    if (authContext.email!.toLowerCase().trim() !== invite.email.toLowerCase().trim()) {
+      throw new HttpsError('permission-denied', 'This invitation was issued to a different verified email address.');
+    }
+    if (invite.status !== 'pending') {
+      throw new HttpsError('failed-precondition', `Invitation is already ${invite.status}.`);
+    }
+    if (!isValidUserRole(invite.role) || invite.role === 'platform_admin') {
+      throw new HttpsError('failed-precondition', 'Invitation contains an invalid tenant role.');
+    }
+
+    if (new Date(invite.expiresAt).getTime() < Date.now()) {
+      transaction.update(inviteRef, { status: 'expired' });
+      return { invite, expired: true as const };
+    }
+
+    const tenantRef = db.collection('tenants').doc(invite.tenantId);
+    const membershipRef = tenantRef.collection('memberships').doc(authContext.userId);
+    const [tenantSnap, membershipSnap] = await Promise.all([
+      transaction.get(tenantRef),
+      transaction.get(membershipRef),
+    ]);
+    if (!tenantSnap.exists || (tenantSnap.data() as Tenant).status !== 'active') {
+      throw new HttpsError('failed-precondition', 'The invited organization is not active.');
+    }
+    if (membershipSnap.exists) {
+      throw new HttpsError('already-exists', 'A tenant membership already exists for this account.');
+    }
+
+    const now = new Date().toISOString();
+    const membershipDoc: TenantMembership = {
+      id: authContext.userId,
+      tenantId: invite.tenantId,
+      userId: authContext.userId,
+      role: invite.role,
+      status: 'active',
+      department: invite.department,
+      title: 'Member',
+      joinedAt: now,
+      updatedAt: now,
+      createdBy: invite.createdBy,
+      updatedBy: authContext.userId,
+    };
+
+    transaction.create(membershipRef, membershipDoc);
+    transaction.update(inviteRef, { status: 'accepted' });
+    return { invite, expired: false as const };
+  });
+
+  if (transactionResult.expired) {
     throw new HttpsError('deadline-exceeded', 'This invitation has expired.');
   }
-
-  const now = new Date().toISOString();
-  const membershipRef = db
-    .collection('tenants')
-    .doc(invite.tenantId)
-    .collection('memberships')
-    .doc(authContext.userId);
-
-  const membershipDoc: TenantMembership = {
-    id: authContext.userId,
-    tenantId: invite.tenantId,
-    userId: authContext.userId,
-    role: invite.role,
-    status: 'active',
-    department: invite.department,
-    title: 'Member',
-    joinedAt: now,
-    updatedAt: now,
-    createdBy: invite.createdBy,
-    updatedBy: authContext.userId,
-  };
-
-  const batch = db.batch();
-  batch.set(membershipRef, membershipDoc);
-  batch.update(inviteRef, { status: 'accepted' });
-
-  await batch.commit();
+  const { invite } = transactionResult;
 
   await recordAuditLog({
     tenantId: invite.tenantId,
@@ -414,20 +559,6 @@ export const acceptTenantInvite = onCall<AcceptInviteInput>(async (request) => {
 });
 
 /**
- * Helper to count active administrators in a tenant.
- */
-async function countActiveTenantAdmins(tenantId: string): Promise<number> {
-  const adminsSnap = await db
-    .collection('tenants')
-    .doc(tenantId)
-    .collection('memberships')
-    .where('role', '==', 'tenant_admin')
-    .where('status', '==', 'active')
-    .get();
-  return adminsSnap.size;
-}
-
-/**
  * Callable Function: assignTenantRole
  * Privileged role assignment with self-lockout and platform admin guardrails.
  */
@@ -440,11 +571,7 @@ export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
   if (!isValidUserRole(newRole)) {
     throw new HttpsError('invalid-argument', `Invalid role '${newRole}'. Must be one of the recognized standard roles.`);
   }
-
-  // Privilege Guardrail: Only platform_admin can assign the platform_admin role
-  if (newRole === 'platform_admin' && !request.auth?.token.platform_admin) {
-    throw new HttpsError('permission-denied', 'Only platform administrators can assign the platform_admin role.');
-  }
+  assertTenantMembershipRole(newRole);
 
   const authContext = await requireTenantMember(request, tenantId, ['tenant_admin']);
 
@@ -454,34 +581,31 @@ export const assignTenantRole = onCall<AssignRoleInput>(async (request) => {
     .collection('memberships')
     .doc(targetUserId);
 
-  const memberSnap = await membershipRef.get();
-  if (!memberSnap.exists) {
-    throw new HttpsError('not-found', 'Target membership record does not exist in this tenant.');
-  }
-
-  const previousMembership = memberSnap.data() as TenantMembership;
-
-  // Self-Lockout Guardrail: Prevent demoting the sole active tenant_admin
-  if (
-    previousMembership.role === 'tenant_admin' &&
-    newRole !== 'tenant_admin' &&
-    previousMembership.status === 'active'
-  ) {
-    const adminCount = await countActiveTenantAdmins(tenantId);
-    if (adminCount <= 1) {
-      throw new HttpsError(
-        'failed-precondition',
-        'Cannot demote the sole active administrator of this organization. Appoint another tenant_admin first.'
-      );
-    }
-  }
-
   const now = new Date().toISOString();
-
-  await membershipRef.update({
-    role: newRole,
-    updatedAt: now,
-    updatedBy: authContext.userId,
+  const previousMembership = await db.runTransaction(async (transaction) => {
+    const memberSnap = await transaction.get(membershipRef);
+    if (!memberSnap.exists) {
+      throw new HttpsError('not-found', 'Target membership record does not exist in this tenant.');
+    }
+    const previous = memberSnap.data() as TenantMembership;
+    if (previous.role === 'tenant_admin' && newRole !== 'tenant_admin' && previous.status === 'active') {
+      const adminQuery = membershipRef.parent
+        .where('role', '==', 'tenant_admin')
+        .where('status', '==', 'active');
+      const admins = await transaction.get(adminQuery);
+      if (admins.size <= 1) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Cannot demote the sole active administrator of this organization. Appoint another tenant_admin first.'
+        );
+      }
+    }
+    transaction.update(membershipRef, {
+      role: newRole,
+      updatedAt: now,
+      updatedBy: authContext.userId,
+    });
+    return previous;
   });
 
   await recordAuditLog({
@@ -524,29 +648,31 @@ export const suspendTenantMember = onCall<SuspendMemberInput>(async (request) =>
     .collection('memberships')
     .doc(targetUserId);
 
-  const memberSnap = await membershipRef.get();
-  if (!memberSnap.exists) {
-    throw new HttpsError('not-found', 'Target membership record not found.');
-  }
-
-  const prev = memberSnap.data() as TenantMembership;
-  if (prev.status === 'suspended') {
-    throw new HttpsError('failed-precondition', 'Membership is already suspended.');
-  }
-
-  // Sole Admin Guardrail
-  if (prev.role === 'tenant_admin') {
-    const adminCount = await countActiveTenantAdmins(tenantId);
-    if (adminCount <= 1) {
-      throw new HttpsError('failed-precondition', 'Cannot suspend the sole active administrator of this organization.');
-    }
-  }
-
   const now = new Date().toISOString();
-  await membershipRef.update({
-    status: 'suspended',
-    updatedAt: now,
-    updatedBy: authContext.userId,
+  const prev = await db.runTransaction(async (transaction) => {
+    const memberSnap = await transaction.get(membershipRef);
+    if (!memberSnap.exists) {
+      throw new HttpsError('not-found', 'Target membership record not found.');
+    }
+    const previous = memberSnap.data() as TenantMembership;
+    if (previous.status === 'suspended') {
+      throw new HttpsError('failed-precondition', 'Membership is already suspended.');
+    }
+    if (previous.role === 'tenant_admin' && previous.status === 'active') {
+      const adminQuery = membershipRef.parent
+        .where('role', '==', 'tenant_admin')
+        .where('status', '==', 'active');
+      const admins = await transaction.get(adminQuery);
+      if (admins.size <= 1) {
+        throw new HttpsError('failed-precondition', 'Cannot suspend the sole active administrator of this organization.');
+      }
+    }
+    transaction.update(membershipRef, {
+      status: 'suspended',
+      updatedAt: now,
+      updatedBy: authContext.userId,
+    });
+    return previous;
   });
 
   await recordAuditLog({
@@ -636,22 +762,24 @@ export const removeTenantMember = onCall<RemoveMemberInput>(async (request) => {
     .collection('memberships')
     .doc(targetUserId);
 
-  const memberSnap = await membershipRef.get();
-  if (!memberSnap.exists) {
-    throw new HttpsError('not-found', 'Target membership record not found.');
-  }
-
-  const prev = memberSnap.data() as TenantMembership;
-
-  // Sole Admin Guardrail
-  if (prev.role === 'tenant_admin' && prev.status === 'active') {
-    const adminCount = await countActiveTenantAdmins(tenantId);
-    if (adminCount <= 1) {
-      throw new HttpsError('failed-precondition', 'Cannot remove the sole active administrator of this organization.');
+  const prev = await db.runTransaction(async (transaction) => {
+    const memberSnap = await transaction.get(membershipRef);
+    if (!memberSnap.exists) {
+      throw new HttpsError('not-found', 'Target membership record not found.');
     }
-  }
-
-  await membershipRef.delete();
+    const previous = memberSnap.data() as TenantMembership;
+    if (previous.role === 'tenant_admin' && previous.status === 'active') {
+      const adminQuery = membershipRef.parent
+        .where('role', '==', 'tenant_admin')
+        .where('status', '==', 'active');
+      const admins = await transaction.get(adminQuery);
+      if (admins.size <= 1) {
+        throw new HttpsError('failed-precondition', 'Cannot remove the sole active administrator of this organization.');
+      }
+    }
+    transaction.delete(membershipRef);
+    return previous;
+  });
 
   await recordAuditLog({
     tenantId,
@@ -668,6 +796,101 @@ export const removeTenantMember = onCall<RemoveMemberInput>(async (request) => {
   });
 
   return { success: true, targetUserId, removed: true };
+});
+
+/**
+ * Callable Function: listMyTenantMemberships
+ *
+ * Discovers the caller's active tenant memberships without accepting a user ID
+ * or tenant ID from the client. Only the minimum tenant-switcher fields are
+ * returned; membership administration metadata remains private.
+ */
+export const listMyTenantMemberships = onCall<Record<string, never>>(async (request) => {
+  const authContext = requireAuth(request);
+  const membershipSnap = await db
+    .collectionGroup('memberships')
+    .where('userId', '==', authContext.userId)
+    .where('status', '==', 'active')
+    .limit(MAX_DISCOVERABLE_TENANT_MEMBERSHIPS + 1)
+    .get();
+
+  const truncated = membershipSnap.size > MAX_DISCOVERABLE_TENANT_MEMBERSHIPS;
+
+  const candidates = membershipSnap.docs
+    .slice(0, MAX_DISCOVERABLE_TENANT_MEMBERSHIPS)
+    .flatMap((membershipDoc) => {
+      const tenantRef = membershipDoc.ref.parent.parent;
+      const membership = membershipDoc.data() as TenantMembership;
+
+      // A collection-group query may match an unrelated collection with the same
+      // name. Derive and validate the tenant boundary from the document path.
+      if (
+        !tenantRef ||
+        tenantRef.parent.id !== 'tenants' ||
+        membershipDoc.id !== authContext.userId ||
+        membership.userId !== authContext.userId ||
+        membership.tenantId !== tenantRef.id ||
+        membership.status !== 'active'
+      ) {
+        return [];
+      }
+
+      return [{ tenantRef, membership }];
+    });
+
+  if (candidates.length === 0) {
+    const result: ListMyTenantMembershipsResult = {
+      success: true,
+      count: 0,
+      truncated,
+      memberships: [],
+    };
+    return result;
+  }
+
+  const tenantSnaps = await db.getAll(...candidates.map(({ tenantRef }) => tenantRef));
+  const memberships: MyTenantMembershipSummary[] = [];
+
+  candidates.forEach(({ membership }, index) => {
+    const tenantSnap = tenantSnaps[index];
+    const tenant = tenantSnap?.exists ? tenantSnap.data() as Tenant : undefined;
+
+    try {
+      const verifiedMembership = verifyActiveTenantMembership(
+        membership.tenantId,
+        authContext.userId,
+        tenant,
+        membership
+      );
+
+      memberships.push({
+        tenantId: membership.tenantId,
+        tenantName: boundedSummaryString(tenant!.name, membership.tenantId, 256),
+        tenantSlug: boundedSummaryString(tenant!.slug, membership.tenantId, 128),
+        role: verifiedMembership.role,
+        department: boundedSummaryString(verifiedMembership.department, '', 160),
+        title: boundedSummaryString(verifiedMembership.title, '', 160),
+        joinedAt: boundedSummaryString(verifiedMembership.joinedAt, '', 64),
+      });
+    } catch (error) {
+      if (!(error instanceof HttpsError)) {
+        throw error;
+      }
+      // Corrupt, inactive, or cross-boundary records fail closed and are omitted.
+    }
+  });
+
+  memberships.sort((left, right) =>
+    left.tenantName.localeCompare(right.tenantName) || left.tenantId.localeCompare(right.tenantId)
+  );
+
+  const result: ListMyTenantMembershipsResult = {
+    success: true,
+    count: memberships.length,
+    truncated,
+    memberships,
+  };
+  return result;
 });
 
 /**

@@ -101,7 +101,7 @@ export function GlobalSearchModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Search Compliance Assets"
-      subtitle="Search across controls, four-eyes evidence, ROPA activities, and AI models."
+      subtitle="Search the controls, evidence metadata, ROPA activities, and AI systems currently loaded in this workspace."
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <input

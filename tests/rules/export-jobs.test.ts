@@ -49,7 +49,7 @@ describe('Compliance Export Jobs & Security Rules', () => {
       const adminDb = context.firestore();
 
       // Seed Tenant A
-      await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, name: 'EuroCorp Technologies SE' });
+      await adminDb.doc(`tenants/${tenantA}`).set({ status: 'active', id: tenantA, name: 'EuroCorp Technologies SE' });
       await adminDb.doc(`tenants/${tenantA}/memberships/${userAdminA}`).set({
         userId: userAdminA,
         tenantId: tenantA,
@@ -82,7 +82,7 @@ describe('Compliance Export Jobs & Security Rules', () => {
       });
 
       // Seed Tenant B
-      await adminDb.doc(`tenants/${tenantB}`).set({ id: tenantB, name: 'MedTech France SAS' });
+      await adminDb.doc(`tenants/${tenantB}`).set({ status: 'active', id: tenantB, name: 'MedTech France SAS' });
       await adminDb.doc(`tenants/${tenantB}/memberships/${userAdminB}`).set({
         userId: userAdminB,
         tenantId: tenantB,
@@ -105,13 +105,13 @@ describe('Compliance Export Jobs & Security Rules', () => {
   });
 
   // 1. Export Job Request RBAC
-  test('Compliance Manager and Auditor can request exports; Contributors and Viewers cannot', async () => {
+  test('Compliance Manager can create a direct export request; Auditor, Contributor, and Viewer clients cannot', async () => {
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Compliance & Auditor CAN create export job request
+    // Compliance Manager CAN create export job request
     await assertSucceeds(
       complianceDb.doc(`tenants/${tenantA}/export_jobs/job_new_comp`).set({
         id: 'job_new_comp',
@@ -122,7 +122,8 @@ describe('Compliance Export Jobs & Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    // Auditor export requests must be routed through the authorized backend command
+    await assertFails(
       auditorDb.doc(`tenants/${tenantA}/export_jobs/job_new_auditor`).set({
         id: 'job_new_auditor',
         tenantId: tenantA,
@@ -182,6 +183,36 @@ describe('Compliance Export Jobs & Security Rules', () => {
     // Auditor & Contributor CANNOT view Compliance Manager's export job
     await assertFails(auditorDb.doc(`tenants/${tenantA}/export_jobs/${jobIdCompliance}`).get());
     await assertFails(contribDb.doc(`tenants/${tenantA}/export_jobs/${jobIdCompliance}`).get());
+  });
+
+  test('Non-admin list queries must be owner-scoped when export jobs have mixed requesters', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/export_jobs/job_exp_admin_01`).set({
+        id: 'job_exp_admin_01',
+        tenantId: tenantA,
+        exportType: 'framework_readiness_pdf',
+        status: 'completed',
+        requestedBy: userAdminA,
+      });
+    });
+
+    const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
+    const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
+    const jobsPath = `tenants/${tenantA}/export_jobs`;
+
+    // A non-admin collection listener is unsafe because its result set could
+    // include another user's export. The UI must use this owner predicate.
+    await assertFails(complianceDb.collection(jobsPath).get());
+    await assertSucceeds(
+      complianceDb.collection(jobsPath).where('requestedBy', '==', userComplianceA).get()
+    );
+    await assertFails(
+      complianceDb.collection(jobsPath).where('requestedBy', '==', userAdminA).get()
+    );
+
+    // Tenant administrators are intentionally allowed to inspect the complete
+    // export-job queue for operational support and audit preparation.
+    await assertSucceeds(adminDb.collection(jobsPath).get());
   });
 
   // 4. Cross-Tenant Denial

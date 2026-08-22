@@ -2,7 +2,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import * as crypto from 'crypto';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import { auditActorFromVerifiedContext, recordAuditLog } from '../lib/audit.js';
 import { createNotification } from '../lib/notifications.js';
 import {
   ProcessorAssessment,
@@ -27,6 +27,13 @@ function generateAccessToken(): { token: string; tokenHash: string } {
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function rejectLegacyProcessorExternalWorkflow(): void {
+  throw new HttpsError(
+    'failed-precondition',
+    'This legacy external assessment workflow is disabled while processor assessments are migrated to the hardened assessment portal.'
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -96,12 +103,19 @@ export const createProcessorAssessment = onCall<CreateProcessorAssessmentInput>(
   }
 
   // Verify caller authorization
-  await requireTenantMember(request, tenantId, [
+  const authContext = await requireTenantMember(request, tenantId, [
     'tenant_admin',
     'compliance_manager',
     'privacy_manager',
     'security_manager',
   ]);
+
+  if (autoSend) {
+    throw new HttpsError(
+      'failed-precondition',
+      'External dispatch is temporarily unavailable while processor assessments are migrated to the hardened assessment portal.'
+    );
+  }
 
   // Determine sections from template or custom input
   let sections: ProcessorAssessmentSection[] = customSections || [];
@@ -119,9 +133,6 @@ export const createProcessorAssessment = onCall<CreateProcessorAssessmentInput>(
   }
 
   const now = new Date().toISOString();
-  const tokenExpiry = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(); // 60 days validity
-  const { token, tokenHash } = generateAccessToken();
-
   const assessmentRef = db.collection('tenants').doc(tenantId).collection('processor_assessments').doc();
   const assessmentId = assessmentRef.id;
 
@@ -150,12 +161,10 @@ export const createProcessorAssessment = onCall<CreateProcessorAssessmentInput>(
       title: respondentTitle,
       companyName: respondentCompanyName || vendorName,
     },
-    accessTokenHash: tokenHash,
-    tokenExpiresAt: tokenExpiry,
     accessCount: 0,
     lastAccessedAt: null,
-    status: autoSend ? 'sent' : 'draft',
-    sentAt: autoSend ? now : null,
+    status: 'draft',
+    sentAt: null,
     startedAt: null,
     submittedAt: null,
     dueDate,
@@ -182,18 +191,16 @@ export const createProcessorAssessment = onCall<CreateProcessorAssessmentInput>(
   // Emit Audit Log
   await recordAuditLog({
     tenantId,
-    actorId: auth.uid,
-    actorEmail: auth.token?.email || 'system',
-    actorRole: 'compliance_manager',
+    ...auditActorFromVerifiedContext(authContext),
     entityType: 'processor_assessment',
     entityId: assessmentId,
-    action: autoSend ? 'create' : 'create',
+    action: 'create',
     beforeSummary: null,
     afterSummary: {
       title,
       vendorName,
       assessmentType,
-      status: assessmentDoc.status,
+      status: 'draft',
       dueDate,
       respondentEmail,
       isRecurring,
@@ -205,8 +212,7 @@ export const createProcessorAssessment = onCall<CreateProcessorAssessmentInput>(
   return {
     success: true,
     assessmentId,
-    accessToken: token,
-    status: assessmentDoc.status,
+    status: 'draft',
   };
 });
 
@@ -231,12 +237,14 @@ export const sendProcessorAssessment = onCall<SendProcessorAssessmentInput>(asyn
     throw new HttpsError('invalid-argument', 'Missing tenantId or assessmentId.');
   }
 
-  await requireTenantMember(request, tenantId, [
+  const authContext = await requireTenantMember(request, tenantId, [
     'tenant_admin',
     'compliance_manager',
     'privacy_manager',
     'security_manager',
   ]);
+
+  rejectLegacyProcessorExternalWorkflow();
 
   const docRef = db.collection('tenants').doc(tenantId).collection('processor_assessments').doc(assessmentId);
   const snap = await docRef.get();
@@ -270,9 +278,7 @@ export const sendProcessorAssessment = onCall<SendProcessorAssessmentInput>(asyn
 
   await recordAuditLog({
     tenantId,
-    actorId: auth.uid,
-    actorEmail: auth.token?.email || 'system',
-    actorRole: 'compliance_manager',
+    ...auditActorFromVerifiedContext(authContext),
     entityType: 'processor_assessment',
     entityId: assessmentId,
     action: 'status_transition',
@@ -302,6 +308,7 @@ export interface GetPublicProcessorAssessmentInput {
 }
 
 export const getPublicProcessorAssessment = onCall<GetPublicProcessorAssessmentInput>(async (request) => {
+  rejectLegacyProcessorExternalWorkflow();
   const { tenantId, assessmentId, token } = request.data || {};
   if (!tenantId || !assessmentId || !token) {
     throw new HttpsError('invalid-argument', 'Missing tenantId, assessmentId, or security token.');
@@ -379,6 +386,7 @@ export interface SavePublicProcessorAssessmentDraftInput {
 }
 
 export const savePublicProcessorAssessmentDraft = onCall<SavePublicProcessorAssessmentDraftInput>(async (request) => {
+  rejectLegacyProcessorExternalWorkflow();
   const { tenantId, assessmentId, token, answers } = request.data || {};
   if (!tenantId || !assessmentId || !token || !answers) {
     throw new HttpsError('invalid-argument', 'Missing tenantId, assessmentId, token, or answers.');
@@ -433,6 +441,7 @@ export interface SubmitPublicProcessorAssessmentInput {
 }
 
 export const submitPublicProcessorAssessment = onCall<SubmitPublicProcessorAssessmentInput>(async (request) => {
+  rejectLegacyProcessorExternalWorkflow();
   const {
     tenantId,
     assessmentId,
@@ -553,7 +562,7 @@ export const reviewProcessorAssessment = onCall<ReviewProcessorAssessmentInput>(
     throw new HttpsError('invalid-argument', 'Missing tenantId, assessmentId, or review decision.');
   }
 
-  await requireTenantMember(request, tenantId, [
+  const authContext = await requireTenantMember(request, tenantId, [
     'tenant_admin',
     'compliance_manager',
     'privacy_manager',
@@ -647,9 +656,7 @@ export const reviewProcessorAssessment = onCall<ReviewProcessorAssessmentInput>(
   // Emit Audit Log
   await recordAuditLog({
     tenantId,
-    actorId: auth.uid,
-    actorEmail: auth.token?.email || 'system',
-    actorRole: 'compliance_manager',
+    ...auditActorFromVerifiedContext(authContext),
     entityType: 'processor_assessment',
     entityId: assessmentId,
     action: decision === 'accept' ? 'approve' : decision === 'reject' ? 'reject' : 'status_transition',
@@ -696,12 +703,14 @@ export const renewRecurringProcessorAssessment = onCall<RenewRecurringProcessorA
     throw new HttpsError('invalid-argument', 'Missing tenantId or previousAssessmentId.');
   }
 
-  await requireTenantMember(request, tenantId, [
+  const authContext = await requireTenantMember(request, tenantId, [
     'tenant_admin',
     'compliance_manager',
     'privacy_manager',
     'security_manager',
   ]);
+
+  rejectLegacyProcessorExternalWorkflow();
 
   const prevRef = db.collection('tenants').doc(tenantId).collection('processor_assessments').doc(previousAssessmentId);
   const prevSnap = await prevRef.get();
@@ -764,9 +773,7 @@ export const renewRecurringProcessorAssessment = onCall<RenewRecurringProcessorA
 
   await recordAuditLog({
     tenantId,
-    actorId: auth.uid,
-    actorEmail: auth.token?.email || 'system',
-    actorRole: 'compliance_manager',
+    ...auditActorFromVerifiedContext(authContext),
     entityType: 'processor_assessment',
     entityId: newAssessmentId,
     action: 'create',

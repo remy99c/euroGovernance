@@ -234,12 +234,13 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       updatedAt: now,
     };
 
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/evidence/ev_dpa_omni_01`).set(dpaEvidence)
-    );
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/evidence/ev_scc_omni_01`).set(sccEvidence)
-    );
+    // Evidence is created only by the trusted server pipeline; seed the
+    // resulting records directly so this lifecycle test can exercise linkage.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const serverDb = context.firestore();
+      await serverDb.doc(`tenants/${tenantA}/evidence/ev_dpa_omni_01`).set(dpaEvidence);
+      await serverDb.doc(`tenants/${tenantA}/evidence/ev_scc_omni_01`).set(sccEvidence);
+    });
 
     // Link evidence IDs to processor profile
     await assertSucceeds(

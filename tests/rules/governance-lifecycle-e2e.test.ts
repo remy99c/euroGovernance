@@ -57,12 +57,14 @@ beforeEach(async () => {
 
     // Tenant Root Docs
     await db.doc(`tenants/${tenantA}`).set({
+      status: 'active',
       id: tenantA,
       name: 'EuroCorp Technologies SE',
       createdAt: now,
       updatedAt: now,
     });
     await db.doc(`tenants/${tenantB}`).set({
+      status: 'active',
       id: tenantB,
       name: 'MedTech France SAS',
       createdAt: now,
@@ -546,7 +548,7 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
   // 9. Export Access Is Tenant-Safe & Role-Guarded
   // ---------------------------------------------------------------------------
   describe('9. Export Jobs & Tenant Storage Protection', () => {
-    test('compliance manager and auditor can create export jobs; Tenant B cannot access Tenant A exports', async () => {
+    test('compliance manager can create export jobs; Tenant B cannot access Tenant A exports', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const adminBDb = testEnv.authenticatedContext(PERSONAS.adminB.uid).firestore();
 

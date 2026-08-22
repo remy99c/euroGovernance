@@ -7,37 +7,42 @@ import { UIBadge } from './ui-badge';
 // 1. DECISIVE EXECUTIVE POSTURE HERO
 // ==========================================
 export interface UIExecutivePostureHeroProps {
-  score: number; // 0 to 100
+  score: number | null; // 0 to 100 when a persisted calculation exists
   statusText?: string;
-  verifiedControlsCount: number;
+  implementedControlsCount: number;
   totalControlsCount: number;
-  fourEyesEvidenceCount: number;
+  approvedEvidenceCount: number;
   openGapsCount: number;
-  sovereignRegion?: string;
-  lastAuditedTimestamp?: string;
 }
 
 export function UIExecutivePostureHero({
   score,
   statusText,
-  verifiedControlsCount,
+  implementedControlsCount,
   totalControlsCount,
-  fourEyesEvidenceCount,
+  approvedEvidenceCount,
   openGapsCount,
-  sovereignRegion = 'FRA-WEST3 (Frankfurt)',
-  lastAuditedTimestamp,
 }: UIExecutivePostureHeroProps) {
-  const isHealthy = score >= 85 && openGapsCount === 0;
-  const isWarning = score < 85 && score >= 70;
-  const isCritical = score < 70 || openGapsCount > 3;
+  const hasScore = score !== null;
+  const isHealthy = hasScore && score >= 85 && openGapsCount === 0;
+  const isWarning = hasScore && !isHealthy && score >= 70 && openGapsCount <= 3;
 
-  const defaultStatus = isHealthy
-    ? 'STATUTORY AUDIT READY'
+  const defaultStatus = !hasScore
+    ? 'NOT ASSESSED'
+    : isHealthy
+    ? 'CALCULATED POSTURE AVAILABLE'
     : isWarning
     ? 'REMEDIATIONS IN PROGRESS'
     : 'CRITICAL LIABILITIES DETECTED';
 
-  const badgeVariant = isHealthy ? 'compliant' : isWarning ? 'warning' : 'critical';
+  const badgeVariant = !hasScore ? 'neutral' : isHealthy ? 'compliant' : isWarning ? 'warning' : 'critical';
+  const accentColor = !hasScore
+    ? 'var(--status-neutral-dot)'
+    : isHealthy
+    ? 'var(--status-compliant-fg)'
+    : isWarning
+    ? 'var(--status-warning-fg)'
+    : 'var(--status-critical-fg)';
 
   return (
     <div
@@ -64,7 +69,9 @@ export function UIExecutivePostureHero({
           right: 0,
           width: '320px',
           height: '100%',
-          background: isHealthy
+          background: !hasScore
+            ? 'radial-gradient(circle at top right, rgba(100, 116, 139, 0.08), transparent 70%)'
+            : isHealthy
             ? 'radial-gradient(circle at top right, rgba(34, 197, 94, 0.08), transparent 70%)'
             : isWarning
             ? 'radial-gradient(circle at top right, rgba(234, 179, 8, 0.08), transparent 70%)'
@@ -86,13 +93,7 @@ export function UIExecutivePostureHero({
             height: '92px',
             borderRadius: '50%',
             backgroundColor: 'var(--surface-subtle)',
-            border: `2px solid ${
-              isHealthy
-                ? 'var(--status-compliant-fg)'
-                : isWarning
-                ? 'var(--status-warning-fg)'
-                : 'var(--status-critical-fg)'
-            }`,
+            border: `2px solid ${accentColor}`,
             boxShadow: 'var(--shadow-sm)',
             flexShrink: 0,
           }}
@@ -102,16 +103,12 @@ export function UIExecutivePostureHero({
             style={{
               fontSize: '32px',
               fontWeight: 900,
-              color: isHealthy
-                ? 'var(--status-compliant-fg)'
-                : isWarning
-                ? 'var(--status-warning-fg)'
-                : 'var(--status-critical-fg)',
+              color: accentColor,
               lineHeight: 1,
               letterSpacing: '-0.03em',
             }}
           >
-            {score}%
+            {score === null ? '—' : `${score}%`}
           </span>
           <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', marginTop: '2px' }}>
             POSTURE
@@ -122,7 +119,7 @@ export function UIExecutivePostureHero({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
             <span className="text-overline" style={{ color: 'var(--text-muted)' }}>
-              CONTINUOUS COMPLIANCE INDEX
+              RECORDED COMPLIANCE INDEX
             </span>
             <UIBadge variant={badgeVariant} size="sm">
               {statusText || defaultStatus}
@@ -137,10 +134,10 @@ export function UIExecutivePostureHero({
               letterSpacing: '-0.02em',
             }}
           >
-            EU Statutory Governance Posture
+            Compliance Posture
           </h1>
           <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-            Materialized across GDPR, EU AI Act, EU Data Act, and ISO 27001 controls.
+            Calculated from current tenant records. This indicator is not an audit opinion.
           </p>
         </div>
       </div>
@@ -156,36 +153,38 @@ export function UIExecutivePostureHero({
         }}
       >
         <div>
-          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>VERIFIED CONTROLS</div>
+          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>IMPLEMENTED CONTROLS</div>
           <div className="font-tabular" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', marginTop: '2px' }}>
-            {verifiedControlsCount} <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>/ {totalControlsCount}</span>
+            {implementedControlsCount} <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>/ {totalControlsCount}</span>
           </div>
-          <div style={{ fontSize: '11px', color: 'var(--status-compliant-fg)', fontWeight: 600, marginTop: '1px' }}>
-            {Math.round((verifiedControlsCount / (totalControlsCount || 1)) * 100)}% Verified
+          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, marginTop: '1px' }}>
+            {totalControlsCount > 0
+              ? `${Math.round((implementedControlsCount / totalControlsCount) * 100)}% recorded implemented`
+              : 'No controls recorded'}
           </div>
         </div>
 
         <div style={{ width: '1px', height: '36px', backgroundColor: 'var(--border-subtle)' }} />
 
         <div>
-          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>FOUR-EYES LOCKERS</div>
+          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>APPROVED EVIDENCE</div>
           <div className="font-tabular" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--accent-primary)', marginTop: '2px' }}>
-            {fourEyesEvidenceCount}
+            {approvedEvidenceCount}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '1px' }}>
-            SHA-256 Sealed
+            Approval status recorded
           </div>
         </div>
 
         <div style={{ width: '1px', height: '36px', backgroundColor: 'var(--border-subtle)' }} />
 
         <div>
-          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>SOVEREIGN RESIDENCY</div>
-          <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <span>🇪🇺</span> {sovereignRegion}
+          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>OPEN FINDINGS</div>
+          <div className="font-tabular" style={{ fontSize: '18px', fontWeight: 800, color: openGapsCount > 0 ? 'var(--status-critical-fg)' : 'var(--text-primary)', marginTop: '2px' }}>
+            {openGapsCount}
           </div>
-          <div style={{ fontSize: '11px', color: 'var(--status-compliant-fg)', fontWeight: 600, marginTop: '1px' }}>
-            Zero US Extraterritoriality
+          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, marginTop: '1px' }}>
+            Recorded open status
           </div>
         </div>
       </div>
@@ -204,44 +203,52 @@ export interface ExpiryForecastBucket {
 }
 
 export interface UIEvidenceExpiryForecastProps {
-  expiredCount: number;
-  expiringIn30DaysCount: number;
-  expiringIn90DaysCount: number;
-  validCount: number;
+  overdueCount: number;
+  dueIn30DaysCount: number;
+  dueIn90DaysCount: number;
+  scheduledAfter90DaysCount: number;
+  noReviewDateCount: number;
   onViewExpiring?: () => void;
 }
 
 export function UIEvidenceExpiryForecast({
-  expiredCount,
-  expiringIn30DaysCount,
-  expiringIn90DaysCount,
-  validCount,
+  overdueCount,
+  dueIn30DaysCount,
+  dueIn90DaysCount,
+  scheduledAfter90DaysCount,
+  noReviewDateCount,
   onViewExpiring,
 }: UIEvidenceExpiryForecastProps) {
   const buckets: ExpiryForecastBucket[] = [
     {
-      label: 'Expired / Lapsed',
-      count: expiredCount,
+      label: 'Review Overdue',
+      count: overdueCount,
       variant: 'critical',
-      subtext: 'Requires immediate re-upload',
+      subtext: 'Review date has passed',
     },
     {
-      label: 'Expiring ≤ 30 Days',
-      count: expiringIn30DaysCount,
+      label: 'Review Due ≤ 30 Days',
+      count: dueIn30DaysCount,
       variant: 'warning',
-      subtext: 'Upcoming attestation renewals',
+      subtext: 'Upcoming scheduled reviews',
     },
     {
-      label: 'Expiring 31-90 Days',
-      count: expiringIn90DaysCount,
+      label: 'Review Due 31-90 Days',
+      count: dueIn90DaysCount,
       variant: 'compliant',
-      subtext: 'In renewal window',
+      subtext: 'Scheduled review window',
     },
     {
-      label: 'Active & Valid (>90d)',
-      count: validCount,
+      label: 'Scheduled After 90 Days',
+      count: scheduledAfter90DaysCount,
       variant: 'compliant',
-      subtext: 'Current audit readiness',
+      subtext: 'Review date recorded',
+    },
+    {
+      label: 'No Review Date',
+      count: noReviewDateCount,
+      variant: 'warning',
+      subtext: 'Schedule is incomplete',
     },
   ];
 
@@ -257,10 +264,10 @@ export function UIEvidenceExpiryForecast({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
         <div>
           <h3 className="text-card-title" style={{ margin: 0, color: 'var(--text-primary)' }}>
-            Evidence & Assurance Expiry Forecast
+            Evidence Review Schedule
           </h3>
           <p className="text-caption" style={{ margin: '2px 0 0 0', color: 'var(--text-secondary)' }}>
-            Forward-looking timeline of SOC reports, ISO certs, and supplier DPAs requiring renewal.
+            Counts derived from recorded evidence review dates; rejected and archived records are excluded.
           </p>
         </div>
         {onViewExpiring && (
@@ -277,7 +284,7 @@ export function UIEvidenceExpiryForecast({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
           gap: '12px',
         }}
       >
@@ -363,20 +370,20 @@ export function UIRegulatoryLiabilities({ liabilities }: UIRegulatoryLiabilities
         style={{
           padding: '16px 20px',
           backgroundColor: 'var(--surface-l2-card)',
-          border: '1px solid var(--status-compliant-border)',
+          border: '1px solid var(--border-default)',
           display: 'flex',
           alignItems: 'center',
           gap: '14px',
           marginBottom: '20px',
         }}
       >
-        <span style={{ fontSize: '24px' }}>🛡️</span>
+        <span style={{ fontSize: '24px' }}>ℹ️</span>
         <div>
-          <div style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--status-compliant-fg)' }}>
-            All Clear: Zero High-Severity Statutory Liabilities Detected
+          <div style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--text-primary)' }}>
+            No Priority Items Identified by This Dashboard View
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-            All EU AI Act risk tiers, GDPR Article 30 records, and cross-border transfer agreements are currently conforming.
+            This is not a compliance conclusion. Confirm scope completeness, overdue reviews, and framework-specific registers before relying on posture reporting.
           </div>
         </div>
       </div>
