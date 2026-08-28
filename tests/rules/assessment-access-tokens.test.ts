@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import * as crypto from 'crypto';
@@ -236,17 +235,18 @@ describe('Secure External Assessment Access Model Test Pack', () => {
   // 4. ACCESS BOUNDARY ENFORCEMENT & SECURITY RULES
   // ---------------------------------------------------------------------------
   describe('4. Access Boundary Enforcement & Firestore Security Rules', () => {
-    it('allows compliance_manager in Tenant A to read token metadata in their tenant', async () => {
+    it('keeps token metadata server-only even for privileged tenant browser personas', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         const db = context.firestore();
         await db.doc(`tenants/${tenantA}/assessment_access_tokens/${activeToken.id}`).set(activeToken);
       });
 
-      const dbComplianceA = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
-      const snap = await assertSucceeds(
-        dbComplianceA.doc(`tenants/${tenantA}/assessment_access_tokens/${activeToken.id}`).get()
-      );
-      expect(snap.exists).toBe(true);
+      for (const persona of [PERSONAS.adminA, PERSONAS.complianceA, PERSONAS.securityA]) {
+        const browserDb = testEnv.authenticatedContext(persona.uid).firestore();
+        await assertFails(
+          browserDb.doc(`tenants/${tenantA}/assessment_access_tokens/${activeToken.id}`).get()
+        );
+      }
     });
 
     it('STRICT BLOCK: prevents direct client write/create to assessment_access_tokens (Cloud Functions only)', async () => {

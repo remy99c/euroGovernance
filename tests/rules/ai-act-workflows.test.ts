@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -131,12 +130,12 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
   });
 
   // 1. AI Systems Register RBAC
-  test('AI Governance and Compliance Managers can register AI Systems; Contributors cannot', async () => {
+  test('AI-system registration is server-only for managers and contributors alike', async () => {
     const aiGovDb = testEnv.authenticatedContext(userAIGovA, { email: 'ai-lead@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    // AI Gov Manager CAN register system
-    await assertSucceeds(
+    // AI Gov Manager must register systems through a server command.
+    await assertFails(
       aiGovDb.doc(`tenants/${tenantA}/ai_systems/ais_chatbot`).set({
         id: 'ais_chatbot',
         tenantId: tenantA,
@@ -160,7 +159,7 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
   });
 
   // 2. Direct Risk-Tier Client Tampering Barrier
-  test('Direct client update cannot alter riskTier; standard field updates are permitted', async () => {
+  test('Direct client updates cannot alter riskTier or standard AI-system fields', async () => {
     const aiGovDb = testEnv.authenticatedContext(userAIGovA, { email: 'ai-lead@eurocorp.de' }).firestore();
 
     // Attempting direct client jump of riskTier is DENIED by security rules
@@ -170,8 +169,8 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
       })
     );
 
-    // Standard updates preserving the current riskTier SUCCEED
-    await assertSucceeds(
+    // Standard-field updates are also authoritative server transitions.
+    await assertFails(
       aiGovDb.doc(`tenants/${tenantA}/ai_systems/${aiSystemId}`).update({
         description: 'Updated human-in-the-loop oversight protocol',
       })
@@ -179,12 +178,12 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
   });
 
   // 3. Substantial Changes Subcollection RBAC
-  test('AI Governance Manager can log substantial changes; Security Manager cannot', async () => {
+  test('substantial-change logging cannot be written directly by browser personas', async () => {
     const aiGovDb = testEnv.authenticatedContext(userAIGovA, { email: 'ai-lead@eurocorp.de' }).firestore();
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
 
-    // AI Gov Manager CAN log substantial change
-    await assertSucceeds(
+    // AI Gov Manager direct writes are denied.
+    await assertFails(
       aiGovDb.doc(`tenants/${tenantA}/ai_systems/${aiSystemId}/substantial_changes/chg_v2`).set({
         id: 'chg_v2',
         tenantId: tenantA,
@@ -205,13 +204,13 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
   });
 
   // 4. AI Incidents Register RBAC
-  test('AI Governance and Security Managers can log AI incidents; Contributors cannot', async () => {
+  test('AI-incident creation and transitions require server commands for every browser persona', async () => {
     const aiGovDb = testEnv.authenticatedContext(userAIGovA, { email: 'ai-lead@eurocorp.de' }).firestore();
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    // AI Gov & Security Managers CAN log incident
-    await assertSucceeds(
+    // AI Gov and Security Manager direct writes are denied.
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/ai_incidents/inc_adversarial_attack`).set({
         id: 'inc_adversarial_attack',
         tenantId: tenantA,
@@ -223,7 +222,7 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       aiGovDb.doc(`tenants/${tenantA}/ai_incidents/${incidentId}`).update({
         status: 'mitigated',
       })
@@ -240,11 +239,11 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
   });
 
   // 5. Post-Market Logs Subcollection RBAC
-  test('Compliance Manager can log post-market monitoring; Contributors cannot', async () => {
+  test('post-market monitoring logs cannot be written directly by browser personas', async () => {
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    await assertSucceeds(
+    await assertFails(
       complianceDb.doc(`tenants/${tenantA}/ai_systems/${aiSystemId}/post_market_logs/log_q1_2026`).set({
         id: 'log_q1_2026',
         tenantId: tenantA,
@@ -263,7 +262,7 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
   });
 
   // 6. Deletion Restriction Across AI Act Subsystem
-  test('Only Tenant Admin can delete AI systems and AI incidents', async () => {
+  test('AI systems and incidents cannot be deleted directly even by Tenant Admin', async () => {
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
     const aiGovDb = testEnv.authenticatedContext(userAIGovA, { email: 'ai-lead@eurocorp.de' }).firestore();
 
@@ -271,9 +270,9 @@ describe('EU AI Act Governance Workflows & Security Rules', () => {
     await assertFails(aiGovDb.doc(`tenants/${tenantA}/ai_systems/${aiSystemId}`).delete());
     await assertFails(aiGovDb.doc(`tenants/${tenantA}/ai_incidents/${incidentId}`).delete());
 
-    // Tenant Admin CAN delete
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/ai_incidents/${incidentId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/ai_systems/${aiSystemId}`).delete());
+    // Tenant Admin direct deletion is denied.
+    await assertFails(adminDb.doc(`tenants/${tenantA}/ai_incidents/${incidentId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/ai_systems/${aiSystemId}`).delete());
   });
 
   // 7. Cross-Tenant Denial

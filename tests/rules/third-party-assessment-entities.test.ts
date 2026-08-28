@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -412,25 +411,25 @@ describe('Third-Party Assessment Core Data Model & Security Test Pack', () => {
   // 2. FIRESTORE SECURITY RULES & MULTI-TENANT ISOLATION
   // ---------------------------------------------------------------------------
   describe('2. Firestore Security Rules & Multi-Tenant Isolation', () => {
-    it('allows compliance_manager and tenant_admin to create questionnaire templates', async () => {
+    it('denies direct questionnaire-template creation by compliance_manager and tenant_admin', async () => {
       const db = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const ref = db.doc(`tenants/${tenantA}/questionnaire_templates/${sampleTemplate.id}`);
-      await assertSucceeds(ref.set(sampleTemplate));
+      await assertFails(ref.set(sampleTemplate));
     });
 
-    it('allows compliance_manager to create assessment requests and recurring schedules', async () => {
+    it('requires server commands for assessment requests and recurring schedules', async () => {
       const db = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const reqRef = db.doc(`tenants/${tenantA}/assessment_requests/${sampleProspectRequest.id}`);
-      await assertSucceeds(reqRef.set(sampleProspectRequest));
+      await assertFails(reqRef.set(sampleProspectRequest));
 
       const schedRef = db.doc(`tenants/${tenantA}/recurring_schedules/${sampleRecurringSchedule.id}`);
-      await assertSucceeds(schedRef.set(sampleRecurringSchedule));
+      await assertFails(schedRef.set(sampleRecurringSchedule));
     });
 
-    it('allows approver to create and update submission reviews', async () => {
+    it('requires server commands for approver submission-review mutations', async () => {
       const dbApprover = testEnv.authenticatedContext(PERSONAS.approverA.uid).firestore();
       const revRef = dbApprover.doc(`tenants/${tenantA}/submission_reviews/${sampleReview.id}`);
-      await assertSucceeds(
+      await assertFails(
         revRef.set({
           ...sampleReview,
           ownerId: PERSONAS.approverA.uid,

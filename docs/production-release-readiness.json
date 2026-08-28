@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "releaseStatus": "blocked",
+  "blockers": [
+    {
+      "id": "authoritative-callable-migration",
+      "milestone": "M1B",
+      "status": "open",
+      "description": "Every remaining Admin-SDK mutation must use an exact, versioned, role-scoped, atomic command or be retired fail-closed.",
+      "evidence": []
+    },
+    {
+      "id": "least-privilege-read-projections",
+      "milestone": "M1B",
+      "status": "open",
+      "description": "Sensitive tenant, historical, assessment, privacy, incident, and evidence reads need persona-scoped redacted projections and integration coverage.",
+      "evidence": []
+    },
+    {
+      "id": "verified-evidence-object-pipeline",
+      "milestone": "M2",
+      "status": "open",
+      "description": "Evidence requires authorized upload sessions, object-generation binding, server hashing/type/size verification, malware controls, review separation, retention, and authorized download.",
+      "evidence": []
+    },
+    {
+      "id": "reproducible-applicability-and-framework-provenance",
+      "milestone": "M3",
+      "status": "open",
+      "description": "Framework, scoping, applicability, obligation, and control results must be based on immutable pinned source/input versions with one authoritative state model.",
+      "evidence": []
+    },
+    {
+      "id": "tamper-evident-audit-chain-and-checkpoint",
+      "milestone": "M3",
+      "status": "open",
+      "description": "Append-only Rules and command receipts must be complemented by verifiable event chaining, continuity checks, independent checkpoints, and audited repair procedures.",
+      "evidence": []
+    },
+    {
+      "id": "secure-auditor-export-delivery",
+      "milestone": "M4",
+      "status": "open",
+      "description": "Exports must contain the promised files/formats, fail atomically, be integrity-manifested, and be downloadable through short-lived authorized delivery.",
+      "evidence": []
+    },
+    {
+      "id": "recurring-operations-and-outbox-delivery",
+      "milestone": "M4",
+      "status": "open",
+      "description": "Review/expiry schedules, notifications, escalation, retries, dead-letter handling, and reconciliation need idempotent tested workers and usable inboxes.",
+      "evidence": []
+    },
+    {
+      "id": "tenant-data-migration-and-reconciliation",
+      "milestone": "M5",
+      "status": "open",
+      "description": "Legacy tenant data, random invitations, mutable histories, duplicate applicability stores, and missing revisions require idempotent migration plus per-tenant reconciliation reports.",
+      "evidence": []
+    },
+    {
+      "id": "cloud-app-check-and-regional-cutover",
+      "milestone": "M5",
+      "status": "open",
+      "description": "Register production App Check, verify attested traffic and limited-use-token IAM, inventory all deployed regions, tombstone old endpoints, and prove their retirement.",
+      "evidence": []
+    },
+    {
+      "id": "independent-security-dr-assurance",
+      "milestone": "M5",
+      "status": "open",
+      "description": "Complete independent penetration/authorization testing, backup-restore and disaster-recovery exercises, load/cost limits, privacy review, and pilot acceptance.",
+      "evidence": []
+    }
+  ]
+}

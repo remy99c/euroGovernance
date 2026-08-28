@@ -309,7 +309,7 @@ describe('Processor Profiles & ROPA Entries Integration Suite', () => {
   // 2. Linking & Reverse References via Firestore Security Rules
   // ---------------------------------------------------------------------------
   describe('2. Linking & Reverse References Security Rules', () => {
-    test('Privacy Manager can link processor profile and transfer arrangement to ROPA', async () => {
+    test('Privacy Manager can read ROPA links but must update them through a server command', async () => {
       const privacyDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
       // Verify read of seeded ROPA
@@ -322,8 +322,8 @@ describe('Processor Profiles & ROPA Entries Integration Suite', () => {
       expect(data.transferArrangementIds).toContain('trans_hubspot_us');
       expect(data.processorIds).toContain('vnd_hubspot_inc');
 
-      // Update ROPA with additional processor profile
-      await assertSucceeds(
+      // Direct link updates cannot bypass the audited command path.
+      await assertFails(
         privacyDb.doc(`tenants/${tenantA}/ropa_entries/ropa_marketing_outreach`).update({
           processorProfileIds: ['prof_hubspot_marketing', 'prof_sendgrid_mail'],
           updatedAt: new Date().toISOString(),
@@ -331,9 +331,9 @@ describe('Processor Profiles & ROPA Entries Integration Suite', () => {
         })
       );
 
-      // Verify updated ROPA
+      // The rejected mutation leaves the server-owned record unchanged.
       const updatedSnap = await privacyDb.doc(`tenants/${tenantA}/ropa_entries/ropa_marketing_outreach`).get();
-      expect(updatedSnap.data()?.processorProfileIds).toEqual(['prof_hubspot_marketing', 'prof_sendgrid_mail']);
+      expect(updatedSnap.data()?.processorProfileIds).toEqual(['prof_hubspot_marketing']);
     });
 
     test('Cross-tenant isolation: Tenant B admin cannot read or mutate Tenant A ROPA entries or processor links', async () => {

@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -81,7 +80,7 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
   // ---------------------------------------------------------------------------
   // 1. Create Vendor (Step 1)
   // ---------------------------------------------------------------------------
-  test('Step 1: Privacy Officer creates commercial master Vendor record', async () => {
+  test('Step 1: trusted command creates a Vendor record readable by the Privacy Officer', async () => {
     const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
     const vendorDoc = {
@@ -101,9 +100,9 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       updatedAt: now,
     };
 
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/vendors/vnd_omnicloud_01`).set(vendorDoc)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/vendors/vnd_omnicloud_01`).set(vendorDoc);
+    });
 
     const snap = await privDb.doc(`tenants/${tenantA}/vendors/vnd_omnicloud_01`).get();
     expect(snap.exists).toBe(true);
@@ -113,7 +112,7 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
   // ---------------------------------------------------------------------------
   // 2. Create Processor Profile (Step 2)
   // ---------------------------------------------------------------------------
-  test('Step 2: Privacy Officer creates GDPR Article 28 Processor Profile', async () => {
+  test('Step 2: trusted command creates a GDPR Article 28 Processor Profile', async () => {
     const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
     const profileDoc = {
@@ -144,9 +143,9 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       updatedAt: now,
     };
 
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/processor_profiles/prof_omnicloud_01`).set(profileDoc)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/processor_profiles/prof_omnicloud_01`).set(profileDoc);
+    });
 
     const snap = await privDb.doc(`tenants/${tenantA}/processor_profiles/prof_omnicloud_01`).get();
     expect(snap.exists).toBe(true);
@@ -156,7 +155,7 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
   // ---------------------------------------------------------------------------
   // 3 & 4. Add Restricted Transfer & Choose SCC Mechanism (Steps 3 & 4)
   // ---------------------------------------------------------------------------
-  test('Steps 3 & 4: Compliance Manager adds Restricted Transfer Arrangement with Standard Contractual Clauses (SCC)', async () => {
+  test('Steps 3 & 4: trusted command records a Restricted Transfer Arrangement with SCCs', async () => {
     const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
     const transferDoc = {
@@ -185,9 +184,9 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       updatedAt: now,
     };
 
-    await assertSucceeds(
-      compDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_omnicloud_us`).set(transferDoc)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/transfer_arrangements/trans_omnicloud_us`).set(transferDoc);
+    });
 
     const snap = await compDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_omnicloud_us`).get();
     expect(snap.exists).toBe(true);
@@ -198,7 +197,7 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
   // ---------------------------------------------------------------------------
   // 5. Attach Evidence (Step 5)
   // ---------------------------------------------------------------------------
-  test('Step 5: Privacy Officer attaches verified DPA and SCC execution evidence', async () => {
+  test('Step 5: trusted evidence workflow attaches verified DPA and SCC execution evidence', async () => {
     const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
     const dpaEvidence = {
@@ -242,9 +241,9 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       await serverDb.doc(`tenants/${tenantA}/evidence/ev_scc_omni_01`).set(sccEvidence);
     });
 
-    // Link evidence IDs to processor profile
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/processor_profiles/prof_omnicloud_01`).set(
+    // The trusted workflow links evidence IDs to the authoritative profile.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/processor_profiles/prof_omnicloud_01`).set(
         {
           id: 'prof_omnicloud_01',
           tenantId: tenantA,
@@ -273,14 +272,17 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
           updatedAt: now,
         },
         { merge: true }
-      )
-    );
+      );
+    });
+
+    const profileSnap = await privDb.doc(`tenants/${tenantA}/processor_profiles/prof_omnicloud_01`).get();
+    expect(profileSnap.data()?.linkedDpaEvidenceId).toBe('ev_dpa_omni_01');
   });
 
   // ---------------------------------------------------------------------------
   // 6. Link / Create TIA Assessment (Step 6)
   // ---------------------------------------------------------------------------
-  test('Step 6: Privacy Officer creates and links Schrems II Transfer Impact Assessment (TIA)', async () => {
+  test('Step 6: trusted command creates and links a Schrems II Transfer Impact Assessment (TIA)', async () => {
     const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
     const tiaDoc = {
@@ -304,13 +306,12 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       updatedAt: now,
     };
 
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/tia_assessments/tia_omnicloud_us`).set(tiaDoc)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const serverDb = context.firestore();
+      await serverDb.doc(`tenants/${tenantA}/tia_assessments/tia_omnicloud_us`).set(tiaDoc);
 
-    // Link TIA ID to the transfer arrangement
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_omnicloud_us`).set(
+      // Link the TIA ID to the transfer arrangement in the same trusted workflow.
+      await serverDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_omnicloud_us`).set(
         {
           id: 'trans_omnicloud_us',
           tenantId: tenantA,
@@ -336,15 +337,17 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
           createdAt: now,
           updatedAt: now,
         }
-      )
-    );
+      );
+    });
+
+    const transferSnap = await privDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_omnicloud_us`).get();
+    expect(transferSnap.data()?.linkedTiaId).toBe('tia_omnicloud_us');
   });
 
   // ---------------------------------------------------------------------------
   // 7. Link to System Asset and Article 30 ROPA (Step 7)
   // ---------------------------------------------------------------------------
-  test('Step 7: Link processor profile and transfer arrangements to System Asset and ROPA entry', async () => {
-    const adminDb = testEnv.authenticatedContext(PERSONAS.adminA.uid).firestore();
+  test('Step 7: trusted command links the processor and transfer to a System Asset and ROPA entry', async () => {
     const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
     // 1. Create System Asset with typed processor relationship
@@ -375,9 +378,9 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       updatedAt: now,
     };
 
-    await assertSucceeds(
-      adminDb.doc(`tenants/${tenantA}/system_assets/asset_web_backend`).set(assetDoc)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/system_assets/asset_web_backend`).set(assetDoc);
+    });
 
     // 2. Create Article 30 ROPA entry linking processor and transfer arrangement
     const ropaDoc = {
@@ -414,9 +417,9 @@ describe('Processor & Cross-Border Transfer Governance: Full E2E Lifecycle Pack'
       updatedAt: now,
     };
 
-    await assertSucceeds(
-      privDb.doc(`tenants/${tenantA}/ropa_entries/ropa_cust_onboard`).set(ropaDoc)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/ropa_entries/ropa_cust_onboard`).set(ropaDoc);
+    });
 
     const snapRopa = await privDb.doc(`tenants/${tenantA}/ropa_entries/ropa_cust_onboard`).get();
     expect(snapRopa.exists).toBe(true);

@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -430,10 +429,13 @@ describe('Transfer Arrangements & Cross-Border Governance Suite', () => {
         ownerId: PERSONAS.privacyA.uid,
       };
 
-      // Save all three arrangements
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_arr_01_eea_hosting`).set(eeaHosting));
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_arr_02_us_support`).set(usSupport));
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_arr_03_india_ops`).set(inSubprocessing));
+      // Save all three arrangements through the trusted server command boundary.
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const serverDb = context.firestore();
+        await serverDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_arr_01_eea_hosting`).set(eeaHosting);
+        await serverDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_arr_02_us_support`).set(usSupport);
+        await serverDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_arr_03_india_ops`).set(inSubprocessing);
+      });
 
       // Verify all 3 are stored under the same processor profile
       const snap1 = await privacyDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_arr_01_eea_hosting`).get();
@@ -459,14 +461,14 @@ describe('Transfer Arrangements & Cross-Border Governance Suite', () => {
   // 3. Security Rules, RBAC & Multi-Tenant Isolation
   // ---------------------------------------------------------------------------
   describe('3. Transfer Arrangements RBAC & Multi-Tenant Isolation', () => {
-    test('Compliance Manager and Privacy Manager can create and update arrangements; Contributors cannot', async () => {
+    test('transfer-arrangement creation and updates require server commands for every browser persona', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const contribDb = testEnv.authenticatedContext(PERSONAS.contributorA.uid).firestore();
 
       const arrangementDoc = compDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_comp_test`);
 
       // 1. Compliance Manager creates arrangement
-      await assertSucceeds(
+      await assertFails(
         arrangementDoc.set({
           id: 'trans_comp_test',
           tenantId: tenantA,

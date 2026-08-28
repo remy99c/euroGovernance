@@ -357,7 +357,7 @@ describe('Processor & Transfer Review Reminders and Lifecycle Notifications Suit
   // 2. Notification Security Rules & Multi-Tenant Isolation
   // ---------------------------------------------------------------------------
   describe('2. Notification Security Rules & Multi-Tenant Isolation', () => {
-    test('Recipient can read their notification and mark it as read', async () => {
+    test('recipient can read their notification but cannot mark it directly through Firestore', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
       const notifSnap = await assertSucceeds(
@@ -365,8 +365,8 @@ describe('Processor & Transfer Review Reminders and Lifecycle Notifications Suit
       );
       expect(notifSnap.exists).toBe(true);
 
-      // Recipient can update isRead and readAt
-      await assertSucceeds(
+      // Recipient notification state is updated through a server command.
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/notifications/notif_existing_rem`).update({
           isRead: true,
           readAt: new Date().toISOString(),

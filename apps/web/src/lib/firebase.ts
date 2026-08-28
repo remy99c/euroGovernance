@@ -1,53 +1,99 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import {
+  CustomProvider,
+  initializeAppCheck,
+  ReCaptchaEnterpriseProvider,
+} from 'firebase/app-check';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
+import {
+  firebaseAppCheckSiteKey,
+  firebaseFunctionsRegion,
+  firebasePublicConfig,
+  isProductionBuild,
+  useFirebaseEmulator,
+} from './firebase-public-config';
 
-const isProductionBuild = process.env.NODE_ENV === 'production';
-
-function requiredClientConfig(name: string, value: string | undefined, developmentFallback: string): string {
-  const normalized = value?.trim();
-  if (normalized) return normalized;
-  if (isProductionBuild) {
-    throw new Error(`Missing required public Firebase configuration: ${name}`);
+declare global {
+  interface Window {
+    __FIREBASE_APP_CHECK_INITIALIZED__?: boolean;
+    __FIREBASE_EMULATORS_CONNECTED__?: boolean;
   }
-  return developmentFallback;
 }
 
-const firebaseConfig = {
-  apiKey: requiredClientConfig('NEXT_PUBLIC_FIREBASE_API_KEY', process.env.NEXT_PUBLIC_FIREBASE_API_KEY, 'demo-api-key'),
-  authDomain: requiredClientConfig('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, 'eurogovernance-dev.firebaseapp.com'),
-  projectId: requiredClientConfig('NEXT_PUBLIC_FIREBASE_PROJECT_ID', process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID, 'eurogovernance-dev'),
-  storageBucket: requiredClientConfig('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET', process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET, 'eurogovernance-dev.appspot.com'),
-  messagingSenderId: requiredClientConfig('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID', process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID, '123456789012'),
-  appId: requiredClientConfig('NEXT_PUBLIC_FIREBASE_APP_ID', process.env.NEXT_PUBLIC_FIREBASE_APP_ID, '1:123456789012:web:abcdef123456'),
-};
+const app = getApps().length === 0 ? initializeApp(firebasePublicConfig) : getApp();
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Initialize App Check before any Firebase service is accessed. Callable SDK
+// requests then carry a reCAPTCHA Enterprise attestation automatically. Local
+// browser workflows use a structurally valid, unsigned token that is accepted
+// only by the Functions emulator. It is not a secret/debug credential, and the
+// production build fails closed before this branch can run.
+function base64UrlJson(value: Record<string, unknown>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return window
+    .btoa(binary)
+    .replace(/=/gu, '')
+    .replace(/\+/gu, '-')
+    .replace(/\//gu, '_');
+}
+
+function createFunctionsEmulatorAppCheckToken(): string {
+  if (isProductionBuild || !useFirebaseEmulator) {
+    throw new Error('Emulator App Check tokens are unavailable outside local development.');
+  }
+  const issuedAt = Math.floor(Date.now() / 1_000);
+  return [
+    base64UrlJson({ alg: 'none', typ: 'JWT' }),
+    base64UrlJson({
+      app_id: firebasePublicConfig.appId,
+      aud: [`projects/${firebasePublicConfig.projectId}`],
+      exp: issuedAt + 60 * 60,
+      iat: issuedAt,
+      iss: `https://firebaseappcheck.googleapis.com/${firebasePublicConfig.projectId}`,
+      sub: firebasePublicConfig.appId,
+    }),
+    'functions-emulator-only',
+  ].join('.');
+}
+
+if (typeof window !== 'undefined' && !window.__FIREBASE_APP_CHECK_INITIALIZED__) {
+  const provider = useFirebaseEmulator
+    ? new CustomProvider({
+        getToken: async () => ({
+          token: createFunctionsEmulatorAppCheckToken(),
+          expireTimeMillis: Date.now() + 60 * 60 * 1_000,
+        }),
+      })
+    : new ReCaptchaEnterpriseProvider(firebaseAppCheckSiteKey!);
+  initializeAppCheck(app, {
+    provider,
+    isTokenAutoRefreshEnabled: !useFirebaseEmulator,
+  });
+  window.__FIREBASE_APP_CHECK_INITIALIZED__ = true;
+}
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(
   app,
-  process.env.NEXT_PUBLIC_FIREBASE_FUNCTIONS_REGION || 'europe-west3'
+  firebaseFunctionsRegion
 );
 export const storage = getStorage(app);
 
 // Safe emulator attachment with Hot Module Reload (HMR) guard
-if (isProductionBuild && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true') {
-  throw new Error('Firebase emulators cannot be enabled in a production web build.');
-}
-
-if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true') {
-  // @ts-expect-error Global emulator guard
+if (typeof window !== 'undefined' && useFirebaseEmulator) {
   if (!window.__FIREBASE_EMULATORS_CONNECTED__) {
     try {
       connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
       connectFirestoreEmulator(db, '127.0.0.1', 8080);
       connectFunctionsEmulator(functions, '127.0.0.1', 5001);
       connectStorageEmulator(storage, '127.0.0.1', 9199);
-      // @ts-expect-error Global emulator guard
       window.__FIREBASE_EMULATORS_CONNECTED__ = true;
     } catch {
       // Ignore repeat connection calls during development HMR

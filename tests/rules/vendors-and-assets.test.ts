@@ -133,14 +133,14 @@ describe('Vendor and System Asset Modules Security Rules', () => {
   });
 
   // 1. Vendors Create & Update RBAC
-  test('Compliance and Security Managers can manage vendors; Contributors and Viewers cannot', async () => {
+  test('vendor mutations require server commands for every browser persona', async () => {
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Compliance & Security Managers CAN create and update
-    await assertSucceeds(
+    // Manager browser sessions cannot create or update authoritative vendors.
+    await assertFails(
       complianceDb.doc(`tenants/${tenantA}/vendors/vnd_openai`).set({
         id: 'vnd_openai',
         tenantId: tenantA,
@@ -151,7 +151,7 @@ describe('Vendor and System Asset Modules Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/vendors/${vendorId}`).update({
         dpaSigned: true,
       })
@@ -174,13 +174,13 @@ describe('Vendor and System Asset Modules Security Rules', () => {
   });
 
   // 2. System Assets Create & Update RBAC
-  test('Security and Privacy Managers can manage system assets; Contributors cannot', async () => {
+  test('system-asset mutations require server commands for every browser persona', async () => {
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
     const privacyDb = testEnv.authenticatedContext(userPrivacyA, { email: 'dpo@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    // Security & Privacy Managers CAN create & update assets
-    await assertSucceeds(
+    // Manager browser sessions cannot create or update authoritative assets.
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/system_assets/ast_redis_cache`).set({
         id: 'ast_redis_cache',
         tenantId: tenantA,
@@ -192,7 +192,7 @@ describe('Vendor and System Asset Modules Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       privacyDb.doc(`tenants/${tenantA}/system_assets/${assetId}`).update({
         containsPersonalData: true,
       })
@@ -221,7 +221,7 @@ describe('Vendor and System Asset Modules Security Rules', () => {
   });
 
   // 4. Delete Restrictions
-  test('Only Tenant Admin can delete vendors and system assets', async () => {
+  test('vendors and system assets cannot be deleted directly even by Tenant Admin', async () => {
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
 
@@ -229,9 +229,9 @@ describe('Vendor and System Asset Modules Security Rules', () => {
     await assertFails(complianceDb.doc(`tenants/${tenantA}/vendors/${vendorId}`).delete());
     await assertFails(complianceDb.doc(`tenants/${tenantA}/system_assets/${assetId}`).delete());
 
-    // Tenant Admin CAN delete
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/vendors/${vendorId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/system_assets/${assetId}`).delete());
+    // Tenant Admin direct deletion is denied.
+    await assertFails(adminDb.doc(`tenants/${tenantA}/vendors/${vendorId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/system_assets/${assetId}`).delete());
   });
 
   // 5. Cross-Tenant Isolation

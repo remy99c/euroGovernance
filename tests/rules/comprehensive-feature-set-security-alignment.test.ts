@@ -192,12 +192,12 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
       );
     });
 
-    test('compliance manager and tenant admin can adopt frameworks for Tenant A; contributor cannot', async () => {
+    test('framework adoption is server-only for compliance, admin, and contributor browser sessions', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const contribCtx = testEnv.authenticatedContext(userContribA);
 
       const adoptRefComp = compCtx.firestore().doc(`tenants/${tenantA}/adopted_frameworks/adopt_gdpr`);
-      await assertSucceeds(
+      await assertFails(
         adoptRefComp.set({
           id: 'adopt_gdpr',
           tenantId: tenantA,
@@ -239,11 +239,11 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
 
   // 2. Scope Records & Questionnaires
   describe('2. Scope Profiles, Facts, and Questionnaires', () => {
-    test('compliance manager can create scope profile in Tenant A', async () => {
+    test('compliance manager cannot create a scope profile through the browser SDK', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const profileRef = compCtx.firestore().doc(`tenants/${tenantA}/scope_profiles/prof_1`);
 
-      await assertSucceeds(
+      await assertFails(
         profileRef.set({
           id: 'prof_1',
           tenantId: tenantA,
@@ -260,12 +260,12 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
       );
     });
 
-    test('contributor can record scope facts & answers in Tenant A', async () => {
+    test('contributor scope facts and answers require server commands', async () => {
       const contribDb = testEnv.authenticatedContext(userContribA).firestore();
 
       // 1. Contributor records scope fact
       const factRef = contribDb.doc(`tenants/${tenantA}/scope_facts/fact_cloud`);
-      await assertSucceeds(
+      await assertFails(
         factRef.set({
           id: 'fact_cloud',
           tenantId: tenantA,
@@ -284,7 +284,7 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
 
       // 2. Contributor records scope questionnaire answer
       const answerRef = contribDb.doc(`tenants/${tenantA}/scope_answers/ans_1`);
-      await assertSucceeds(
+      await assertFails(
         answerRef.set({
           id: 'ans_1',
           tenantId: tenantA,
@@ -321,13 +321,13 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
 
   // 3. Applicability Decisions
   describe('3. Applicability Decisions Security & Permissions', () => {
-    test('compliance manager can write applicability decisions; auditor and contributor cannot', async () => {
+    test('applicability decisions cannot be written directly by any browser persona', async () => {
       const compDb = testEnv.authenticatedContext(userComplianceA).firestore();
       const auditorDb = testEnv.authenticatedContext(userAuditorA).firestore();
       const contribDb = testEnv.authenticatedContext(userContribA).firestore();
 
       const decRef = compDb.doc(`tenants/${tenantA}/applicability_decisions/dec_art30`);
-      await assertSucceeds(
+      await assertFails(
         decRef.set({
           id: 'dec_art30',
           tenantId: tenantA,
@@ -366,12 +366,12 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
 
   // 4. Tenant Requirement Instances, Controls & Statutory Obligations
   describe('4. Requirement Instances, Controls, and Statutory Obligations', () => {
-    test('compliance manager instantiates statutory obligations; unauthorized roles cannot delete', async () => {
+    test('statutory-obligation creation and deletion are server-only', async () => {
       const compDb = testEnv.authenticatedContext(userComplianceA).firestore();
       const contribDb = testEnv.authenticatedContext(userContribA).firestore();
 
       const oblRef = compDb.doc(`tenants/${tenantA}/statutory_obligations/obl_ropa`);
-      await assertSucceeds(
+      await assertFails(
         oblRef.set({
           id: 'obl_ropa',
           tenantId: tenantA,
@@ -397,11 +397,11 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
       await assertFails(contribDb.doc(`tenants/${tenantA}/statutory_obligations/obl_ropa`).delete());
     });
 
-    test('contributor can update operational progress on tenant controls and requirement instances', async () => {
+    test('control and requirement progress updates require server commands', async () => {
       const contribDb = testEnv.authenticatedContext(userContribA).firestore();
 
       // Contributor updates control status to implemented
-      await assertSucceeds(
+      await assertFails(
         contribDb.doc(`tenants/${tenantA}/controls/ctl_crypto`).update({
           status: 'implemented',
           healthScore: 100,
@@ -411,7 +411,7 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
       );
 
       // Contributor updates requirement instance notes
-      await assertSucceeds(
+      await assertFails(
         contribDb.doc(`tenants/${tenantA}/requirement_instances/req_inst_1`).update({
           complianceStatus: 'compliant',
           assessmentNotes: 'Verified encryption deployment.',
@@ -511,11 +511,11 @@ describe('Comprehensive Security Alignment & Access Patterns Suite', () => {
 
   // 6. Export Outputs & Storage Isolation
   describe('6. Export Jobs & Multi-Tenant Storage Isolation', () => {
-    test('compliance manager can request export jobs; client mutation is forbidden', async () => {
+    test('compliance manager export requests require server commands', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const jobRef = compCtx.firestore().doc(`tenants/${tenantA}/export_jobs/job_align_1`);
 
-      await assertSucceeds(
+      await assertFails(
         jobRef.set({
           id: 'job_align_1',
           tenantId: tenantA,

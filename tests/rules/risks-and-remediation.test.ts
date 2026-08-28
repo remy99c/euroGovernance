@@ -141,13 +141,13 @@ describe('Risk Register, Issues & Remediation Tasks Security Rules', () => {
   });
 
   // 1. Risks Create & Update Permissions
-  test('Security Manager can manage risks; Contributors, Auditors, and Viewers cannot', async () => {
+  test('risk creation and updates require server commands for every browser persona', async () => {
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
 
-    // Security Manager CAN create & update risk
-    await assertSucceeds(
+    // Security Manager direct risk mutations are denied.
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/risks/rsk_new_sec`).set({
         id: 'rsk_new_sec',
         tenantId: tenantA,
@@ -158,7 +158,7 @@ describe('Risk Register, Issues & Remediation Tasks Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/risks/${riskId}`).update({
         residualScore: 4,
       })
@@ -182,13 +182,13 @@ describe('Risk Register, Issues & Remediation Tasks Security Rules', () => {
   });
 
   // 2. Issues & Tasks Non-Read-Only Roles
-  test('Contributors can create and update Issues and Tasks; Read-only roles cannot', async () => {
+  test('issue and task mutations require server commands for contributors and read-only roles', async () => {
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Contributor CAN create issue and update task
-    await assertSucceeds(
+    // Contributor issue and task mutations require server commands.
+    await assertFails(
       contribDb.doc(`tenants/${tenantA}/issues/iss_dev_01`).set({
         id: 'iss_dev_01',
         tenantId: tenantA,
@@ -199,7 +199,7 @@ describe('Risk Register, Issues & Remediation Tasks Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       contribDb.doc(`tenants/${tenantA}/tasks/${taskId}`).update({
         status: 'in_progress',
       })
@@ -236,7 +236,7 @@ describe('Risk Register, Issues & Remediation Tasks Security Rules', () => {
   });
 
   // 4. Deletion Restrictions
-  test('Only Tenant Admin can delete risks, issues, and tasks', async () => {
+  test('risks, issues, and tasks cannot be deleted directly even by Tenant Admin', async () => {
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
 
@@ -245,10 +245,10 @@ describe('Risk Register, Issues & Remediation Tasks Security Rules', () => {
     await assertFails(securityDb.doc(`tenants/${tenantA}/issues/${issueId}`).delete());
     await assertFails(securityDb.doc(`tenants/${tenantA}/tasks/${taskId}`).delete());
 
-    // Tenant Admin CAN delete
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/risks/${riskId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/issues/${issueId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/tasks/${taskId}`).delete());
+    // Tenant Admin direct deletion is denied.
+    await assertFails(adminDb.doc(`tenants/${tenantA}/risks/${riskId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/issues/${issueId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/tasks/${taskId}`).delete());
   });
 
   // 5. Cross-Tenant Access Denial

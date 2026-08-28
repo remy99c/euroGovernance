@@ -1,7 +1,6 @@
-import { setGlobalOptions } from 'firebase-functions/v2';
-
-// Set global region to europe-west3 (Frankfurt) for all Cloud Functions v2
-setGlobalOptions({ region: 'europe-west3' });
+// This import must remain first so all re-exported handlers inherit the EU
+// deployment region before their onCall/onSchedule definitions are evaluated.
+import './bootstrap.js';
 
 // One-release compatibility tombstone: this overwrites the previously deployed
 // generic audit endpoint with a fail-closed callable before final deletion.
@@ -39,6 +38,8 @@ export {
   transitionPolicyStatus,
   deleteTenantPolicy,
   listTenantPolicies,
+  getTenantPolicyDetail,
+  getTenantPolicyHistory,
 } from './handlers/policies.js';
 
 // Risks, Issues & Tasks Handlers

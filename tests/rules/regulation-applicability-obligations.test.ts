@@ -575,17 +575,17 @@ describe('Regulation-Oriented Applicability & Statutory Obligations Suite', () =
       updatedBy: userComplianceA,
     };
 
-    test('compliance manager in Tenant A can create and update statutory obligations', async () => {
+    test('compliance manager must create and update statutory obligations through server commands', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const db = compCtx.firestore();
 
       const docRef = db.doc(`tenants/${tenantA}/statutory_obligations/${sampleObligation.id}`);
 
-      // Create succeeds
-      await assertSucceeds(docRef.set(sampleObligation));
+      // Statutory flags are derived server-side and cannot be forged by a client.
+      await assertFails(docRef.set(sampleObligation));
 
-      // Update succeeds
-      await assertSucceeds(
+      // Lifecycle transitions are server-only as well.
+      await assertFails(
         docRef.update({
           status: 'fulfilled',
           updatedAt: new Date().toISOString(),
@@ -595,12 +595,13 @@ describe('Regulation-Oriented Applicability & Statutory Obligations Suite', () =
     });
 
     test('auditor in Tenant A can read but cannot create or mutate statutory obligations', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/statutory_obligations/${sampleObligation.id}`).set({
-        ...sampleObligation,
-        ownerId: userAdminA,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/statutory_obligations/${sampleObligation.id}`).set({
+          ...sampleObligation,
+          ownerId: userAdminA,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditorA);
@@ -619,14 +620,15 @@ describe('Regulation-Oriented Applicability & Statutory Obligations Suite', () =
     });
 
     test('Tenant A user cannot read or mutate statutory obligations in Tenant B partition', async () => {
-      const compBCtx = testEnv.authenticatedContext(userCompB);
-      await compBCtx.firestore().doc(`tenants/${tenantB}/statutory_obligations/obl_tenant_b_confidential`).set({
-        ...sampleObligation,
-        id: 'obl_tenant_b_confidential',
-        tenantId: tenantB,
-        ownerId: userCompB,
-        createdBy: userCompB,
-        updatedBy: userCompB,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantB}/statutory_obligations/obl_tenant_b_confidential`).set({
+          ...sampleObligation,
+          id: 'obl_tenant_b_confidential',
+          tenantId: tenantB,
+          ownerId: userCompB,
+          createdBy: userCompB,
+          updatedBy: userCompB,
+        });
       });
 
       const compACtx = testEnv.authenticatedContext(userComplianceA);

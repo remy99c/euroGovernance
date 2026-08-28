@@ -155,14 +155,14 @@ describe('Framework Adoption, Scoping & Applicability Security Rules', () => {
   });
 
   // 2. Tenant Framework Adoption & Scoping
-  test('Compliance Manager can adopt framework and update scope for their tenant', async () => {
+  test('Compliance Manager must adopt and scope frameworks through server commands', async () => {
     const complianceCtx = testEnv.authenticatedContext(userComplianceA);
     const db = complianceCtx.firestore();
 
     const adoptedRef = db.doc(`tenants/${tenantA}/adopted_frameworks/iso_27001`);
 
     // Adopt framework record
-    await assertSucceeds(
+    await assertFails(
       adoptedRef.set({
         id: 'iso_27001',
         tenantId: tenantA,
@@ -186,7 +186,7 @@ describe('Framework Adoption, Scoping & Applicability Security Rules', () => {
     );
 
     // Update scoping boundaries
-    await assertSucceeds(
+    await assertFails(
       adoptedRef.update({
         scopeDescription: 'Updated corporate ISO scope',
         scopingBoundaries: ['Frankfurt Production Cloud', 'Customer Portal'],
@@ -197,14 +197,14 @@ describe('Framework Adoption, Scoping & Applicability Security Rules', () => {
   });
 
   // 3. Requirement Applicability & Scoping Decisions
-  test('Compliance Manager can record requirement applicability decisions with justifications', async () => {
+  test('requirement applicability decisions cannot be recorded directly by browser clients', async () => {
     const complianceCtx = testEnv.authenticatedContext(userComplianceA);
     const db = complianceCtx.firestore();
 
     const appRef = db.doc(`tenants/${tenantA}/requirement_applicability/art_32`);
 
     // Record applicability decision
-    await assertSucceeds(
+    await assertFails(
       appRef.set({
         id: 'art_32',
         tenantId: tenantA,

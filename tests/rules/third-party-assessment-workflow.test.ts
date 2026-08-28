@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -218,10 +217,10 @@ describe('Third-Party Assessment Workflow & Lifecycle State Test Pack', () => {
       expect(existingProcessorRequest.processorProfileId).toBe('proc_snowflake_eu_01');
     });
 
-    it('allows compliance_manager in Tenant A to save assessment requests to Firestore', async () => {
+    it('requires a server command to save assessment requests to Firestore', async () => {
       const db = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const ref = db.doc(`tenants/${tenantA}/assessment_requests/${prospectRequest.id}`);
-      await assertSucceeds(ref.set(prospectRequest));
+      await assertFails(ref.set(prospectRequest));
     });
   });
 
@@ -317,14 +316,14 @@ describe('Third-Party Assessment Workflow & Lifecycle State Test Pack', () => {
       );
     });
 
-    it('allows approver and compliance manager in Tenant A to update request status', async () => {
+    it('requires server commands for approver and compliance-manager status transitions', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         const db = context.firestore();
         await db.doc(`tenants/${tenantA}/assessment_requests/${prospectRequest.id}`).set(prospectRequest);
       });
 
       const dbApproverA = testEnv.authenticatedContext(PERSONAS.approverA.uid).firestore();
-      await assertSucceeds(
+      await assertFails(
         dbApproverA.doc(`tenants/${tenantA}/assessment_requests/${prospectRequest.id}`).update({
           status: 'under_review',
           updatedAt: new Date().toISOString(),

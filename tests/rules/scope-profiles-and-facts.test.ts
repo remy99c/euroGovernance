@@ -263,7 +263,7 @@ describe('Structured Scope Profiles & Scope Facts Suite', () => {
       updatedBy: userAdminA,
     };
 
-    test('compliance manager in Tenant A can create and update scope profile', async () => {
+    test('compliance manager must use a server command to create or update a scope profile', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const db = compCtx.firestore();
 
@@ -274,18 +274,18 @@ describe('Structured Scope Profiles & Scope Facts Suite', () => {
         updatedBy: userComplianceA,
       };
 
-      await assertSucceeds(
+      await assertFails(
         db.doc(`tenants/${tenantA}/scope_profiles/prof_global_isms`).set(complianceProfile)
       );
 
       const snap = await db.doc(`tenants/${tenantA}/scope_profiles/prof_global_isms`).get();
-      expect(snap.exists).toBe(true);
-      expect(snap.data()?.profileType).toBe('integrated_grc');
+      expect(snap.exists).toBe(false);
     });
 
     test('auditor in Tenant A can read but cannot create or update scope profile', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/scope_profiles/prof_global_isms`).set(sampleProfile);
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/scope_profiles/prof_global_isms`).set(sampleProfile);
+      });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditorA);
       const db = auditorCtx.firestore();

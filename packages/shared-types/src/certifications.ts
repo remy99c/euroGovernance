@@ -23,9 +23,11 @@ export type CertificationStatus =
   | 'expired'
   | 'under_audit'
   | 'suspended'
-  | 'revoked';
+  | 'revoked'
+  | 'archived';
 
 export type ContinuousComplianceStatus =
+  | 'not_assessed'
   | 'compliant'
   | 'minor_non_conformity'
   | 'major_non_conformity'
@@ -43,6 +45,8 @@ export interface CertificationScope {
  * Firestore path: /tenants/{tenantId}/certifications/{certificationId}
  */
 export interface Certification extends BaseEntity {
+  /** Monotonic optimistic-concurrency revision; legacy records default to 0. */
+  revision?: number;
   certificationName: string;
   certificationType: CertificationType;
   issuingBody: string;
@@ -53,6 +57,7 @@ export interface Certification extends BaseEntity {
   issueDate: string; // ISO Date string
   expiryDate: string; // ISO Date string
   status: CertificationStatus;
+  lastStatusRationale?: string | null;
   surveillanceAuditDueDate: string | null; // ISO Date string
   leadAuditorName: string | null;
   leadAuditorContact: string | null;
@@ -65,6 +70,9 @@ export interface Certification extends BaseEntity {
   continuousComplianceStatus: ContinuousComplianceStatus;
   unresolvedFindingsCount: number;
   notes: string | null;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
+  archiveReason?: string | null;
   ownerId: string;
   createdBy: string;
   updatedBy: string;
@@ -155,6 +163,90 @@ export const CERTIFICATION_TYPE_METADATA: Record<
   other: { label: 'Custom Security Assurance / Certificate', defaultValidityYears: 1, standardCode: 'Custom' },
 };
 
+const CERTIFICATION_EVIDENCE_SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const CERTIFICATION_EVIDENCE_STORAGE_GENERATION_PATTERN = /^[1-9][0-9]{0,29}$/;
+const CERTIFICATION_EVIDENCE_MIME_TYPE_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/;
+const CERTIFICATION_EVIDENCE_CATEGORIES = new Set([
+  'iso_certificate',
+  'soc_report',
+  'security_report',
+  'assessment_doc',
+  'toms',
+]);
+
+function isPlainRuntimeObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isCanonicalRuntimeTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+/**
+ * Runtime, fail-closed evidence verification used by assurance calculations.
+ * TypeScript interfaces alone cannot prove that Firestore metadata came from a
+ * Storage finalize event or that its review is still current.
+ */
+export function isCertificationEvidenceRuntimeVerified(
+  evidence: Evidence,
+  certification: Certification,
+  asOfDate: Date = new Date()
+): boolean {
+  const verification = evidence.objectVerification;
+  if (!isPlainRuntimeObject(verification)) return false;
+  const asOfMillis = asOfDate.getTime();
+  const verifiedAtMillis = Date.parse(String(verification.verifiedAt));
+  const reviewedAtMillis = Date.parse(String(evidence.reviewedAt));
+  const reviewDueMillis = evidence.reviewDueDate
+    ? Date.parse(evidence.reviewDueDate)
+    : null;
+  return (
+    Number.isFinite(asOfMillis) &&
+    typeof evidence.id === 'string' &&
+    evidence.id.length > 0 &&
+    evidence.tenantId === certification.tenantId &&
+    Array.isArray(certification.linkedEvidenceIds) &&
+    certification.linkedEvidenceIds.includes(evidence.id) &&
+    evidence.status === 'valid' &&
+    CERTIFICATION_EVIDENCE_CATEGORIES.has(evidence.category) &&
+    typeof evidence.storagePath === 'string' &&
+    evidence.storagePath.startsWith(
+      `tenants/${certification.tenantId}/evidence/`
+    ) &&
+    !evidence.storagePath.includes('..') &&
+    Number.isSafeInteger(evidence.currentVersion) &&
+    evidence.currentVersion >= 1 &&
+    Number.isSafeInteger(evidence.fileSizeBytes) &&
+    evidence.fileSizeBytes > 0 &&
+    typeof evidence.fileHashSha256 === 'string' &&
+    CERTIFICATION_EVIDENCE_SHA256_PATTERN.test(evidence.fileHashSha256) &&
+    typeof evidence.mimeType === 'string' &&
+    CERTIFICATION_EVIDENCE_MIME_TYPE_PATTERN.test(evidence.mimeType) &&
+    typeof evidence.reviewedBy === 'string' &&
+    evidence.reviewedBy.length > 0 &&
+    isCanonicalRuntimeTimestamp(evidence.reviewedAt) &&
+    reviewedAtMillis <= asOfMillis &&
+    evidence.rejectionReason === null &&
+    (reviewDueMillis === null ||
+      (Number.isFinite(reviewDueMillis) && reviewDueMillis >= asOfMillis)) &&
+    verification.status === 'verified' &&
+    verification.storagePath === evidence.storagePath &&
+    CERTIFICATION_EVIDENCE_STORAGE_GENERATION_PATTERN.test(
+      String(verification.storageGeneration)
+    ) &&
+    verification.verifiedFileHashSha256 === evidence.fileHashSha256 &&
+    verification.verifiedFileSizeBytes === evidence.fileSizeBytes &&
+    verification.verifiedMimeType === evidence.mimeType &&
+    isCanonicalRuntimeTimestamp(verification.verifiedAt) &&
+    verifiedAtMillis <= asOfMillis &&
+    verification.verifier === 'storage_finalize_function'
+  );
+}
+
 /**
  * Pure evaluator for single certification evidence completeness
  */
@@ -165,8 +257,10 @@ export function evaluateCertificationCompleteness(
 ): CertificationEvidenceCompleteness {
   const nowMillis = asOfDate.getTime();
   const expiryMillis = new Date(cert.expiryDate).getTime();
-  const daysUntilExpiry = Math.ceil((expiryMillis - nowMillis) / (1000 * 60 * 60 * 24));
-  const isExpired = daysUntilExpiry <= 0 || cert.status === 'expired' || cert.status === 'revoked';
+  const daysUntilExpiry = Number.isFinite(expiryMillis)
+    ? Math.ceil((expiryMillis - nowMillis) / (1000 * 60 * 60 * 24))
+    : 0;
+  const isExpired = !Number.isFinite(expiryMillis) || expiryMillis <= nowMillis;
   const isExpiringSoon = !isExpired && daysUntilExpiry <= 60;
 
   const surveillanceMillis = cert.surveillanceAuditDueDate
@@ -180,14 +274,8 @@ export function evaluateCertificationCompleteness(
     cert.linkedEvidenceIds && cert.linkedEvidenceIds.includes(e.id)
   );
 
-  const hasValidCertificateDoc = linkedEvidences.some(
-    (e) =>
-      e.status === 'valid' &&
-      (e.category === 'iso_certificate' ||
-        e.category === 'soc_report' ||
-        e.category === 'security_report' ||
-        e.category === 'assessment_doc' ||
-        e.category === 'toms')
+  const hasValidCertificateDoc = linkedEvidences.some((e) =>
+    isCertificationEvidenceRuntimeVerified(e, cert, asOfDate)
   );
 
   const gaps: Array<{
@@ -271,6 +359,7 @@ export function evaluateCertificationRiskFlags(
   let activeValidCount = 0;
 
   for (const cert of certifications) {
+    if (cert.status === 'archived') continue;
     const completeness = evaluateCertificationCompleteness(cert, evidenceDocs, asOfDate);
 
     if (completeness.isExpired) {
@@ -301,7 +390,7 @@ export function evaluateCertificationRiskFlags(
         inherentScore: 12,
         isActionable: true,
       });
-    } else if (cert.status === 'active_valid') {
+    } else if (cert.status === 'active_valid' && completeness.hasValidCertificateDocument) {
       activeValidCount++;
     }
 
@@ -363,7 +452,7 @@ export function evaluateCertificationRiskFlags(
   return {
     tenantId: certifications[0]?.tenantId || '',
     evaluatedAt: asOfDate.toISOString(),
-    totalCertifications: certifications.length,
+    totalCertifications: certifications.filter((cert) => cert.status !== 'archived').length,
     activeValidCount,
     expiredCount,
     expiringSoonCount,
@@ -387,6 +476,7 @@ export function evaluateCertificationReminders(
   const reminders: CertificationReminderCandidate[] = [];
 
   for (const cert of certifications) {
+    if (cert.status === 'archived') continue;
     const recipientId = cert.ownerId || cert.createdBy;
     const expiryMillis = new Date(cert.expiryDate).getTime();
     const daysUntilExpiry = Math.ceil((expiryMillis - nowMillis) / (1000 * 60 * 60 * 24));

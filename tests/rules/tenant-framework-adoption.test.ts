@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 import { CANONICAL_FRAMEWORKS } from '@eurogovernance/shared-types';
@@ -118,8 +117,8 @@ describe('Tenant Framework Adoption Lifecycle & Multi-Tenant RBAC', () => {
     });
   });
 
-  // 1. Admin & Compliance Manager can adopt frameworks
-  test('admin and compliance manager can adopt new framework with version pinning', async () => {
+  // 1. Framework adoption is an authoritative server-side workflow
+  test('admin browser writes cannot bypass the framework adoption command boundary', async () => {
     const adminCtx = testEnv.authenticatedContext(userAdminA);
     const db = adminCtx.firestore();
 
@@ -150,12 +149,10 @@ describe('Tenant Framework Adoption Lifecycle & Multi-Tenant RBAC', () => {
       updatedBy: userAdminA,
     };
 
-    await assertSucceeds(db.doc(`tenants/${tenantA}/adopted_frameworks/iso_27001`).set(newAdoption));
+    await assertFails(db.doc(`tenants/${tenantA}/adopted_frameworks/iso_27001`).set(newAdoption));
 
     const snap = await db.doc(`tenants/${tenantA}/adopted_frameworks/iso_27001`).get();
-    expect(snap.exists).toBe(true);
-    expect(snap.data()?.pinnedVersion).toBe('2022');
-    expect(snap.data()?.status).toBe('in_scoping');
+    expect(snap.exists).toBe(false);
   });
 
   // 2. Unauthorized role cannot adopt frameworks
@@ -188,7 +185,7 @@ describe('Tenant Framework Adoption Lifecycle & Multi-Tenant RBAC', () => {
   });
 
   // 3. Duplicate adoption is prevented (already active/adopted status check)
-  test('duplicate active adoption is prevented from blind overwriting', async () => {
+  test('active adoption cannot be retired by a direct browser update', async () => {
     const adminCtx = testEnv.authenticatedContext(userAdminA);
     const db = adminCtx.firestore();
 
@@ -196,8 +193,8 @@ describe('Tenant Framework Adoption Lifecycle & Multi-Tenant RBAC', () => {
     expect(existingSnap.exists).toBe(true);
     expect(existingSnap.data()?.status).toBe('active');
 
-    // Compliance manager can deactivate / retire framework
-    await assertSucceeds(
+    // Retirement is an authoritative transition and must use a server command.
+    await assertFails(
       db.doc(`tenants/${tenantA}/adopted_frameworks/gdpr`).update({
         status: 'retired',
         updatedAt: new Date().toISOString(),
@@ -205,7 +202,7 @@ describe('Tenant Framework Adoption Lifecycle & Multi-Tenant RBAC', () => {
     );
 
     const retiredSnap = await db.doc(`tenants/${tenantA}/adopted_frameworks/gdpr`).get();
-    expect(retiredSnap.data()?.status).toBe('retired');
+    expect(retiredSnap.data()?.status).toBe('active');
   });
 
   // 4. Tenant cannot adopt against another tenant (cross-tenant isolation)

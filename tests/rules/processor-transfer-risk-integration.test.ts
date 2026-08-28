@@ -336,7 +336,7 @@ describe('Processor & Transfer Records Risk Integration Suite', () => {
   // 2. Risk Register Security Rules & Multi-Tenant Isolation
   // ---------------------------------------------------------------------------
   describe('2. Risk Security Rules & Cross-Tenant Isolation', () => {
-    test('Compliance Manager can read and update processor-linked risk register entry in Tenant A', async () => {
+    test('Compliance Manager can read processor-linked risk but updates require a server command', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
       const snap = await assertSucceeds(
@@ -349,7 +349,7 @@ describe('Processor & Transfer Records Risk Integration Suite', () => {
       expect(data.category).toBe('third_party');
 
       // Update residual score following mitigation
-      await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/risks/rsk_third_party_telemetry`).update({
           residualLikelihood: 2,
           residualScore: 8,

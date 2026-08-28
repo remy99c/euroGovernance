@@ -164,13 +164,13 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
   });
 
   // 1. ROPA Entries RBAC
-  test('Privacy Manager can create and update ROPA entries; Contributors and Viewers cannot', async () => {
+  test('ROPA creation and updates require server commands for every browser persona', async () => {
     const privacyDb = testEnv.authenticatedContext(userPrivacyA, { email: 'dpo@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Privacy Manager CAN create and update ROPA
-    await assertSucceeds(
+    // Privacy Manager direct ROPA mutations are denied.
+    await assertFails(
       privacyDb.doc(`tenants/${tenantA}/ropa_entries/ropa_payroll`).set({
         id: 'ropa_payroll',
         tenantId: tenantA,
@@ -182,7 +182,7 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       privacyDb.doc(`tenants/${tenantA}/ropa_entries/${ropaId}`).update({
         purpose: 'Updated Authentication and Audit Logging',
       })
@@ -206,12 +206,12 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
   });
 
   // 2. DPIA and TIA Assessments RBAC
-  test('Compliance and Privacy Managers can manage DPIAs and TIAs; Contributors cannot', async () => {
+  test('DPIA and TIA mutations require server commands for every browser persona', async () => {
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    // Compliance Manager CAN create DPIA & TIA
-    await assertSucceeds(
+    // Compliance Manager direct DPIA and TIA creation is denied.
+    await assertFails(
       complianceDb.doc(`tenants/${tenantA}/dpia_assessments/dpia_new`).set({
         id: 'dpia_new',
         tenantId: tenantA,
@@ -222,7 +222,7 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       complianceDb.doc(`tenants/${tenantA}/tia_assessments/tia_new`).set({
         id: 'tia_new',
         tenantId: tenantA,
@@ -246,11 +246,11 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
   });
 
   // 3. DSR Requests Management RBAC
-  test('Privacy Manager can manage DSR requests; Contributors cannot', async () => {
+  test('DSR request mutations require server commands for every browser persona', async () => {
     const privacyDb = testEnv.authenticatedContext(userPrivacyA, { email: 'dpo@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    await assertSucceeds(
+    await assertFails(
       privacyDb.doc(`tenants/${tenantA}/dsr_requests/dsr_access_01`).set({
         id: 'dsr_access_01',
         tenantId: tenantA,
@@ -260,7 +260,7 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       privacyDb.doc(`tenants/${tenantA}/dsr_requests/${dsrId}`).update({
         status: 'in_progress',
       })
@@ -277,15 +277,15 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
   });
 
   // 4. Personal Data Breach Confidentiality & RBAC
-  test('Security & Privacy Managers can log breaches; Contributors & Viewers cannot read breach records', async () => {
+  test('breach logging is server-only while breach reads remain role-restricted', async () => {
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
     const privacyDb = testEnv.authenticatedContext(userPrivacyA, { email: 'dpo@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
 
-    // Security & Privacy Managers CAN log and read breaches
-    await assertSucceeds(
+    // Managers retain authorized reads but breach logging is server-only.
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/breaches/brc_new_sec`).set({
         id: 'brc_new_sec',
         tenantId: tenantA,
@@ -306,7 +306,7 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
   });
 
   // 5. Deletion Restriction Across GDPR Entities
-  test('Only Tenant Admin can delete GDPR records; Privacy Manager cannot delete', async () => {
+  test('GDPR records cannot be deleted directly even by Tenant Admin', async () => {
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
     const privacyDb = testEnv.authenticatedContext(userPrivacyA, { email: 'dpo@eurocorp.de' }).firestore();
 
@@ -317,12 +317,12 @@ describe('GDPR Workflows & Privacy Subsystem Security Rules', () => {
     await assertFails(privacyDb.doc(`tenants/${tenantA}/dsr_requests/${dsrId}`).delete());
     await assertFails(privacyDb.doc(`tenants/${tenantA}/breaches/${breachId}`).delete());
 
-    // Tenant Admin CAN delete
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/ropa_entries/${ropaId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/dpia_assessments/${dpiaId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/tia_assessments/${tiaId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/dsr_requests/${dsrId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/breaches/${breachId}`).delete());
+    // Tenant Admin direct deletion is denied.
+    await assertFails(adminDb.doc(`tenants/${tenantA}/ropa_entries/${ropaId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/dpia_assessments/${dpiaId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/tia_assessments/${tiaId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/dsr_requests/${dsrId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/breaches/${breachId}`).delete());
   });
 
   // 6. Cross-Tenant Denial

@@ -159,7 +159,7 @@ describe('Processor Transfer Arrangements UI Data Contracts & Governance Suite',
   // 1. Traceability & Transfer UI Data Flow
   // ---------------------------------------------------------------------------
   describe('1. Transfer Arrangement Read & Update via Security Rules', () => {
-    test('Privacy Officer can view restricted transfer arrangements and update destination countries and legal mechanisms', async () => {
+    test('Privacy Officer can view transfers but direct updates require a server command', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
       const docSnap = await assertSucceeds(
@@ -171,8 +171,8 @@ describe('Processor Transfer Arrangements UI Data Contracts & Governance Suite',
       expect(data.destinationCountries).toEqual(['US']);
       expect(data.transferMechanismType).toBe('standard_contractual_clauses');
 
-      // Update destination countries to include UK and Japan, and update mechanism status
-      await assertSucceeds(
+      // Direct updates cannot bypass server validation and auditing.
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_cloud_us_replication`).update({
           destinationCountries: ['US', 'GB', 'JP'],
           transferMechanismStatus: 'under_review',
@@ -183,8 +183,8 @@ describe('Processor Transfer Arrangements UI Data Contracts & Governance Suite',
 
       const updatedSnap = await privDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_cloud_us_replication`).get();
       const updatedData = updatedSnap.data() as TransferArrangement;
-      expect(updatedData.destinationCountries).toEqual(['US', 'GB', 'JP']);
-      expect(updatedData.transferMechanismStatus).toBe('under_review');
+      expect(updatedData.destinationCountries).toEqual(['US']);
+      expect(updatedData.transferMechanismStatus).toBe('active_valid');
     });
 
     test('Cross-tenant isolation: Tenant B Admin cannot view or modify Tenant A transfer arrangements', async () => {

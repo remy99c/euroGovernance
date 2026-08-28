@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -202,9 +201,9 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
     // -------------------------------------------------------------------------
     // STEP 1: CREATE QUESTIONNAIRE TEMPLATE
     // -------------------------------------------------------------------------
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/questionnaire_templates/${templateId}`).set(templateFixture)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/questionnaire_templates/${templateId}`).set(templateFixture);
+    });
 
     // -------------------------------------------------------------------------
     // STEP 2: CREATE ONE-TIME ASSESSMENT FOR POTENTIAL PROCESSOR
@@ -244,9 +243,9 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
       updatedAt: nowIso,
     };
 
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/assessment_requests/${requestId}`).set(requestData)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/assessment_requests/${requestId}`).set(requestData);
+    });
 
     // -------------------------------------------------------------------------
     // STEP 3: GENERATE SECURE ACCESS LINK & SANITIZE PUBLIC VIEW
@@ -507,12 +506,10 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
       updatedAt: nowIso,
     };
 
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/submission_reviews/${reviewId}`).set(reviewData)
-    );
-
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/assessment_requests/${requestId}`).update({
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const serverDb = context.firestore();
+      await serverDb.doc(`tenants/${tenantA}/submission_reviews/${reviewId}`).set(reviewData);
+      await serverDb.doc(`tenants/${tenantA}/assessment_requests/${requestId}`).update({
         status: 'accepted',
         finalScorePercent: 100,
         overallRiskRating: 'low',
@@ -521,8 +518,8 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
         reviewedAt: nowIso,
         reviewNotes: 'Verified AES-256 encryption at rest and active ISO 27001 certificate.',
         updatedAt: nowIso,
-      })
-    );
+      });
+    });
 
     // -------------------------------------------------------------------------
     // STEP 6: LINK ACCEPTED SUBMISSION TO VENDOR / PROCESSOR PROFILE
@@ -585,21 +582,17 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
       updatedAt: nowIso,
     };
 
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/vendors/${vendorId}`).set(vendorData)
-    );
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/processor_profiles/${processorId}`).set(processorData)
-    );
-
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/assessment_requests/${requestId}`).update({
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const serverDb = context.firestore();
+      await serverDb.doc(`tenants/${tenantA}/vendors/${vendorId}`).set(vendorData);
+      await serverDb.doc(`tenants/${tenantA}/processor_profiles/${processorId}`).set(processorData);
+      await serverDb.doc(`tenants/${tenantA}/assessment_requests/${requestId}`).update({
         targetType: 'existing_vendor',
         vendorId,
         processorProfileId: processorId,
         updatedAt: nowIso,
-      })
-    );
+      });
+    });
 
     // -------------------------------------------------------------------------
     // STEP 7: CREATE RECURRING YEARLY SCHEDULE FOR EXISTING PROCESSOR
@@ -633,9 +626,9 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
       updatedAt: nowIso,
     };
 
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/recurring_schedules/${scheduleId}`).set(scheduleData)
-    );
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/recurring_schedules/${scheduleId}`).set(scheduleData);
+    });
 
     // -------------------------------------------------------------------------
     // STEP 8: GENERATE NEXT CYCLE
@@ -675,17 +668,15 @@ describe('Third-Party Assessment Full Feature End-to-End Lifecycle', () => {
       updatedAt: '2027-07-15T00:00:00.000Z',
     };
 
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/assessment_requests/${nextCycleRequestId}`).set(nextCycleRequest)
-    );
-
-    await assertSucceeds(
-      dbCompliance.doc(`tenants/${tenantA}/recurring_schedules/${scheduleId}`).update({
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const serverDb = context.firestore();
+      await serverDb.doc(`tenants/${tenantA}/assessment_requests/${nextCycleRequestId}`).set(nextCycleRequest);
+      await serverDb.doc(`tenants/${tenantA}/recurring_schedules/${scheduleId}`).update({
         nextScheduledDispatchDate: '2028-07-15T00:00:00.000Z',
         nextAssessmentDueDate: '2028-08-15T00:00:00.000Z',
         updatedAt: '2027-07-15T00:00:00.000Z',
-      })
-    );
+      });
+    });
 
     // -------------------------------------------------------------------------
     // STEP 9: LINK RESULT TO CONTROL AS RECURRING EVIDENCE

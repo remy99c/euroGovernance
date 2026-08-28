@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -407,12 +406,12 @@ describe('Processor Transfer & TIA Assessment Integration Suite', () => {
   // 2. Linking & Prefill Integrity via Firestore Security Rules
   // ---------------------------------------------------------------------------
   describe('2. Linking & Prefill Relationship Integrity', () => {
-    test('Privacy Manager can link existing TIA to transfer arrangement and sync reciprocal identifiers', async () => {
+    test('Privacy Manager can read linkage state but direct reciprocal-link writes require a server command', async () => {
       const privacyDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
       const tiaId = 'tia_sec_us_2026';
 
       // 1. Link TIA to Transfer Arrangement
-      await assertSucceeds(
+      await assertFails(
         privacyDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_datadog_us`).update({
           linkedTiaId: tiaId,
           updatedAt: new Date().toISOString(),
@@ -421,7 +420,7 @@ describe('Processor Transfer & TIA Assessment Integration Suite', () => {
       );
 
       // 3. Link Transfer Arrangement to TIA
-      await assertSucceeds(
+      await assertFails(
         privacyDb.doc(`tenants/${tenantA}/tia_assessments/${tiaId}`).update({
           transferArrangementId: 'trans_datadog_us',
           processorProfileId: 'prof_datadog_main',
@@ -430,13 +429,13 @@ describe('Processor Transfer & TIA Assessment Integration Suite', () => {
         })
       );
 
-      // Verify mutual linkage
+      // Denied browser writes leave the authoritative linkage unchanged.
       const arrSnap = await privacyDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_datadog_us`).get();
       const tiaSnap = await privacyDb.doc(`tenants/${tenantA}/tia_assessments/${tiaId}`).get();
 
-      expect(arrSnap.data()?.linkedTiaId).toBe(tiaId);
-      expect(tiaSnap.data()?.transferArrangementId).toBe('trans_datadog_us');
-      expect(tiaSnap.data()?.processorProfileId).toBe('prof_datadog_main');
+      expect(arrSnap.data()?.linkedTiaId).toBeNull();
+      expect(tiaSnap.data()?.transferArrangementId).toBeNull();
+      expect(tiaSnap.data()?.processorProfileId).toBeNull();
     });
 
     test('Cross-tenant isolation: Tenant B admin cannot link or access Tenant A TIAs or transfer arrangements', async () => {

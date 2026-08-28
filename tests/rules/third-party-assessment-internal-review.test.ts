@@ -276,16 +276,16 @@ describe('Third-Party Assessment Internal Review & Decision Workflow Test Pack',
       expect(sampleReview.reviewerUserId).toBe(PERSONAS.complianceA.uid);
     });
 
-    it('allows compliance_manager in Tenant A to create a submission review record', async () => {
+    it('denies compliance_manager direct submission-review creation', async () => {
       const db = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const ref = db.doc(`tenants/${tenantA}/submission_reviews/${sampleReview.id}`);
-      await assertSucceeds(ref.set(sampleReview));
+      await assertFails(ref.set(sampleReview));
     });
 
-    it('allows approver in Tenant A to create a submission review record', async () => {
+    it('denies approver direct submission-review creation', async () => {
       const db = testEnv.authenticatedContext(PERSONAS.approverA.uid).firestore();
       const ref = db.doc(`tenants/${tenantA}/submission_reviews/rev_approver_001`);
-      await assertSucceeds(
+      await assertFails(
         ref.set({
           ...sampleReview,
           id: 'rev_approver_001',

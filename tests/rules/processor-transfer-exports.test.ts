@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -112,14 +111,14 @@ describe('Processor and Transfer Export Reporting Suite', () => {
       'processor_ropa_mapping_report',
     ];
 
-    test('Privacy Officer can create export jobs for all 7 processor & transfer export types', async () => {
+    test('all 7 processor and transfer export types require server commands for Privacy Officer', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
       for (let i = 0; i < processorExportTypes.length; i++) {
         const expType = processorExportTypes[i]!;
         const jobId = `job_priv_${i}`;
 
-        await assertSucceeds(
+        await assertFails(
           privDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
             id: jobId,
             tenantId: tenantA,
@@ -138,11 +137,11 @@ describe('Processor and Transfer Export Reporting Suite', () => {
       }
     });
 
-    test('Compliance Manager can create export jobs for transfer reports', async () => {
+    test('transfer-report export jobs require server commands for Compliance Manager', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const jobId = 'job_comp_transfers';
 
-      await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
           id: jobId,
           tenantId: tenantA,

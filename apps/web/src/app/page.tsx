@@ -500,16 +500,23 @@ export default function DashboardPage() {
       () => handleSubscriptionError('frameworks')
     );
 
-    // 13. Certifications
-    const certsRef = collection(db, 'tenants', tenantId, 'certifications');
-    const unsubCerts = onSnapshot(
-      certsRef,
-      (snap) => {
-        setCertificationsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    // 13. Certifications. Raw records are intentionally not browser-readable;
+    // this projection verifies each current version/receipt/audit chain.
+    const unsubCerts = () => {};
+    const listCertifications = httpsCallable<
+      { tenantId: string },
+      { certifications?: unknown[]; truncated?: boolean }
+    >(functions, 'listTenantCertifications');
+    void listCertifications({ tenantId })
+      .then((response) => {
+        if (!subscriptionActive) return;
+        if (!Array.isArray(response.data.certifications)) {
+          throw new Error('Certification projection response is invalid.');
+        }
+        setCertificationsList(response.data.certifications);
         markSubscriptionInitialized('certifications');
-      },
-      () => handleSubscriptionError('certifications')
-    );
+      })
+      .catch(() => handleSubscriptionError('certifications'));
 
     // 14. Processor Assessments
     const assessmentsRef = collection(db, 'tenants', tenantId, 'processor_assessments');
@@ -1276,7 +1283,7 @@ export default function DashboardPage() {
               className="btn-secondary"
               style={{ fontSize: '12px', padding: '6px 12px' }}
             >
-              📦 Quick Export
+              📦 Request Export Draft
             </button>
 
             <button
@@ -1386,7 +1393,7 @@ export default function DashboardPage() {
                   Structured Certifications & External Assurance
                 </h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Manage accredited standard certificates (ISO 27001, ISO 42001, SOC 2, C5, Europrivacy, TISAX), surveillance audit schedules, and linked evidence artifacts.
+                  Record certificate scope, dates, status, and surveillance schedules. Evidence linking remains unavailable until object verification is implemented.
                 </p>
               </header>
               <CertificationsManager
@@ -1398,6 +1405,7 @@ export default function DashboardPage() {
                 controlsList={controlsList}
                 systemsList={aiSystemsList}
                 vendorsList={[]}
+                onChanged={() => setTenantDataReloadKey((value) => value + 1)}
               />
             </div>
           )}

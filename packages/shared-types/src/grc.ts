@@ -22,6 +22,12 @@ export function isValidControlStatus(status: unknown): status is ControlImplemen
 export type ControlReviewStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected';
 export type EvidenceStatus = 'valid' | 'expired' | 'under_review' | 'rejected' | 'archived';
 export type PolicyStatus = 'draft' | 'under_review' | 'approved' | 'active' | 'retired';
+export type PolicyWorkflowTrust =
+  | 'legacy_unverified'
+  | 'governed_draft'
+  | 'governed_under_review'
+  | 'authoritative'
+  | 'retired';
 export type RiskSeverity = 'low' | 'medium' | 'high' | 'critical';
 export type RiskStatus = 'identified' | 'assessed' | 'mitigating' | 'accepted' | 'closed';
 export type IssueSeverity = 'low' | 'medium' | 'high' | 'critical';
@@ -222,6 +228,17 @@ export type EvidenceSourceType =
   | 'automated_collector'
   | 'system_generated';
 
+export interface EvidenceObjectVerification {
+  status: 'verified' | 'failed';
+  storagePath: string;
+  storageGeneration: string;
+  verifiedFileHashSha256: string;
+  verifiedFileSizeBytes: number;
+  verifiedMimeType: string;
+  verifiedAt: string;
+  verifier: 'storage_finalize_function';
+}
+
 /**
  * Evidence Record (/tenants/{tenantId}/evidence/{evidenceId})
  */
@@ -234,6 +251,8 @@ export interface Evidence extends BaseEntity {
   fileSizeBytes: number;
   mimeType: string;
   fileHashSha256: string;
+  /** Absent on legacy/caller-declared metadata and therefore never audit-grade. */
+  objectVerification?: EvidenceObjectVerification | null;
   controlIds: string[];
   requirementIds: string[];
   policyIds: string[];
@@ -293,6 +312,25 @@ export interface Policy extends BaseEntity {
   effectiveDate: string | null;
   nextReviewDate: string;
   linkedControlIds: string[];
+  /** Monotonic optimistic-concurrency revision; legacy records default to 0. */
+  revision?: number;
+  /** Server-owned workflow contract and assurance provenance. */
+  workflowSchemaVersion?: number;
+  workflowTrust?: PolicyWorkflowTrust;
+  /** Server-recorded rationale for the most recent lifecycle decision. */
+  lastDecisionNotes?: string | null;
+  /** Command receipt anchor proving approval used the authoritative workflow. */
+  approvalCommandId?: string | null;
+  /** Server-maintained authors of the draft presented for the current approval cycle. */
+  draftContributorIds?: string[];
+  /** Server-derived identity and time of the current review submission. */
+  reviewSubmittedBy?: string | null;
+  reviewSubmittedAt?: string | null;
+  reviewSubmissionCommandId?: string | null;
+  reviewAssigneeId?: string | null;
+  retiredAt?: string | null;
+  retiredBy?: string | null;
+  retirementReason?: string | null;
 }
 
 /**

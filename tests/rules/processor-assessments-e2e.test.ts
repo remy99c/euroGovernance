@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import * as crypto from 'crypto';
@@ -167,16 +166,16 @@ describe('Processor Assessment Questionnaires & Due Diligence Test Pack', () => 
   // 1. FIRESTORE SECURITY RULES & RBAC ISOLATION
   // ---------------------------------------------------------------------------
   describe('1. Security Rules & Multi-Tenant RBAC Isolation', () => {
-    it('allows compliance_manager and tenant_admin to create assessment documents in Tenant A', async () => {
+    it('denies direct assessment creation by compliance_manager and tenant_admin', async () => {
       const db = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const ref = db.doc(`tenants/${tenantA}/processor_assessments/${sampleAssessment.id}`);
-      await assertSucceeds(ref.set(sampleAssessment));
+      await assertFails(ref.set(sampleAssessment));
     });
 
-    it('allows security_manager and privacy_manager to create assessment documents', async () => {
+    it('denies direct assessment creation by security_manager and privacy_manager', async () => {
       const db = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
       const ref = db.doc(`tenants/${tenantA}/processor_assessments/assess_sec_01`);
-      await assertSucceeds(
+      await assertFails(
         ref.set({
           ...sampleAssessment,
           id: 'assess_sec_01',

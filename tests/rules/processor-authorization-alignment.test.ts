@@ -174,10 +174,10 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
   // 1. Processor Profiles Access & Authorization
   // ---------------------------------------------------------------------------
   describe('1. Processor Profiles Rules', () => {
-    test('Privacy Officer can create and update processor profiles', async () => {
+    test('processor-profile creation and updates require server commands for Privacy Officer', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/processor_profiles/prof_new`).set({
           id: 'prof_new',
           tenantId: tenantA,
@@ -191,7 +191,7 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
         })
       );
 
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/processor_profiles/prof_auth_01`).update({
           criticality: 'high',
           updatedBy: PERSONAS.privacyA.uid,
@@ -229,7 +229,7 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
       );
     });
 
-    test('Only Tenant Admin can delete a processor profile; Privacy Officer is denied delete', async () => {
+    test('processor profiles cannot be deleted directly even by Tenant Admin', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
       const adminDb = testEnv.authenticatedContext(PERSONAS.adminA.uid).firestore();
 
@@ -237,7 +237,7 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
         privDb.doc(`tenants/${tenantA}/processor_profiles/prof_auth_01`).delete()
       );
 
-      await assertSucceeds(
+      await assertFails(
         adminDb.doc(`tenants/${tenantA}/processor_profiles/prof_auth_01`).delete()
       );
     });
@@ -261,10 +261,10 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
   // 2. Transfer Arrangements Access & Authorization
   // ---------------------------------------------------------------------------
   describe('2. Transfer Arrangements Rules', () => {
-    test('Compliance Manager and Privacy Officer can create transfer arrangements', async () => {
+    test('transfer-arrangement creation requires server commands for managers', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
-      await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/transfer_arrangements/trans_new`).set({
           id: 'trans_new',
           tenantId: tenantA,
@@ -333,10 +333,10 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
   // 4. TIA Assessments Access & Authorization
   // ---------------------------------------------------------------------------
   describe('4. TIA Assessments Rules', () => {
-    test('Privacy Officer can create and update TIA assessments', async () => {
+    test('TIA creation and updates require server commands for Privacy Officer', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/tia_assessments/tia_new`).set({
           id: 'tia_new',
           tenantId: tenantA,
@@ -350,7 +350,7 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
         })
       );
 
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/tia_assessments/tia_auth_01`).update({
           supplementaryTechnicalMeasures: 'End-to-end client encryption',
           updatedBy: PERSONAS.privacyA.uid,
@@ -395,7 +395,7 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
       );
     });
 
-    test('Recipient can read and mark their own notification as read', async () => {
+    test('recipient can read their notification but cannot mark it directly through Firestore', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
       const snap = await assertSucceeds(
@@ -403,7 +403,7 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
       );
       expect(snap.exists).toBe(true);
 
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/notifications/notif_auth_privacy`).update({
           isRead: true,
           readAt: now,
@@ -444,11 +444,11 @@ describe('Processor Governance & Transfer Authorization Alignment Suite', () => 
   // 6. Export Jobs Authorization & Scoping
   // ---------------------------------------------------------------------------
   describe('6. Export Jobs Scoping & Rules', () => {
-    test('Privacy Officer can queue export job scoped to their UID', async () => {
+    test('Privacy Officer cannot queue export jobs directly through Firestore', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
       const jobId = 'job_export_scoped';
 
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
           id: jobId,
           tenantId: tenantA,

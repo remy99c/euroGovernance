@@ -229,12 +229,12 @@ describe('Comprehensive Security Matrix & Invariant Test Suite', () => {
       );
     });
 
-    test('Auditors have read access but cannot delete controls or modify policies', async () => {
+    test('Auditors read controls but use verified callables for policy access', async () => {
       const auditorDb = testEnv.authenticatedContext(PERSONAS.auditorA.uid, { email: PERSONAS.auditorA.email }).firestore();
       const tA = FIXTURE_TENANT_A;
 
       await assertSucceeds(auditorDb.doc(`tenants/${tA}/controls/ctl_01`).get());
-      await assertSucceeds(auditorDb.doc(`tenants/${tA}/policies/pol_01`).get());
+      await assertFails(auditorDb.doc(`tenants/${tA}/policies/pol_01`).get());
 
       await assertFails(auditorDb.doc(`tenants/${tA}/controls/ctl_01`).delete());
       await assertFails(

@@ -318,26 +318,26 @@ describe('Applicability Rules Engine & Condition Evaluator', () => {
       updatedBy: userComplianceA,
     };
 
-    test('compliance manager in Tenant A can create and update applicability decisions', async () => {
+    test('compliance manager must use the applicability command boundary for decisions', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const db = compCtx.firestore();
 
-      await assertSucceeds(
+      await assertFails(
         db.doc(`tenants/${tenantA}/applicability_decisions/gdpr_art_30`).set(sampleDecision)
       );
 
       const snap = await db.doc(`tenants/${tenantA}/applicability_decisions/gdpr_art_30`).get();
-      expect(snap.exists).toBe(true);
-      expect(snap.data()?.status).toBe('applicable');
+      expect(snap.exists).toBe(false);
     });
 
     test('auditor in Tenant A can read but cannot create or modify applicability decisions', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/applicability_decisions/gdpr_art_30`).set({
-        ...sampleDecision,
-        ownerId: userAdminA,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/applicability_decisions/gdpr_art_30`).set({
+          ...sampleDecision,
+          ownerId: userAdminA,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditorA);

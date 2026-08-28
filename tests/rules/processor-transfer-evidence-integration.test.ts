@@ -438,7 +438,7 @@ describe('Processor & Transfer Evidence Repository Integration Suite', () => {
   // 2. Evidence Repository & Versioning RBAC
   // ---------------------------------------------------------------------------
   describe('2. Evidence Repository & Versioning Security Rules', () => {
-    test('Security Officer can upload and manage processor and transfer evidence', async () => {
+    test('Security Officer evidence metadata mutations require trusted upload commands', async () => {
       const securityDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
 
       const evidenceId = 'evi_iso27001_aws';

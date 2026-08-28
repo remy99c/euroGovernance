@@ -17,7 +17,6 @@ import {
   deriveStatutoryObligations,
   applyApplicabilityOverride,
   revertApplicabilityOverride,
-  DecisionSource,
   ApplicabilityStatus,
   CANONICAL_APPLICABILITY_RULES,
   CANONICAL_MASTER_DATA,
@@ -645,13 +644,29 @@ export interface OverrideApplicabilityDecisionInput {
   newStatus: ApplicabilityStatus;
   isApplicable: boolean;
   overrideRationale: string;
-  decisionSource?: DecisionSource;
-  reviewerId?: string | null;
-  reviewerRole?: string | null;
+  decisionSource?: 'user_override';
   notes?: string | null;
 }
 
 export const overrideTenantApplicabilityDecision = onCall<OverrideApplicabilityDecisionInput>(async (request) => {
+  const input = request.data;
+  const allowedKeys = new Set([
+    'tenantId',
+    'decisionId',
+    'newStatus',
+    'isApplicable',
+    'overrideRationale',
+    'decisionSource',
+    'notes',
+  ]);
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    Object.keys(input).some((key) => !allowedKeys.has(key))
+  ) {
+    throw new HttpsError('invalid-argument', 'Unsupported applicability override fields.');
+  }
   const {
     tenantId,
     decisionId,
@@ -659,15 +674,39 @@ export const overrideTenantApplicabilityDecision = onCall<OverrideApplicabilityD
     isApplicable,
     overrideRationale,
     decisionSource = 'user_override',
-    reviewerId,
-    reviewerRole,
     notes,
-  } = request.data || {};
+  } = input;
 
-  if (!tenantId || !decisionId || !newStatus || isApplicable === undefined || !overrideRationale) {
+  const allowedStatuses = new Set<ApplicabilityStatus>([
+    'applicable',
+    'not_applicable',
+    'review_required',
+    'inherited',
+    'deferred',
+  ]);
+  const expectedApplicable = newStatus === 'applicable' || newStatus === 'inherited';
+  if (
+    typeof tenantId !== 'string' ||
+    tenantId.length < 1 ||
+    tenantId.length > 128 ||
+    tenantId.includes('/') ||
+    typeof decisionId !== 'string' ||
+    decisionId.length < 1 ||
+    decisionId.length > 256 ||
+    decisionId.includes('/') ||
+    !allowedStatuses.has(newStatus) ||
+    typeof isApplicable !== 'boolean' ||
+    isApplicable !== expectedApplicable ||
+    typeof overrideRationale !== 'string' ||
+    overrideRationale.trim().length < 10 ||
+    overrideRationale.trim().length > 4000 ||
+    decisionSource !== 'user_override' ||
+    (notes !== undefined && notes !== null &&
+      (typeof notes !== 'string' || notes.length > 4000))
+  ) {
     throw new HttpsError(
       'invalid-argument',
-      'tenantId, decisionId, newStatus, isApplicable, and overrideRationale are required.'
+      'Applicability override fields are invalid or internally inconsistent.'
     );
   }
 
@@ -688,15 +727,15 @@ export const overrideTenantApplicabilityDecision = onCall<OverrideApplicabilityD
     overrideRationale,
     actorId: authContext.userId,
     actorRole: authContext.role,
-    decisionSource,
-    reviewerId: reviewerId || (decisionSource === 'reviewer_override' ? authContext.userId : null),
-    reviewerRole: reviewerRole || (decisionSource === 'reviewer_override' ? authContext.role : null),
+    decisionSource: 'user_override',
+    reviewerId: null,
+    reviewerRole: null,
     notes,
   });
 
-  await docRef.set(overridden, { merge: true });
-
-  await recordAuditLog({
+  const batch = db.batch();
+  batch.set(docRef, overridden, { merge: true });
+  appendAuditLogInBatch(batch, {
     tenantId,
     actorId: authContext.userId,
     actorEmail: authContext.email,
@@ -709,6 +748,7 @@ export const overrideTenantApplicabilityDecision = onCall<OverrideApplicabilityD
     source: 'cloud_function',
     workflowContext: 'applicability_decision_override',
   });
+  await batch.commit();
 
   return { success: true, decision: overridden };
 });
@@ -723,9 +763,30 @@ export interface RevertApplicabilityDecisionInput {
 }
 
 export const revertTenantApplicabilityDecision = onCall<RevertApplicabilityDecisionInput>(async (request) => {
-  const { tenantId, decisionId, reason } = request.data || {};
-  if (!tenantId || !decisionId || !reason) {
-    throw new HttpsError('invalid-argument', 'tenantId, decisionId, and reason are required.');
+  const input = request.data;
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    Object.keys(input).some((key) => !['tenantId', 'decisionId', 'reason'].includes(key))
+  ) {
+    throw new HttpsError('invalid-argument', 'Unsupported applicability reversion fields.');
+  }
+  const { tenantId, decisionId, reason } = input;
+  if (
+    typeof tenantId !== 'string' ||
+    tenantId.length < 1 ||
+    tenantId.length > 128 ||
+    tenantId.includes('/') ||
+    typeof decisionId !== 'string' ||
+    decisionId.length < 1 ||
+    decisionId.length > 256 ||
+    decisionId.includes('/') ||
+    typeof reason !== 'string' ||
+    reason.trim().length < 10 ||
+    reason.trim().length > 4000
+  ) {
+    throw new HttpsError('invalid-argument', 'Applicability reversion fields are invalid.');
   }
 
   const authContext = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
@@ -742,12 +803,12 @@ export const revertTenantApplicabilityDecision = onCall<RevertApplicabilityDecis
     decision: prevDecision,
     actorId: authContext.userId,
     actorRole: authContext.role,
-    reason,
+    reason: reason.trim(),
   });
 
-  await docRef.set(reverted, { merge: true });
-
-  await recordAuditLog({
+  const batch = db.batch();
+  batch.set(docRef, reverted, { merge: true });
+  appendAuditLogInBatch(batch, {
     tenantId,
     actorId: authContext.userId,
     actorEmail: authContext.email,
@@ -760,6 +821,7 @@ export const revertTenantApplicabilityDecision = onCall<RevertApplicabilityDecis
     source: 'cloud_function',
     workflowContext: 'applicability_decision_reversion',
   });
+  await batch.commit();
 
   return { success: true, decision: reverted };
 });

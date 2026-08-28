@@ -110,15 +110,15 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
   });
 
   // 1. Create Control RBAC Permissions
-  test('Compliance and Security Managers can create controls; Contributors, Viewers, and Outsiders cannot', async () => {
+  test('control creation is denied to every browser persona', async () => {
     const complianceDb = testEnv.authenticatedContext(userCompliance, { email: 'comp@eurocorp.de' }).firestore();
     const securityDb = testEnv.authenticatedContext(userSecurity, { email: 'sec@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributor, { email: 'dev@eurocorp.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewer, { email: 'view@eurocorp.de' }).firestore();
     const outsiderDb = testEnv.authenticatedContext(userOutsider, { email: 'out@medtech.fr' }).firestore();
 
-    // Compliance & Security Managers CAN create
-    await assertSucceeds(
+    // Compliance and Security Manager direct creates are denied.
+    await assertFails(
       complianceDb.doc(`tenants/${tenantOrg}/controls/ctl_new_comp`).set({
         id: 'ctl_new_comp',
         tenantId: tenantOrg,
@@ -127,7 +127,7 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       securityDb.doc(`tenants/${tenantOrg}/controls/ctl_new_sec`).set({
         id: 'ctl_new_sec',
         tenantId: tenantOrg,
@@ -180,13 +180,13 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
   });
 
   // 3. Update Permissions
-  test('Contributors can update controls; Read-only Auditors and Viewers cannot', async () => {
+  test('control updates are denied to contributors and read-only personas alike', async () => {
     const contribDb = testEnv.authenticatedContext(userContributor, { email: 'dev@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditor, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewer, { email: 'view@eurocorp.de' }).firestore();
 
-    // Contributor CAN update implementation details
-    await assertSucceeds(
+    // Contributor implementation updates require a server command.
+    await assertFails(
       contribDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).update({
         implementationNotes: 'Updated by engineering team with Jenkins pipeline link',
       })
@@ -207,27 +207,27 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
   });
 
   // 4. Delete Permissions
-  test('Only Tenant Admin can delete controls; Compliance Managers and Contributors cannot', async () => {
+  test('control deletion requires a server command even for Tenant Admin', async () => {
     const adminDb = testEnv.authenticatedContext(userAdmin, { email: 'admin@eurocorp.de' }).firestore();
     const complianceDb = testEnv.authenticatedContext(userCompliance, { email: 'comp@eurocorp.de' }).firestore();
 
     // Compliance manager CANNOT delete
     await assertFails(complianceDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).delete());
 
-    // Tenant admin CAN delete
-    await assertSucceeds(adminDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).delete());
+    // Tenant Admin direct deletion is denied.
+    await assertFails(adminDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).delete());
   });
 
   // 5. Control Review Subcollection Permissions
-  test('Compliance Managers can submit append-only review logs; Auditors and Contributors cannot', async () => {
+  test('append-only control reviews cannot be submitted directly by browser personas', async () => {
     const complianceDb = testEnv.authenticatedContext(userCompliance, { email: 'comp@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditor, { email: 'auditor@kpmg.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributor, { email: 'dev@eurocorp.de' }).firestore();
 
     const reviewRef = complianceDb.doc(`tenants/${tenantOrg}/controls/${controlId}/reviews/rev_01`);
 
-    // Compliance Manager CAN create review log
-    await assertSucceeds(
+    // Compliance Manager review logging requires a server command.
+    await assertFails(
       reviewRef.set({
         id: 'rev_01',
         tenantId: tenantOrg,

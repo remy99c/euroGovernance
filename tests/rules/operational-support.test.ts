@@ -135,13 +135,13 @@ describe('Operational Support: Notifications & Summary Metrics Security Rules', 
   });
 
   // 2. Recipient-Scoped Notification Isolation
-  test('Users can only read and update notifications addressed to themselves', async () => {
+  test('users can read addressed notifications but notification updates require server commands', async () => {
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
     // Admin A can read and mark their own notification as read
     await assertSucceeds(adminDb.doc(`tenants/${tenantA}/notifications/${notifUserAId}`).get());
-    await assertSucceeds(
+    await assertFails(
       adminDb.doc(`tenants/${tenantA}/notifications/${notifUserAId}`).update({
         isRead: true,
         readAt: new Date().toISOString(),
@@ -156,9 +156,9 @@ describe('Operational Support: Notifications & Summary Metrics Security Rules', 
       })
     );
 
-    // Contributor CAN read and update their own notification
+    // Contributor can read their own notification but cannot update it directly.
     await assertSucceeds(contribDb.doc(`tenants/${tenantA}/notifications/${notifUserContribId}`).get());
-    await assertSucceeds(
+    await assertFails(
       contribDb.doc(`tenants/${tenantA}/notifications/${notifUserContribId}`).update({
         isRead: true,
       })

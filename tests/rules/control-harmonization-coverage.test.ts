@@ -350,7 +350,7 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
 
   // 4. Tenant Control Mappings Security Rules Isolation
   describe('Tenant Control Mappings Security Rules Isolation', () => {
-    test('compliance manager in Tenant A can create and update tenant control mappings', async () => {
+    test('compliance manager must create and update tenant control mappings through server commands', async () => {
       const compAContext = testEnv.authenticatedContext(userComplianceA, {
         tenantId: tenantA,
         role: 'compliance_manager',
@@ -388,10 +388,10 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
         updatedBy: userComplianceA,
       };
 
-      await assertSucceeds(mappingRef.set(mappingData));
+      await assertFails(mappingRef.set(mappingData));
 
       // Update mapping
-      await assertSucceeds(
+      await assertFails(
         mappingRef.update({
           verifiedBy: userComplianceA,
           verifiedAt: now,
@@ -401,36 +401,26 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
     });
 
     test('auditor in Tenant A can read but cannot create or mutate control mappings', async () => {
-      const adminAContext = testEnv.authenticatedContext(userAdminA, {
-        tenantId: tenantA,
-        role: 'tenant_admin',
-      });
-
-      const mappingRefAdmin = adminAContext
-        .firestore()
-        .collection('tenants')
-        .doc(tenantA)
-        .collection('control_mappings')
-        .doc('tcm_audit_read_test');
-
       const now = new Date().toISOString();
-      await mappingRefAdmin.set({
-        id: 'tcm_audit_read_test',
-        tenantId: tenantA,
-        ownerId: userAdminA,
-        controlId: 'ctrl_01',
-        frameworkId: 'gdpr',
-        requirementId: 'gdpr_art_32',
-        mappingType: 'equivalent',
-        coverageRatio: 1.0,
-        mappingRationale: 'Test',
-        compensatingControlsJustification: null,
-        verifiedBy: null,
-        verifiedAt: null,
-        createdAt: now,
-        updatedAt: now,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/control_mappings/tcm_audit_read_test`).set({
+          id: 'tcm_audit_read_test',
+          tenantId: tenantA,
+          ownerId: userAdminA,
+          controlId: 'ctrl_01',
+          frameworkId: 'gdpr',
+          requirementId: 'gdpr_art_32',
+          mappingType: 'equivalent',
+          coverageRatio: 1.0,
+          mappingRationale: 'Test',
+          compensatingControlsJustification: null,
+          verifiedBy: null,
+          verifiedAt: null,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const auditorAContext = testEnv.authenticatedContext(userAuditorA, {
@@ -457,36 +447,26 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
     });
 
     test('Tenant A user cannot read or mutate control mappings in Tenant B partition', async () => {
-      const compBContext = testEnv.authenticatedContext(userCompB, {
-        tenantId: tenantB,
-        role: 'compliance_manager',
-      });
-
-      const mappingRefB = compBContext
-        .firestore()
-        .collection('tenants')
-        .doc(tenantB)
-        .collection('control_mappings')
-        .doc('tcm_tenant_b_secret_mapping');
-
       const now = new Date().toISOString();
-      await mappingRefB.set({
-        id: 'tcm_tenant_b_secret_mapping',
-        tenantId: tenantB,
-        ownerId: userCompB,
-        controlId: 'ctrl_b_01',
-        frameworkId: 'iso_27001',
-        requirementId: 'iso_annex_a524',
-        mappingType: 'equivalent',
-        coverageRatio: 1.0,
-        mappingRationale: 'Tenant B secret',
-        compensatingControlsJustification: null,
-        verifiedBy: null,
-        verifiedAt: null,
-        createdAt: now,
-        updatedAt: now,
-        createdBy: userCompB,
-        updatedBy: userCompB,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantB}/control_mappings/tcm_tenant_b_secret_mapping`).set({
+          id: 'tcm_tenant_b_secret_mapping',
+          tenantId: tenantB,
+          ownerId: userCompB,
+          controlId: 'ctrl_b_01',
+          frameworkId: 'iso_27001',
+          requirementId: 'iso_annex_a524',
+          mappingType: 'equivalent',
+          coverageRatio: 1.0,
+          mappingRationale: 'Tenant B secret',
+          compensatingControlsJustification: null,
+          verifiedBy: null,
+          verifiedAt: null,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: userCompB,
+          updatedBy: userCompB,
+        });
       });
 
       const compAContext = testEnv.authenticatedContext(userComplianceA, {

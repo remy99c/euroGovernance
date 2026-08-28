@@ -102,6 +102,23 @@ beforeEach(async () => {
       tenantId: TENANT_A,
       title: 'Existing audit',
     });
+    await db.doc(`tenants/${TENANT_A}/command_receipts/existing_receipt`).set({
+      id: 'existing_receipt',
+      tenantId: TENANT_A,
+      commandId: '550e8400-e29b-41d4-a716-446655440000',
+      status: 'committed',
+    });
+    await db.doc(`tenants/${TENANT_A}/command_outbox/existing_message`).set({
+      id: 'existing_message',
+      tenantId: TENANT_A,
+      commandId: '550e8400-e29b-41d4-a716-446655440000',
+      status: 'pending',
+    });
+    await db.doc(`command_rate_limits/${'a'.repeat(64)}`).set({
+      schemaVersion: 1,
+      actorHash: 'a'.repeat(64),
+      totalAttempts: 1,
+    });
     await db.doc(`tenants/${TENANT_SUSPENDED}/issues/existing_issue`).set({
       id: 'existing_issue',
       tenantId: TENANT_SUSPENDED,
@@ -130,30 +147,30 @@ describe('Milestone 0 Firestore authorization containment', () => {
     await assertFails(db.doc(`tenants/${TENANT_A}`).update({ status: 'suspended' }));
     await assertSucceeds(db.doc('invitations/invitation_a').get());
 
-    await assertSucceeds(
+    await assertFails(
       db.doc(`tenants/${TENANT_A}/issues/admin_issue`).set({
         id: 'admin_issue',
         tenantId: TENANT_A,
         title: 'Admin-created issue',
       })
     );
-    await assertSucceeds(
+    await assertFails(
       db.doc(`tenants/${TENANT_A}/tasks/admin_task`).set({
         id: 'admin_task',
         tenantId: TENANT_A,
         title: 'Admin-created task',
       })
     );
-    await assertSucceeds(db.doc(`tenants/${TENANT_A}/issues/admin_issue`).delete());
-    await assertSucceeds(db.doc(`tenants/${TENANT_A}/tasks/admin_task`).delete());
+    await assertFails(db.doc(`tenants/${TENANT_A}/issues/admin_issue`).delete());
+    await assertFails(db.doc(`tenants/${TENANT_A}/tasks/admin_task`).delete());
   });
 
-  test('active contributor can operate issues and tasks but cannot use admin-only deletion', async () => {
+  test('active contributor cannot mutate authoritative issues or tasks directly', async () => {
     const db = testEnv.authenticatedContext(USERS.activeContributorA).firestore();
     const issue = db.doc(`tenants/${TENANT_A}/issues/contributor_issue`);
     const task = db.doc(`tenants/${TENANT_A}/tasks/contributor_task`);
 
-    await assertSucceeds(
+    await assertFails(
       issue.set({
         id: 'contributor_issue',
         tenantId: TENANT_A,
@@ -161,8 +178,8 @@ describe('Milestone 0 Firestore authorization containment', () => {
         createdBy: USERS.activeContributorA,
       })
     );
-    await assertSucceeds(issue.update({ title: 'Contributor-updated issue' }));
-    await assertSucceeds(
+    await assertFails(issue.update({ title: 'Contributor-updated issue' }));
+    await assertFails(
       task.set({
         id: 'contributor_task',
         tenantId: TENANT_A,
@@ -170,7 +187,7 @@ describe('Milestone 0 Firestore authorization containment', () => {
         createdBy: USERS.activeContributorA,
       })
     );
-    await assertSucceeds(task.update({ title: 'Contributor-updated task' }));
+    await assertFails(task.update({ title: 'Contributor-updated task' }));
     await assertFails(issue.delete());
     await assertFails(task.delete());
   });
@@ -363,13 +380,52 @@ describe('Milestone 0 Firestore authorization containment', () => {
 
     await assertSucceeds(db.doc(`tenants/${TENANT_A}`).get());
     await assertSucceeds(db.doc(`tenants/${TENANT_B}`).get());
-    await assertSucceeds(
+    await assertFails(
       db.doc(`tenants/${TENANT_A}/issues/platform_issue`).set({
         id: 'platform_issue',
         tenantId: TENANT_A,
         title: 'Platform-operated issue',
       })
     );
-    await assertSucceeds(db.doc(`tenants/${TENANT_A}/issues/platform_issue`).delete());
+    await assertFails(db.doc(`tenants/${TENANT_A}/issues/platform_issue`).delete());
+  });
+
+  test.each([
+    ['ordinary member', USERS.activeContributorA, {}],
+    ['tenant admin', USERS.activeAdminA, {}],
+    ['platform-admin browser session', 'platform_operator', { platform_admin: true }],
+  ])('%s cannot access command receipts, outbox records, or actor rate-limit state', async (_label, uid, claims) => {
+    const db = testEnv.authenticatedContext(uid, claims).firestore();
+
+    for (const [collection, existingId] of [
+      ['command_receipts', 'existing_receipt'],
+      ['command_outbox', 'existing_message'],
+    ] as const) {
+      const existingRef = db.doc(`tenants/${TENANT_A}/${collection}/${existingId}`);
+      const injectedRef = db.doc(`tenants/${TENANT_A}/${collection}/browser_injection`);
+
+      await assertFails(existingRef.get());
+      await assertFails(
+        injectedRef.set({
+          id: 'browser_injection',
+          tenantId: TENANT_A,
+          status: 'committed',
+        })
+      );
+      await assertFails(existingRef.update({ status: 'tampered' }));
+      await assertFails(existingRef.delete());
+    }
+
+    const rateLimitRef = db.doc(`command_rate_limits/${'a'.repeat(64)}`);
+    await assertFails(rateLimitRef.get());
+    await assertFails(
+      db.doc(`command_rate_limits/${'b'.repeat(64)}`).set({
+        schemaVersion: 1,
+        actorHash: 'b'.repeat(64),
+        totalAttempts: 0,
+      })
+    );
+    await assertFails(rateLimitRef.update({ totalAttempts: 0 }));
+    await assertFails(rateLimitRef.delete());
   });
 });

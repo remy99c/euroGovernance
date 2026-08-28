@@ -1,7 +1,7 @@
 import {
+  assertFails,
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 import {
@@ -73,7 +73,7 @@ describe('Tenant Framework Adoption Wizard End-to-End Flow', () => {
   const now = new Date().toISOString();
 
   // STEP 1 & 2: Select & Confirm Framework Adoption
-  test('Step 1 & 2: Adopts multiple frameworks (GDPR, EU AI Act, ISO 27001) with version pinning and metadata', async () => {
+  test('Step 1 & 2: Browser clients cannot adopt multiple frameworks directly', async () => {
     const adminCtx = testEnv.authenticatedContext(userAdmin);
     const db = adminCtx.firestore();
 
@@ -96,7 +96,7 @@ describe('Tenant Framework Adoption Wizard End-to-End Flow', () => {
         ownerId: userAdmin,
       };
 
-      await assertSucceeds(
+      await assertFails(
         db.doc(`tenants/${tenantId}/adopted_frameworks/adopt_${fwId}`).set(adoptionDoc)
       );
     }
@@ -236,7 +236,7 @@ describe('Tenant Framework Adoption Wizard End-to-End Flow', () => {
     ];
 
     for (const fact of scopeFacts) {
-      await assertSucceeds(db.doc(`tenants/${tenantId}/scope_facts/${fact.id}`).set(fact));
+      await assertFails(db.doc(`tenants/${tenantId}/scope_facts/${fact.id}`).set(fact));
     }
   });
 

@@ -113,16 +113,21 @@ describe('Functions trust boundary', () => {
     );
 
     expect(createHandler).toContain('authContext.emailVerified');
-    expect(createHandler).toContain('request.auth?.token.tenant_creator === true');
+    expect(createHandler).toContain('request.auth?.token.tenant_creator');
     expect(createHandler).toContain("request.auth?.token.tenant_creation_limit");
     expect(createHandler).toContain("db.collection('tenant_creation_quotas')");
+    expect(createHandler).toContain("collection('provisioning_receipts')");
     expect(createHandler).toContain('await db.runTransaction');
     expect(createHandler).toContain('transaction.create(tenantRef, tenantDoc)');
+    expect(createHandler).toContain('transaction.create(receiptRef, receipt)');
     expect(createHandler).toContain('appendAuditLogInTransaction(transaction');
-    expect(createHandler).toContain("const tier = 'starter' as const");
-    expect(createHandler).toContain("const dataRegion = 'europe-west3' as const");
-    expect(createHandler).toContain('const enabledFrameworks: string[] = []');
-    expect(createHandler).toContain('Unexpected fields');
+    expect(createHandler).toContain('DEFAULT_TENANT_CONFIGURATION.tier');
+    expect(createHandler).toContain('DEFAULT_TENANT_CONFIGURATION.dataRegion');
+    expect(createHandler).toContain('normalizeTenantProvisioningInput(request.data)');
+    expect(createHandler).toContain('consumeAppCheckToken: true');
+    expect(createHandler).toContain('request.app?.alreadyConsumed === true');
+    expect(createHandler).toContain('if (!request.app)');
+    expect(createHandler).toContain('enforceAppCheck: true');
   });
 
   test('legacy processor-assessment bearer-token workflows remain fail closed', () => {
@@ -184,6 +189,33 @@ describe('Functions trust boundary', () => {
     for (const command of guardedCommands) {
       expect(command).toContain('assertSubmissionRequestBinding(');
     }
+  });
+
+  test('applicability overrides cannot spoof reviewer approval and commit audit atomically', () => {
+    const applicabilityHandler = source('../../functions/src/handlers/applicability.ts');
+    const overrideHandler = between(
+      applicabilityHandler,
+      'export const overrideTenantApplicabilityDecision',
+      'export interface RevertApplicabilityDecisionInput'
+    );
+    const revertHandler = between(
+      applicabilityHandler,
+      'export const revertTenantApplicabilityDecision',
+      'export const getTenantApplicabilityDecisionHistory'
+    );
+
+    expect(overrideHandler).toContain("decisionSource !== 'user_override'");
+    expect(overrideHandler).toContain("decisionSource: 'user_override'");
+    expect(overrideHandler).toContain('reviewerId: null');
+    expect(overrideHandler).toContain('reviewerRole: null');
+    expect(overrideHandler).toContain('isApplicable !== expectedApplicable');
+    expect(overrideHandler).toContain('appendAuditLogInBatch(batch');
+    expect(overrideHandler).toContain('await batch.commit()');
+    expect(overrideHandler).not.toContain('await recordAuditLog(');
+
+    expect(revertHandler).toContain('appendAuditLogInBatch(batch');
+    expect(revertHandler).toContain('await batch.commit()');
+    expect(revertHandler).not.toContain('await recordAuditLog(');
   });
 
   test('audit validation executes before the append-only database create', () => {

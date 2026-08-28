@@ -67,18 +67,9 @@ export const checkEvidenceExpiriesAndReminders = onSchedule('0 4 * * *', async (
     const evidenceDocs = evSnap.docs.map((d) => d.data() as Evidence);
     const processorCerts = procertSnap.docs.map((d) => d.data() as ProcessorCertification);
 
-    // Auto-transition expired active certifications
-    for (const doc of certSnap.docs) {
-      const c = doc.data() as Certification;
-      if (c.status === 'active_valid' && new Date(c.expiryDate).getTime() <= nowDate.getTime()) {
-        batch.update(doc.ref, {
-          status: 'expired',
-          updatedAt: now,
-          updatedBy: 'system_cron',
-        });
-        hasUpdates = true;
-      }
-    }
+    // Certification date states are derived at read/evaluation time. Do not
+    // mutate authoritative records here outside their revisioned command and
+    // immutable-version chain.
 
     // Auto-transition expired processor certifications
     for (const doc of procertSnap.docs) {

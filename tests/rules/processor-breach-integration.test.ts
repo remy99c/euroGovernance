@@ -252,7 +252,7 @@ describe('Processor Profiles & Breach Records Integration Suite', () => {
   // 2. Breach Security Rules & Cross-Tenant Authorization
   // ---------------------------------------------------------------------------
   describe('2. Breach Security Rules & Multi-Tenant Isolation', () => {
-    test('Security Officer can read and update processor-linked breach incident', async () => {
+    test('Security Officer can read a processor-linked breach but updates require a server command', async () => {
       const secDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
 
       const snap = await assertSucceeds(
@@ -265,7 +265,7 @@ describe('Processor Profiles & Breach Records Integration Suite', () => {
       expect(data.reportingSource).toBe('reported_by_processor');
 
       // Update containment and DPA reference
-      await assertSucceeds(
+      await assertFails(
         secDb.doc(`tenants/${tenantA}/breaches/brk_db_leak_01`).update({
           dpaReferenceNumber: 'DPA-HESSEN-2026-4412',
           dpaNotifiedAt: new Date().toISOString(),

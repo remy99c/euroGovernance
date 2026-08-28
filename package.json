@@ -1,39 +1,56 @@
 {
   "name": "eurogovernance",
   "version": "0.1.0",
+  "packageManager": "npm@10.9.4",
   "private": true,
   "description": "Multi-Tenant B2B GRC SaaS on Firebase covering GDPR, EU AI Act, EU Data Act, ISO 27001, and ISO 42001",
   "workspaces": [
     "packages/*",
-    "functions",
     "tests/*",
     "apps/*"
   ],
   "scripts": {
     "dev": "npm run dev --workspace=@eurogovernance/web",
     "dev:bootstrap": "npx tsx scripts/bootstrap-dev.ts",
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present && node scripts/sync-functions-shared-types.mjs --check && npm --prefix functions run build",
+    "typecheck": "npm run typecheck --workspaces --if-present && npm --prefix functions run typecheck",
     "lint": "npm run typecheck",
     "test": "npm run test --workspaces --if-present",
-    "test:ci": "npm run typecheck && npm run security:audit && npm run test:rules",
+    "test:ci": "npm run typecheck && npm run security:lock && npm run security:audit && npm run security:web-bundle && npm run test:delivery-gates && npm run test:rules && npm run test:functions:integration",
     "test:rules": "npm run test --workspace=@eurogovernance/rules-tests",
-    "security:audit": "npm audit --omit=dev --audit-level=high",
+    "test:functions:integration": "node tests/integration/run-command-boundaries.mjs",
+    "test:release-gate": "node --test tests/scripts/release-readiness-gate.test.mjs",
+    "test:delivery-gates": "node --test tests/scripts/*.test.mjs",
+    "security:lock": "node scripts/verify-production-dependency-lock.mjs && node scripts/verify-functions-deploy-artifact.mjs",
+    "security:functions-install": "node scripts/verify-functions-clean-install.mjs",
+    "security:audit": "npm audit --audit-level=moderate && npm --prefix functions audit --workspaces=false --audit-level=moderate",
+    "security:web-bundle": "node scripts/verify-production-web-bundle.mjs",
+    "release:gate": "node scripts/verify-production-release-readiness.mjs",
+    "verify:staging-candidate": "EXPECTED_FIREBASE_PROJECT_ID=eurogovernance-staging npm run emulators:exec",
+    "verify:production-candidate": "EXPECTED_FIREBASE_PROJECT_ID=eurogovernance-prod npm run emulators:exec && npm run release:gate",
     "emulators:start": "firebase emulators:start --only firestore,auth,storage,functions,ui",
-    "emulators:exec": "npm run build && npx firebase-tools emulators:exec --only firestore,auth,storage,functions \"npm run test:ci\"",
+    "emulators:exec": "npm run build && npm run security:functions-install && firebase emulators:exec --only firestore,auth,storage,functions \"npm run test:ci\"",
     "seed:emulator": "npx tsx scripts/seed-emulator.ts",
-    "deploy:rules": "firebase deploy --only firestore:rules,storage",
-    "deploy:functions": "firebase deploy --only functions",
-    "deploy:hosting": "firebase deploy --only hosting"
+    "deploy:rules": "firebase deploy --project development --only firestore:rules,storage",
+    "deploy:functions": "firebase deploy --project development --only functions",
+    "deploy:hosting": "firebase deploy --project development --only hosting",
+    "deploy:staging": "npm run verify:staging-candidate && firebase deploy --project staging --only firestore:rules,firestore:indexes,storage,functions,hosting",
+    "deploy:production": "npm run verify:production-candidate && firebase deploy --project production --only firestore:rules,firestore:indexes,storage,hosting && firebase deploy --project production --only functions"
   },
   "devDependencies": {
     "firebase-tools": "15.28.1",
     "typescript": "^5.4.5"
   },
   "overrides": {
-    "uuid@9.0.1": "11.1.1"
+    "firebase-tools": {
+      "@google-cloud/pubsub": "6.0.1"
+    },
+    "superstatic": {
+      "re2": "1.26.1"
+    },
+    "gaxios": "7.3.1"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "22"
   }
 }

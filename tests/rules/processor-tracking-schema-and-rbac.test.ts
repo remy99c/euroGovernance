@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -279,14 +278,14 @@ describe('Processor Tracking Schema, Validation & Multi-Tenant RBAC Suite', () =
   // 2. Security Rules & RBAC Tests
   // ---------------------------------------------------------------------------
   describe('2. Processor Profiles Firestore Security Rules & RBAC', () => {
-    test('Privacy Manager and Compliance Manager can create and update processor profiles in Tenant A', async () => {
+    test('processor-profile creation and updates are server-only for Privacy and Compliance Managers', async () => {
       const privacyDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
       const profileDoc = privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_aws_01`);
 
       // 1. Privacy Manager creates processor profile
-      await assertSucceeds(
+      await assertFails(
         profileDoc.set({
           id: 'prof_aws_01',
           tenantId: tenantA,
@@ -316,7 +315,7 @@ describe('Processor Tracking Schema, Validation & Multi-Tenant RBAC Suite', () =
       );
 
       // 2. Compliance Manager updates review notes
-      await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/processor_profiles/prof_aws_01`).update({
           notes: 'DPA reviewed and approved for 2026.',
           updatedAt: new Date().toISOString(),
@@ -397,7 +396,7 @@ describe('Processor Tracking Schema, Validation & Multi-Tenant RBAC Suite', () =
       );
     });
 
-    test('Only Tenant Admin can delete processor profiles; Privacy Manager and Contributor cannot', async () => {
+    test('processor profiles cannot be deleted directly even by Tenant Admin', async () => {
       const adminDb = testEnv.authenticatedContext(PERSONAS.adminA.uid).firestore();
       const privacyDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
       const contribDb = testEnv.authenticatedContext(PERSONAS.contributorA.uid).firestore();
@@ -434,8 +433,8 @@ describe('Processor Tracking Schema, Validation & Multi-Tenant RBAC Suite', () =
       // Privacy Manager deletion fails
       await assertFails(privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_del_test`).delete());
 
-      // Tenant Admin deletion succeeds
-      await assertSucceeds(adminDb.doc(`tenants/${tenantA}/processor_profiles/prof_del_test`).delete());
+      // Tenant Admin direct deletion is denied.
+      await assertFails(adminDb.doc(`tenants/${tenantA}/processor_profiles/prof_del_test`).delete());
     });
   });
 
@@ -566,8 +565,11 @@ describe('Processor Tracking Schema, Validation & Multi-Tenant RBAC Suite', () =
         ownerId: PERSONAS.privacyA.uid,
       };
 
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_aws_primary_infra`).set(profile1));
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_aws_bedrock_ai`).set(profile2));
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const serverDb = context.firestore();
+        await serverDb.doc(`tenants/${tenantA}/processor_profiles/prof_aws_primary_infra`).set(profile1);
+        await serverDb.doc(`tenants/${tenantA}/processor_profiles/prof_aws_bedrock_ai`).set(profile2);
+      });
 
       // Verify both profiles exist independently and reference the same vendorId
       const p1Snap = await privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_aws_primary_infra`).get();

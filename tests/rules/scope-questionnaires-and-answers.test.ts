@@ -393,26 +393,26 @@ describe('Scope Questionnaire System Suite', () => {
       updatedBy: userContributorA,
     };
 
-    test('contributor and compliance manager in Tenant A can submit scope answers', async () => {
+    test('contributors must submit scope answers through a server command', async () => {
       const contribCtx = testEnv.authenticatedContext(userContributorA);
       const db = contribCtx.firestore();
 
-      await assertSucceeds(
+      await assertFails(
         db.doc(`tenants/${tenantA}/scope_answers/q_gdpr_processes_personal_data`).set(sampleAnswer)
       );
 
       const snap = await db.doc(`tenants/${tenantA}/scope_answers/q_gdpr_processes_personal_data`).get();
-      expect(snap.exists).toBe(true);
-      expect(snap.data()?.answerBoolean).toBe(true);
+      expect(snap.exists).toBe(false);
     });
 
     test('auditor in Tenant A can read but cannot create or modify scope answers', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/scope_answers/q_gdpr_processes_personal_data`).set({
-        ...sampleAnswer,
-        ownerId: userAdminA,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/scope_answers/q_gdpr_processes_personal_data`).set({
+          ...sampleAnswer,
+          ownerId: userAdminA,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditorA);

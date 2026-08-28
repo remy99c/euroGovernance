@@ -140,14 +140,14 @@ describe('Core Identity, Tenant Isolation & RBAC Security Rules', () => {
     await assertSucceeds(tenantListQuery.get());
   });
 
-  // 6. User Profile Sync Isolation
-  test('User can only create/update their own profile in /users/{userId}', async () => {
+  // 6. User Profile Command Boundary
+  test('browser clients cannot write identity profiles in /users/{userId}', async () => {
     const userDb = testEnv.authenticatedContext(founderAdmin, { email: 'founder@eurocorp.de' }).firestore();
     const ownProfileRef = userDb.doc(`users/${founderAdmin}`);
     const victimProfileRef = userDb.doc(`users/${complianceUser}`);
 
-    // Can write own profile
-    await assertSucceeds(
+    // Even an own-profile write must use the trusted identity sync workflow.
+    await assertFails(
       ownProfileRef.set({
         id: founderAdmin,
         email: 'founder@eurocorp.de',

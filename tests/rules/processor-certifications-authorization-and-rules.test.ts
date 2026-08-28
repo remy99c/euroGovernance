@@ -135,7 +135,7 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
   // 1. Processor Certifications Authorization (CRUD & Tenant Isolation)
   // ===========================================================================
   describe('1. Processor Certifications CRUD & Authorization', () => {
-    test('Authorized roles (admin, compliance, privacy, security) can create processor certifications', async () => {
+    test('processor-certification creation is server-only for all authorized browser roles', async () => {
       const authPersonas = [
         PERSONAS.adminA,
         PERSONAS.complianceA,
@@ -147,7 +147,7 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
         const db = testEnv.authenticatedContext(p.uid).firestore();
         const certId = `cert_${p.role}_create`;
 
-        await assertSucceeds(
+        await assertFails(
           db.doc(`tenants/${tenantA}/processor_certifications/${certId}`).set({
             ...validCertDoc,
             id: certId,
@@ -180,7 +180,7 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
       }
     });
 
-    test('Approver role can update processor certifications for review outcomes', async () => {
+    test('Approver review outcomes require a server certification command', async () => {
       // Seed existing certification
       await testEnv.withSecurityRulesDisabled(async (context) => {
         const db = context.firestore();
@@ -188,7 +188,7 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
       });
 
       const approverDb = testEnv.authenticatedContext(PERSONAS.approverA.uid).firestore();
-      await assertSucceeds(
+      await assertFails(
         approverDb.doc(`tenants/${tenantA}/processor_certifications/cert_to_review`).update({
           reviewStatus: 'accepted',
           reviewNotes: 'Verified accreditation with EY CertifyPoint registrar portal.',
@@ -197,7 +197,7 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
       );
     });
 
-    test('Only Tenant Admin and Compliance Manager can delete processor certifications', async () => {
+    test('processor certifications cannot be deleted directly by any browser role', async () => {
       // Seed cert for delete test
       await testEnv.withSecurityRulesDisabled(async (context) => {
         const db = context.firestore();
@@ -211,12 +211,12 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
       const secDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
 
       // Compliance Manager -> Succeeds
-      await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/processor_certifications/cert_del_compliance`).delete()
       );
 
       // Tenant Admin -> Succeeds
-      await assertSucceeds(
+      await assertFails(
         adminDb.doc(`tenants/${tenantA}/processor_certifications/cert_del_admin`).delete()
       );
 
@@ -439,7 +439,7 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
       await assertSucceeds(privDb.doc(`tenants/${tenantA}/notifications/notif_for_privacy`).get());
     });
 
-    test('Recipient can update isRead status on their own notification, but cannot tamper with tenantId or recipientId', async () => {
+    test('recipient can read their notification but all direct notification updates are denied', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         const db = context.firestore();
         await db.doc(`tenants/${tenantA}/notifications/notif_read_test`).set({
@@ -456,7 +456,7 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
       const secDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
 
       // Marking as read -> Succeeds
-      await assertSucceeds(
+      await assertFails(
         secDb.doc(`tenants/${tenantA}/notifications/notif_read_test`).update({
           isRead: true,
           readAt: new Date().toISOString(),
@@ -476,14 +476,14 @@ describe('Processor Certifications, Reviews, Evidence, Notifications & Export Ac
   // 5. Export Access & Security Rules
   // ===========================================================================
   describe('5. Export Job Creation & Access Controls', () => {
-    test('Compliance and Security Managers can request export jobs; direct Auditor requests are denied', async () => {
+    test('processor-certification export jobs require server commands for every browser role', async () => {
       const authRoles = [PERSONAS.complianceA, PERSONAS.securityA];
 
       for (const p of authRoles) {
         const db = testEnv.authenticatedContext(p.uid).firestore();
         const jobId = `exp_job_${p.role}`;
 
-        await assertSucceeds(
+        await assertFails(
           db.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
             id: jobId,
             tenantId: tenantA,

@@ -89,8 +89,6 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
   // Override Form State
   const [overrideStatus, setOverrideStatus] = useState<'applicable' | 'not_applicable' | 'review_required' | 'inherited' | 'deferred'>('applicable');
   const [overrideRationale, setOverrideRationale] = useState<string>('');
-  const [overrideSource, setOverrideSource] = useState<'user_override' | 'reviewer_override'>('user_override');
-  const [overrideReviewerId, setOverrideReviewerId] = useState<string>('');
   const [submittingOverride, setSubmittingOverride] = useState<boolean>(false);
 
   const canOverride = COMPLIANCE_WRITE_ROLES.includes(userRole);
@@ -164,8 +162,6 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
     setOverrideModalDecision(d);
     setOverrideStatus(d.status);
     setOverrideRationale(d.overrideRationale || '');
-    setOverrideSource('user_override');
-    setOverrideReviewerId('');
   };
 
   // 4. Submit Manual Override
@@ -187,8 +183,7 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
         newStatus: overrideStatus,
         isApplicable: overrideStatus === 'applicable' || overrideStatus === 'inherited',
         overrideRationale: overrideRationale.trim(),
-        decisionSource: overrideSource,
-        reviewerId: overrideReviewerId.trim() || undefined,
+        decisionSource: 'user_override',
       });
 
       showToast(`✅ Decision ${overrideModalDecision.sectionCode} successfully overridden to '${overrideStatus}'!`);
@@ -278,7 +273,7 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
         <div>
           <h1 style={{ fontSize: '20px', fontWeight: 700 }}>⚖️ Applicability Decisions & Statutory Review</h1>
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Transparent traceability linking tenant scope facts, deterministic applicability rules, and human overrides.
+            Review current scope records, rule summaries, and manual overrides. Results are not yet pinned to immutable rule and fact versions.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -495,7 +490,7 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
                 {isFactsExpanded && (
                   <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px', borderRadius: '6px', border: '1px dashed var(--accent-blue)', marginTop: '4px' }}>
                     <h4 style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-blue)', marginBottom: '8px' }}>
-                      🔍 Triggering Scope Facts for {d.sectionCode}
+                      🔍 All Recorded Scope Facts (not a causal trace) for {d.sectionCode}
                     </h4>
                     {scopeFacts.length === 0 ? (
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
@@ -543,42 +538,17 @@ export default function ApplicabilityReviewTab({ tenantId, userRole = 'complianc
                   onChange={(e: any) => setOverrideStatus(e.target.value)}
                   style={{ width: '100%', padding: '8px 12px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '13px' }}
                 >
-                  <option value="applicable">Applicable (Mandatory Implementation)</option>
-                  <option value="not_applicable">Not Applicable (Formal Exclusion)</option>
+                  <option value="applicable">Applicable</option>
+                  <option value="not_applicable">Not Applicable</option>
                   <option value="review_required">Review Required (Pending Clarification)</option>
                   <option value="inherited">Inherited (Covered by Parent / Platform)</option>
                   <option value="deferred">Deferred (Postponed Implementation)</option>
                 </select>
               </div>
 
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>
-                  Decision Source Attribution
-                </label>
-                <select
-                  value={overrideSource}
-                  onChange={(e: any) => setOverrideSource(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '13px' }}
-                >
-                  <option value="user_override">Manual User Override</option>
-                  <option value="reviewer_override">Formal Reviewer / Legal Sign-off</option>
-                </select>
-              </div>
-
-              {overrideSource === 'reviewer_override' && (
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>
-                    Reviewer ID / Legal Counsel Email
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. ciso@company.eu or legal_counsel_01"
-                    value={overrideReviewerId}
-                    onChange={(e) => setOverrideReviewerId(e.target.value)}
-                    style={{ width: '100%', padding: '8px 12px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '12px' }}
-                  />
-                </div>
-              )}
+              <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                This records a manual override by the signed-in actor. It is not an independent legal approval or reviewer sign-off.
+              </p>
 
               <div>
                 <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>

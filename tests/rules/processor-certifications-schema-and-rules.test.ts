@@ -215,12 +215,12 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
   });
 
   describe('2. Multi-Tenant Security Rules & RBAC', () => {
-    it('allows privacy_manager to create processor certification under their tenant', async () => {
+    it('denies privacy_manager direct processor-certification creation', async () => {
       const privacyCtx = testEnv.authenticatedContext('usr_privacy_01');
       const db = privacyCtx.firestore();
       const certRef = db.doc('tenants/tenant_eurocorp_de/processor_certifications/cert_aws_iso');
 
-      await assertSucceeds(
+      await assertFails(
         certRef.set({
           id: 'cert_aws_iso',
           tenantId: 'tenant_eurocorp_de',
@@ -251,7 +251,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       );
     });
 
-    it('allows compliance_manager to update processor certification review status', async () => {
+    it('allows compliance_manager reads but requires server commands for certification review updates', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await context.firestore().doc('tenants/tenant_eurocorp_de/processor_certifications/cert_aws_soc2').set({
           id: 'cert_aws_soc2',
@@ -266,7 +266,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       const db = compCtx.firestore();
       const certRef = db.doc('tenants/tenant_eurocorp_de/processor_certifications/cert_aws_soc2');
 
-      await assertSucceeds(
+      await assertFails(
         certRef.update({
           reviewStatus: 'accepted',
           notes: 'SOC 2 Type II report reviewed and verified with clean opinion.',

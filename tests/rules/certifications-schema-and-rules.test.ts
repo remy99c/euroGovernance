@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import {
   Certification,
@@ -70,6 +69,27 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
         role: 'auditor',
         status: 'active',
       });
+      await db.doc('tenants/tenant_eurocorp_de/memberships/usr_security_01').set({
+        id: 'usr_security_01',
+        tenantId: 'tenant_eurocorp_de',
+        userId: 'usr_security_01',
+        role: 'security_manager',
+        status: 'active',
+      });
+      await db.doc('tenants/tenant_eurocorp_de/memberships/usr_contributor_01').set({
+        id: 'usr_contributor_01',
+        tenantId: 'tenant_eurocorp_de',
+        userId: 'usr_contributor_01',
+        role: 'contributor',
+        status: 'active',
+      });
+      await db.doc('tenants/tenant_eurocorp_de/memberships/usr_viewer_01').set({
+        id: 'usr_viewer_01',
+        tenantId: 'tenant_eurocorp_de',
+        userId: 'usr_viewer_01',
+        role: 'viewer',
+        status: 'active',
+      });
 
       // Tenant B (Nordic Health SE)
       await db.doc('tenants/tenant_nordic_se').set({
@@ -88,12 +108,12 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
   });
 
   describe('1. Multi-Tenant Security Rules Isolation & RBAC', () => {
-    it('allows tenant_admin to create structured certification record', async () => {
+    it('denies tenant_admin direct creation of structured certification records', async () => {
       const adminCtx = testEnv.authenticatedContext('usr_admin_01');
       const db = adminCtx.firestore();
       const certRef = db.doc('tenants/tenant_eurocorp_de/certifications/cert_iso27001');
 
-      await assertSucceeds(
+      await assertFails(
         certRef.set({
           id: 'cert_iso27001',
           tenantId: 'tenant_eurocorp_de',
@@ -124,7 +144,7 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
       );
     });
 
-    it('allows compliance_manager to read and update certification', async () => {
+    it('requires verified server projections for compliance-manager reads and commands for updates', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await context.firestore().doc('tenants/tenant_eurocorp_de/certifications/cert_soc2').set({
           id: 'cert_soc2',
@@ -159,8 +179,8 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
       const db = compCtx.firestore();
       const certRef = db.doc('tenants/tenant_eurocorp_de/certifications/cert_soc2');
 
-      await assertSucceeds(certRef.get());
-      await assertSucceeds(
+      await assertFails(certRef.get());
+      await assertFails(
         certRef.update({
           notes: 'Updated by compliance manager',
           updatedBy: 'usr_compliance_01',
@@ -169,7 +189,7 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
       );
     });
 
-    it('allows auditor to read certification but blocks writes', async () => {
+    it('requires verified server projections for auditor reads and blocks writes', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await context.firestore().doc('tenants/tenant_eurocorp_de/certifications/cert_soc2').set({
           id: 'cert_soc2',
@@ -184,12 +204,58 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
       const db = auditorCtx.firestore();
       const certRef = db.doc('tenants/tenant_eurocorp_de/certifications/cert_soc2');
 
-      await assertSucceeds(certRef.get());
+      await assertFails(certRef.get());
       await assertFails(
         certRef.update({
           status: 'expired',
         })
       );
+    });
+
+    it('keeps immutable certification history server-only and blocks every browser mutation', async () => {
+      const certPath = 'tenants/tenant_eurocorp_de/certifications/cert_versioned';
+      const versionPath = `${certPath}/versions/r0000000001`;
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await db.doc(certPath).set({
+          id: 'cert_versioned',
+          tenantId: 'tenant_eurocorp_de',
+          certificationName: 'Versioned external assurance record',
+          status: 'active_valid',
+          revision: 1,
+        });
+        await db.doc(versionPath).set({
+          id: 'r0000000001',
+          tenantId: 'tenant_eurocorp_de',
+          certificationId: 'cert_versioned',
+          revision: 1,
+          stateHash: 'a'.repeat(64),
+          state: { notes: 'historic sensitive auditor note' },
+        });
+      });
+
+      for (const userId of [
+        'usr_admin_01',
+        'usr_compliance_01',
+        'usr_security_01',
+        'usr_auditor_01',
+      ]) {
+        const db = testEnv.authenticatedContext(userId).firestore();
+        await assertFails(db.doc(versionPath).get());
+      }
+
+      for (const userId of ['usr_contributor_01', 'usr_viewer_01']) {
+        const db = testEnv.authenticatedContext(userId).firestore();
+        await assertFails(db.doc(versionPath).get());
+      }
+
+      const adminDb = testEnv.authenticatedContext('usr_admin_01').firestore();
+      await assertFails(adminDb.doc(versionPath).set({ stateHash: 'forged' }));
+      await assertFails(adminDb.doc(versionPath).update({ stateHash: 'forged' }));
+      await assertFails(adminDb.doc(versionPath).delete());
+
+      const nordicDb = testEnv.authenticatedContext('usr_nordic_admin').firestore();
+      await assertFails(nordicDb.doc(versionPath).get());
     });
 
     it('enforces strict tenant isolation (Tenant B cannot read Tenant A certifications)', async () => {
@@ -251,7 +317,17 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
           storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_cert_doc.pdf',
           fileSizeBytes: 500000,
           mimeType: 'application/pdf',
-          fileHashSha256: 'hash123',
+          fileHashSha256: 'a'.repeat(64),
+          objectVerification: {
+            status: 'verified',
+            storagePath: 'tenants/tenant_eurocorp_de/evidence/ev_cert_doc.pdf',
+            storageGeneration: '1',
+            verifiedFileHashSha256: 'a'.repeat(64),
+            verifiedFileSizeBytes: 500000,
+            verifiedMimeType: 'application/pdf',
+            verifiedAt: '2025-01-01T00:00:00.000Z',
+            verifier: 'storage_finalize_function',
+          },
           controlIds: [],
           requirementIds: [],
           policyIds: [],
@@ -275,6 +351,72 @@ describe('Certifications & Structured Assurance Schema, Security Rules & Evaluat
       expect(result.isComplete).toBe(true);
       expect(result.hasValidCertificateDocument).toBe(true);
       expect(result.gaps.length).toBe(0);
+    });
+
+    it('does not treat legacy valid metadata as a verified certificate object', () => {
+      const cert = {
+        id: 'cert_unverified',
+        tenantId: 'tenant_eurocorp_de',
+        certificationName: 'Unverified certificate record',
+        certificationType: 'iso_27001',
+        issuingBody: 'Registrar',
+        certificateNumber: 'UNVERIFIED-1',
+        scopeDescription: '',
+        applicableStandardVersion: '2022',
+        issueDate: '2025-01-01T00:00:00.000Z',
+        expiryDate: '2028-01-01T00:00:00.000Z',
+        status: 'active_valid',
+        surveillanceAuditDueDate: null,
+        leadAuditorName: null,
+        leadAuditorContact: null,
+        frameworkIds: [],
+        linkedControlIds: [],
+        linkedEvidenceIds: ['ev_legacy'],
+        continuousComplianceStatus: 'not_assessed',
+        unresolvedFindingsCount: 0,
+        notes: null,
+        ownerId: 'usr_01',
+        createdBy: 'usr_01',
+        updatedBy: 'usr_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      } satisfies Certification;
+      const legacyEvidence = {
+        id: 'ev_legacy',
+        tenantId: 'tenant_eurocorp_de',
+        title: 'Caller-declared metadata',
+        description: '',
+        category: 'iso_certificate',
+        status: 'valid',
+        storagePath: 'tenants/tenant_eurocorp_de/evidence/missing.pdf',
+        fileSizeBytes: 10,
+        mimeType: 'application/pdf',
+        fileHashSha256: 'caller-declared',
+        controlIds: [],
+        requirementIds: [],
+        policyIds: [],
+        riskIds: [],
+        assessmentIds: [],
+        collectedAt: '2025-01-01T00:00:00.000Z',
+        reviewDueDate: null,
+        reviewedBy: 'usr_01',
+        reviewedAt: '2025-01-01T00:00:00.000Z',
+        rejectionReason: null,
+        currentVersion: 1,
+        ownerId: 'usr_01',
+        createdBy: 'usr_01',
+        updatedBy: 'usr_01',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      } satisfies Evidence;
+
+      const result = evaluateCertificationCompleteness(
+        cert,
+        [legacyEvidence],
+        new Date('2026-01-01')
+      );
+      expect(result.hasValidCertificateDocument).toBe(false);
+      expect(result.isComplete).toBe(false);
     });
 
     it('identifies missing evidence gap when certificate has no attached document', () => {

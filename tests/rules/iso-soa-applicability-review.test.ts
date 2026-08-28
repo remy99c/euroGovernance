@@ -393,17 +393,17 @@ describe('ISO Statement of Applicability (SoA) & Applicability Review Suite', ()
       updatedBy: userComplianceA,
     };
 
-    test('compliance manager in Tenant A can create and update SoA entries', async () => {
+    test('compliance manager must create and update SoA entries through server commands', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const db = compCtx.firestore();
 
       const docRef = db.doc(`tenants/${tenantA}/iso_soa_entries/${sampleSoAEntry.id}`);
 
-      // Create succeeds
-      await assertSucceeds(docRef.set(sampleSoAEntry));
+      // Authoritative writes are never accepted from the browser.
+      await assertFails(docRef.set(sampleSoAEntry));
 
-      // Update succeeds
-      await assertSucceeds(
+      // Updates are also server-only, even for an authorized manager.
+      await assertFails(
         docRef.update({
           justification: 'Updated encryption key management procedure',
           updatedAt: new Date().toISOString(),
@@ -413,12 +413,13 @@ describe('ISO Statement of Applicability (SoA) & Applicability Review Suite', ()
     });
 
     test('auditor in Tenant A can read but cannot create or mutate SoA entries', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/iso_soa_entries/${sampleSoAEntry.id}`).set({
-        ...sampleSoAEntry,
-        ownerId: userAdminA,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/iso_soa_entries/${sampleSoAEntry.id}`).set({
+          ...sampleSoAEntry,
+          ownerId: userAdminA,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditorA);
@@ -437,14 +438,15 @@ describe('ISO Statement of Applicability (SoA) & Applicability Review Suite', ()
     });
 
     test('Tenant A user cannot read or mutate SoA entries in Tenant B partition', async () => {
-      const compBCtx = testEnv.authenticatedContext(userCompB);
-      await compBCtx.firestore().doc(`tenants/${tenantB}/iso_soa_entries/soa_tenant_b_confidential`).set({
-        ...sampleSoAEntry,
-        id: 'soa_tenant_b_confidential',
-        tenantId: tenantB,
-        ownerId: userCompB,
-        createdBy: userCompB,
-        updatedBy: userCompB,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantB}/iso_soa_entries/soa_tenant_b_confidential`).set({
+          ...sampleSoAEntry,
+          id: 'soa_tenant_b_confidential',
+          tenantId: tenantB,
+          ownerId: userCompB,
+          createdBy: userCompB,
+          updatedBy: userCompB,
+        });
       });
 
       const compACtx = testEnv.authenticatedContext(userComplianceA);

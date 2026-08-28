@@ -360,7 +360,7 @@ describe('Third-Party Assessment Exports & Compliance Reporting Test Pack', () =
   // 2. AUTHORIZATION & TENANT ISOLATION
   // ---------------------------------------------------------------------------
   describe('2. Authorization & Tenant Isolation in Firestore', () => {
-    it('allows compliance manager to create export job and view completed job', async () => {
+    it('allows compliance manager to view a completed export job created by the server', async () => {
       const jobId = 'job_export_001';
       const exportJob: ExportJob = {
         id: jobId,

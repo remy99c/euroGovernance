@@ -33,7 +33,6 @@ import {
   evaluateProcessorEvidenceCompleteness,
   evaluateProcessorRiskFlags,
   evaluateCertificationCompleteness,
-  evaluateCertificationRiskFlags,
   ThirdPartyAssessmentRequest,
   RecurringAssessmentSchedule,
   generateThirdPartyAssessmentInventoryExportPayload,
@@ -43,6 +42,7 @@ import {
   generateAssessmentOpenFollowUpsExportPayload,
   generateProspectAssessmentsUnlinkedExportPayload,
 } from '@eurogovernance/shared-types';
+import { loadCurrentCertificationArtifactVerification } from '../lib/certification-assurance-store.js';
 
 export interface RequestExportInput {
   tenantId: string;
@@ -909,18 +909,81 @@ export async function processExportJob(
         tenantRef.collection('evidence').get(),
       ]);
 
-      const certs = certSnap.docs.map((d) => d.data() as Certification);
+      const certificationRecords = certSnap.docs.map((document) => ({
+        documentId: document.id,
+        certification: document.data() as Certification,
+      }));
       const evidences = evSnap.docs.map((d) => d.data() as Evidence);
+      const asOfDate = new Date(processingTime);
+      const asOfMillis = asOfDate.getTime();
+      const artifactVerification = await loadCurrentCertificationArtifactVerification(
+        tenantId,
+        certificationRecords
+      );
 
-      const enrichedCerts = certs.map((c) => {
-        const completeness = evaluateCertificationCompleteness(c, evidences, new Date(processingTime));
+      const enrichedCerts = certificationRecords.map(({ documentId, certification }) => {
+        const completeness = evaluateCertificationCompleteness(
+          certification,
+          evidences,
+          asOfDate
+        );
+        const issueMillis = Date.parse(certification.issueDate);
+        const expiryMillis = Date.parse(certification.expiryDate);
+        const dateCurrent =
+          Number.isFinite(issueMillis) &&
+          Number.isFinite(expiryMillis) &&
+          issueMillis <= asOfMillis &&
+          expiryMillis > asOfMillis;
+        const operationallyEligible =
+          certification.status === 'active_valid' ||
+          certification.status === 'expiring_soon';
+        const currentArtifactVerified =
+          artifactVerification.get(documentId) === true;
+        const verifiedAssurance =
+          currentArtifactVerified &&
+          dateCurrent &&
+          operationallyEligible &&
+          completeness.isComplete &&
+          completeness.hasValidCertificateDocument;
         return {
-          ...c,
+          ...certification,
+          authoritativeDocumentId: documentId,
+          currentArtifactVerified,
+          dateCurrent,
+          verifiedAssurance,
           completenessSummary: completeness,
         };
       });
-
-      const riskEvaluation = evaluateCertificationRiskFlags(certs, evidences, new Date(processingTime));
+      const dateCurrentRecordCount = enrichedCerts.filter(
+        (certification) => certification.dateCurrent
+      ).length;
+      const verifiedAssuranceCount = enrichedCerts.filter(
+        (certification) => certification.verifiedAssurance
+      ).length;
+      const expiredCount = enrichedCerts.filter((certification) => {
+        const expiryMillis = Date.parse(certification.expiryDate);
+        return !Number.isFinite(expiryMillis) || expiryMillis <= asOfMillis;
+      }).length;
+      const invalidCurrentArtifactCount = enrichedCerts.filter(
+        (certification) => !certification.currentArtifactVerified
+      ).length;
+      const riskEvaluation = {
+        totalCount: enrichedCerts.length,
+        verifiedAssuranceCount,
+        dateCurrentRecordCount,
+        dateCurrentNotVerifiedAssuranceCount:
+          dateCurrentRecordCount - verifiedAssuranceCount,
+        expiredCount,
+        invalidCurrentArtifactCount,
+        overallAssuranceRiskLevel:
+          enrichedCerts.length === 0
+            ? 'not_assessed'
+            : expiredCount > 0
+              ? 'critical'
+              : verifiedAssuranceCount < enrichedCerts.length
+                ? 'high'
+                : 'low',
+      };
 
       fileName = `certification_register_${tenantId}_${Date.now()}.json`;
       fileContent = JSON.stringify(
@@ -928,13 +991,19 @@ export async function processExportJob(
           exportHeader: {
             tenantId,
             exportType: job.exportType,
-            title: 'Master Certifications & External Security Assurance Register',
+            title: 'Recorded Certification Register (Evidence Verification Disclosed)',
             generatedAt: processingTime,
             requestedBy: job.requestedBy,
-            totalCertificationsCount: certs.length,
-            activeValidCount: certs.filter((c) => c.status === 'active_valid').length,
-            expiredCount: certs.filter((c) => c.status === 'expired').length,
+            totalCertificationsCount: enrichedCerts.length,
+            verifiedAssuranceCount,
+            dateCurrentRecordCount,
+            dateCurrentNotVerifiedAssuranceCount:
+              dateCurrentRecordCount - verifiedAssuranceCount,
+            invalidCurrentArtifactCount,
+            expiredCount,
             overallAssuranceRiskLevel: riskEvaluation.overallAssuranceRiskLevel,
+            assuranceDisclaimer:
+              'A record is counted as verified assurance only when its dates and operational status are current, all completeness checks pass, its evidence object generation/hash/size/MIME and review are server-verified, and its exact current version, command receipt, and audit event form a valid chain.',
           },
           certifications: enrichedCerts,
           riskEvaluation,

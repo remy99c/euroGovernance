@@ -223,7 +223,7 @@ describe('Master Data Validation & Relationship Integrity', () => {
       ).rejects.toThrow();
     });
 
-    test('platform admin can write and update global frameworks and mappings', async () => {
+    test('platform admin browser sessions cannot write global frameworks and mappings', async () => {
       const adminContext = testEnv.authenticatedContext(platformAdmin.uid, {
         email: platformAdmin.email,
         platform_admin: true,
@@ -232,11 +232,10 @@ describe('Master Data Validation & Relationship Integrity', () => {
 
       await expect(
         adminDb.doc('frameworks/eu_data_act').set(CANONICAL_FRAMEWORKS[3]!)
-      ).resolves.not.toThrow();
+      ).rejects.toThrow();
 
       const snap = await adminDb.doc('frameworks/eu_data_act').get();
-      expect(snap.exists).toBe(true);
-      expect(snap.data()?.code).toBe('EU_DATA_ACT');
+      expect(snap.exists).toBe(false);
     });
   });
 });

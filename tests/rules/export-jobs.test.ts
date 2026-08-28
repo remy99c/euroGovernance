@@ -105,14 +105,14 @@ describe('Compliance Export Jobs & Security Rules', () => {
   });
 
   // 1. Export Job Request RBAC
-  test('Compliance Manager can create a direct export request; Auditor, Contributor, and Viewer clients cannot', async () => {
+  test('export requests are server-only for all browser personas', async () => {
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Compliance Manager CAN create export job request
-    await assertSucceeds(
+    // Compliance Manager must use the export command boundary.
+    await assertFails(
       complianceDb.doc(`tenants/${tenantA}/export_jobs/job_new_comp`).set({
         id: 'job_new_comp',
         tenantId: tenantA,

@@ -340,7 +340,7 @@ describe('Processor Profiles & System Assets Integration Suite', () => {
   // 2. System Asset Security Rules & Multi-Tenant Isolation
   // ---------------------------------------------------------------------------
   describe('2. Security Rules & Multi-Tenant Isolation', () => {
-    test('Privacy Officer can view system assets and update linked processor relationships in Tenant A', async () => {
+    test('Privacy Officer can view system assets but relationship updates require server commands', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
       const snap = await assertSucceeds(
@@ -352,7 +352,7 @@ describe('Processor Profiles & System Assets Integration Suite', () => {
       expect(data.processorRelationships?.length).toBe(2);
 
       // Privacy officer updates hosting location
-      await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/system_assets/asset_app_cluster`).update({
           hostingLocation: 'eu-central-1 Frankfurt (Multi-AZ)',
           updatedAt: new Date().toISOString(),

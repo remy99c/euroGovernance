@@ -491,26 +491,26 @@ describe('Tenant GRC Instantiation & Harmonization Engine Suite', () => {
       updatedBy: userComplianceA,
     };
 
-    test('compliance manager in Tenant A can create and update requirement instances', async () => {
+    test('compliance manager must instantiate requirements through a server command', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const db = compCtx.firestore();
 
-      await assertSucceeds(
+      await assertFails(
         db.doc(`tenants/${tenantA}/requirement_instances/req_inst_gdpr_art30`).set(sampleReqInstance)
       );
 
       const snap = await db.doc(`tenants/${tenantA}/requirement_instances/req_inst_gdpr_art30`).get();
-      expect(snap.exists).toBe(true);
-      expect(snap.data()?.sectionCode).toBe('Art. 30');
+      expect(snap.exists).toBe(false);
     });
 
     test('auditor in Tenant A can read but cannot modify requirement instances', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/requirement_instances/req_inst_gdpr_art30`).set({
-        ...sampleReqInstance,
-        ownerId: userAdminA,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/requirement_instances/req_inst_gdpr_art30`).set({
+          ...sampleReqInstance,
+          ownerId: userAdminA,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditorA);

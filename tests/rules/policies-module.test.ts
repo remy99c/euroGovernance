@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -122,14 +121,14 @@ describe('Policies Module Security Rules & RBAC Permissions', () => {
   });
 
   // 1. Create Policy RBAC
-  test('Compliance, Privacy, and Security Managers can create policies; Contributors and Viewers cannot', async () => {
+  test('policy creation is denied to every browser persona', async () => {
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const privacyDb = testEnv.authenticatedContext(userPrivacyA, { email: 'dpo@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Compliance & Privacy Managers CAN create
-    await assertSucceeds(
+    // Managers cannot bypass the policy command boundary.
+    await assertFails(
       complianceDb.doc(`tenants/${tenantA}/policies/pol_ai_ethics`).set({
         id: 'pol_ai_ethics',
         tenantId: tenantA,
@@ -140,7 +139,7 @@ describe('Policies Module Security Rules & RBAC Permissions', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       privacyDb.doc(`tenants/${tenantA}/policies/pol_data_retention`).set({
         id: 'pol_data_retention',
         tenantId: tenantA,
@@ -172,25 +171,25 @@ describe('Policies Module Security Rules & RBAC Permissions', () => {
   });
 
   // 2. Read Policy Permissions
-  test('All tenant members can read policies; outsider receives PERMISSION_DENIED', async () => {
+  test('raw policy reads are denied to every browser persona', async () => {
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
     const outsiderDb = testEnv.authenticatedContext(userAdminB, { email: 'admin@medtech.fr' }).firestore();
 
-    await assertSucceeds(auditorDb.doc(`tenants/${tenantA}/policies/${policyId}`).get());
-    await assertSucceeds(viewerDb.doc(`tenants/${tenantA}/policies/${policyId}`).get());
+    await assertFails(auditorDb.doc(`tenants/${tenantA}/policies/${policyId}`).get());
+    await assertFails(viewerDb.doc(`tenants/${tenantA}/policies/${policyId}`).get());
 
     await assertFails(outsiderDb.doc(`tenants/${tenantA}/policies/${policyId}`).get());
   });
 
   // 3. Update Policy Permissions
-  test('Security Manager can update policy content; Read-only Auditor and Viewer cannot', async () => {
+  test('policy updates are denied to managers and read-only browser personas alike', async () => {
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Security Manager CAN update
-    await assertSucceeds(
+    // Security Manager direct updates are denied.
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/policies/${policyId}`).update({
         version: '1.1',
         summary: 'Updated with FIDO2 WebAuthn mandatory requirements',
@@ -212,15 +211,15 @@ describe('Policies Module Security Rules & RBAC Permissions', () => {
   });
 
   // 4. Delete Policy Restriction
-  test('Only Tenant Admin can delete policies; Compliance Manager cannot', async () => {
+  test('policy deletion requires a server command even for Tenant Admin', async () => {
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
 
     // Compliance manager CANNOT delete
     await assertFails(complianceDb.doc(`tenants/${tenantA}/policies/${policyId}`).delete());
 
-    // Tenant Admin CAN delete
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/policies/${policyId}`).delete());
+    // Tenant Admin direct deletion is denied.
+    await assertFails(adminDb.doc(`tenants/${tenantA}/policies/${policyId}`).delete());
   });
 
   // 5. Cross-Tenant Policy Isolation

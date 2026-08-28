@@ -456,7 +456,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
             {loadingMessage || 'Processing request...'}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Please hold while sovereign compliance rules are processed.
+            Please wait while the requested compliance records are processed.
           </div>
         </div>
       )}

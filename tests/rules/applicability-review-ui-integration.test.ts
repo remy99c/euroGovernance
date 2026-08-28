@@ -319,14 +319,14 @@ describe('Applicability Decision Review UI & Governance Suite', () => {
 
   // 3. Role-Based Security & Visibility Restrictions
   describe('Role-Based Access Control', () => {
-    test('compliance manager can write and override applicability decision documents in Firestore', async () => {
+    test('compliance manager cannot bypass callable applicability workflows with direct writes', async () => {
       const compCtx = testEnv.authenticatedContext(userCompliance);
       const db = compCtx.firestore();
 
       const docRef = db.doc(`tenants/${tenantId}/applicability_decisions/${dataset[0]!.id}`);
-      await assertSucceeds(docRef.set(dataset[0]!));
+      await assertFails(docRef.set(dataset[0]!));
 
-      await assertSucceeds(
+      await assertFails(
         docRef.update({
           status: 'review_required',
           updatedAt: new Date().toISOString(),
@@ -336,12 +336,13 @@ describe('Applicability Decision Review UI & Governance Suite', () => {
     });
 
     test('auditor can inspect and read applicability decisions, but cannot modify or override them', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdmin);
-      await adminCtx.firestore().doc(`tenants/${tenantId}/applicability_decisions/${dataset[0]!.id}`).set({
-        ...dataset[0]!,
-        ownerId: userAdmin,
-        createdBy: userAdmin,
-        updatedBy: userAdmin,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantId}/applicability_decisions/${dataset[0]!.id}`).set({
+          ...dataset[0]!,
+          ownerId: userAdmin,
+          createdBy: userAdmin,
+          updatedBy: userAdmin,
+        });
       });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditor);
@@ -360,12 +361,13 @@ describe('Applicability Decision Review UI & Governance Suite', () => {
     });
 
     test('contributor cannot modify or override applicability decisions', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdmin);
-      await adminCtx.firestore().doc(`tenants/${tenantId}/applicability_decisions/${dataset[0]!.id}`).set({
-        ...dataset[0]!,
-        ownerId: userAdmin,
-        createdBy: userAdmin,
-        updatedBy: userAdmin,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantId}/applicability_decisions/${dataset[0]!.id}`).set({
+          ...dataset[0]!,
+          ownerId: userAdmin,
+          createdBy: userAdmin,
+          updatedBy: userAdmin,
+        });
       });
 
       const contribCtx = testEnv.authenticatedContext(userContributor);

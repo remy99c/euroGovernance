@@ -240,17 +240,17 @@ describe('Manual Applicability Override, Review & History Preservation Suite', (
 
   // 3. Firestore Security Rules Isolation & Role Guardrails
   describe('Firestore Security Rules Role Guardrails for Overrides', () => {
-    test('compliance manager in Tenant A can mutate and override applicability decisions', async () => {
+    test('compliance manager must mutate and override applicability decisions through server commands', async () => {
       const compCtx = testEnv.authenticatedContext(userComplianceA);
       const db = compCtx.firestore();
 
       const docRef = db.doc(`tenants/${tenantA}/applicability_decisions/${baselineAutoDecision.id}`);
 
-      // Seed decision
-      await assertSucceeds(docRef.set(baselineAutoDecision));
+      // Both creation and override are authoritative server operations.
+      await assertFails(docRef.set(baselineAutoDecision));
 
-      // Override update succeeds
-      await assertSucceeds(
+      // An authorized role still cannot bypass the command boundary.
+      await assertFails(
         docRef.update({
           status: 'applicable',
           isApplicable: true,
@@ -264,12 +264,13 @@ describe('Manual Applicability Override, Review & History Preservation Suite', (
     });
 
     test('unauthorized contributor in Tenant A cannot update or override applicability decisions', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/applicability_decisions/${baselineAutoDecision.id}`).set({
-        ...baselineAutoDecision,
-        ownerId: userAdminA,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/applicability_decisions/${baselineAutoDecision.id}`).set({
+          ...baselineAutoDecision,
+          ownerId: userAdminA,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const contribCtx = testEnv.authenticatedContext(userContributorA);
@@ -286,12 +287,13 @@ describe('Manual Applicability Override, Review & History Preservation Suite', (
     });
 
     test('auditor in Tenant A can read decisions but cannot modify or override them', async () => {
-      const adminCtx = testEnv.authenticatedContext(userAdminA);
-      await adminCtx.firestore().doc(`tenants/${tenantA}/applicability_decisions/${baselineAutoDecision.id}`).set({
-        ...baselineAutoDecision,
-        ownerId: userAdminA,
-        createdBy: userAdminA,
-        updatedBy: userAdminA,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/applicability_decisions/${baselineAutoDecision.id}`).set({
+          ...baselineAutoDecision,
+          ownerId: userAdminA,
+          createdBy: userAdminA,
+          updatedBy: userAdminA,
+        });
       });
 
       const auditorCtx = testEnv.authenticatedContext(userAuditorA);
@@ -309,14 +311,15 @@ describe('Manual Applicability Override, Review & History Preservation Suite', (
     });
 
     test('Tenant A user cannot read or mutate applicability decisions in Tenant B partition', async () => {
-      const compBCtx = testEnv.authenticatedContext(userCompB);
-      await compBCtx.firestore().doc(`tenants/${tenantB}/applicability_decisions/dec_tenant_b_confidential`).set({
-        ...baselineAutoDecision,
-        id: 'dec_tenant_b_confidential',
-        tenantId: tenantB,
-        ownerId: userCompB,
-        createdBy: userCompB,
-        updatedBy: userCompB,
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantB}/applicability_decisions/dec_tenant_b_confidential`).set({
+          ...baselineAutoDecision,
+          id: 'dec_tenant_b_confidential',
+          tenantId: tenantB,
+          ownerId: userCompB,
+          createdBy: userCompB,
+          updatedBy: userCompB,
+        });
       });
 
       const compACtx = testEnv.authenticatedContext(userComplianceA);

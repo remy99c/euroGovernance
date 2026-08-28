@@ -51,16 +51,6 @@ service cloud.firestore {
       );
     }
 
-    function getTenantRole(tenantId) {
-      return isPlatformAdmin() ? 'platform_admin' : (
-        isTenantActive(tenantId) &&
-        exists(membershipPath(tenantId)) &&
-        get(membershipPath(tenantId)).data.get('status', '') == 'active'
-          ? get(membershipPath(tenantId)).data.get('role', '')
-          : ''
-      );
-    }
-
     function isTenantAdmin(tenantId) {
       return isAuthenticated() && (
         isPlatformAdmin() ||
@@ -71,26 +61,6 @@ service cloud.firestore {
       );
     }
 
-    function isAuditor(tenantId) {
-      return isAuthenticated() &&
-             isTenantActive(tenantId) &&
-             exists(membershipPath(tenantId)) &&
-             get(membershipPath(tenantId)).data.get('status', '') == 'active' &&
-             get(membershipPath(tenantId)).data.get('role', '') == 'auditor';
-    }
-
-    function isViewer(tenantId) {
-      return isAuthenticated() &&
-             isTenantActive(tenantId) &&
-             exists(membershipPath(tenantId)) &&
-             get(membershipPath(tenantId)).data.get('status', '') == 'active' &&
-             get(membershipPath(tenantId)).data.get('role', '') == 'viewer';
-    }
-
-    function isReadOnlyRole(tenantId) {
-      return isAuditor(tenantId) || isViewer(tenantId);
-    }
-
     function hasAnyRole(tenantId, roles) {
       return isAuthenticated() && (
         isPlatformAdmin() ||
@@ -99,19 +69,6 @@ service cloud.firestore {
          get(membershipPath(tenantId)).data.get('status', '') == 'active' &&
          roles.hasAny([get(membershipPath(tenantId)).data.get('role', '')]))
       );
-    }
-
-    function validTenantScopedCreate(tenantId) {
-      return request.resource.data.tenantId == tenantId &&
-             (!('createdBy' in request.resource.data) || request.resource.data.createdBy == request.auth.uid) &&
-             (!('createdAt' in request.resource.data) || request.resource.data.createdAt is string || request.resource.data.createdAt == request.time);
-    }
-
-    function validTenantScopedUpdate(tenantId) {
-      return (!('tenantId' in request.resource.data) || (request.resource.data.tenantId == resource.data.tenantId && request.resource.data.tenantId == tenantId)) &&
-             (!('createdBy' in resource.data) || !('createdBy' in request.resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
-             (!('updatedBy' in request.resource.data) || request.resource.data.updatedBy == request.auth.uid || request.resource.data.updatedBy == resource.data.updatedBy) &&
-             (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is string || request.resource.data.updatedAt == request.time);
     }
 
     function validPersonalOnboardingState(tenantId, onboardingUserId) {
@@ -158,8 +115,9 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /users/{userId} {
       allow read: if isUser(userId) || isPlatformAdmin();
-      allow create, update: if isUser(userId);
-      allow delete: if false;
+      // Profiles are synchronized by a server command so callers cannot add
+      // trusted-looking plan, role, or provisioning fields to their profile.
+      allow create, update, delete: if false;
     }
 
     // -------------------------------------------------------------------------
@@ -167,21 +125,21 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /frameworks/{frameworkId} {
       allow read: if isAuthenticated();
-      allow write: if isPlatformAdmin();
+      allow write: if false;
 
       match /requirements/{requirementId} {
         allow read: if isAuthenticated();
-        allow write: if isPlatformAdmin();
+        allow write: if false;
       }
 
       match /master_controls/{controlId} {
         allow read: if isAuthenticated();
-        allow write: if isPlatformAdmin();
+        allow write: if false;
       }
 
       match /mappings/{mappingId} {
         allow read: if isAuthenticated();
-        allow write: if isPlatformAdmin();
+        allow write: if false;
       }
     }
 
@@ -190,22 +148,22 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /control_mappings/{mappingId} {
       allow read: if isAuthenticated();
-      allow write: if isPlatformAdmin();
+      allow write: if false;
     }
 
     match /scope_questionnaires/{questionnaireId} {
       allow read: if isAuthenticated();
-      allow write: if isPlatformAdmin();
+      allow write: if false;
 
       match /questions/{questionId} {
         allow read: if isAuthenticated();
-        allow write: if isPlatformAdmin();
+        allow write: if false;
       }
     }
 
     match /applicability_rules/{ruleId} {
       allow read: if isAuthenticated();
-      allow write: if isPlatformAdmin();
+      allow write: if false;
     }
 
     // -------------------------------------------------------------------------
@@ -221,6 +179,17 @@ service cloud.firestore {
       );
       // Creating, accepting, or canceling invites is routed through Cloud Functions
       allow write: if false;
+    }
+
+    // Provisioning entitlements, counters, and idempotency receipts are a
+    // server-only billing/security boundary. Firebase Auth claims alone never
+    // grant browser access to these records.
+    match /tenant_creation_quotas/{userId} {
+      allow read, write: if false;
+
+      match /provisioning_receipts/{receiptId} {
+        allow read, write: if false;
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -254,19 +223,24 @@ service cloud.firestore {
         allow create: if false; // Audit logs written exclusively via Cloud Functions Admin SDK
       }
 
+      // Idempotency receipts can contain command results and audit anchors.
+      // They are internal server records, not a client-facing activity feed.
+      match /command_receipts/{commandId} {
+        allow read, write: if false;
+      }
+
+      match /command_outbox/{eventId} {
+        allow read, write: if false;
+      }
+
       // Controls
       match /controls/{controlId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
 
         match /reviews/{reviewId} {
           allow read: if isTenantMember(tenantId);
-          allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'approver']);
-          allow update, delete: if false;
+          allow create, update, delete: if false;
         }
       }
 
@@ -286,355 +260,229 @@ service cloud.firestore {
 
       // Policies
       match /policies/{policyId} {
-        allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        // Full bodies and mutable lifecycle fields are projected through
+        // server callables that verify the current version/receipt/audit chain.
+        allow read, create, update, delete: if false;
+
+        match /versions/{versionId} {
+          allow read, create, update, delete: if false;
+        }
       }
 
       // Risks
       match /risks/{riskId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Issues & Remediations
       match /issues/{issueId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'ai_governance_manager', 'security_manager', 'contributor', 'approver'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'ai_governance_manager', 'security_manager', 'contributor', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Tasks
       match /tasks/{taskId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'ai_governance_manager', 'security_manager', 'contributor', 'approver'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'ai_governance_manager', 'security_manager', 'contributor', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Vendors & Third Parties (Commercial Master)
       match /vendors/{vendorId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Data Processor Profiles (Privacy & Data Processing Overlay)
       match /processor_profiles/{profileId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Cross-Border Transfer Arrangements
       match /transfer_arrangements/{arrangementId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Processor Certifications & Third-Party Assurance
       match /processor_certifications/{certId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // Processor & Vendor Assessments (Due Diligence & Periodic Questionnaires)
       match /processor_assessments/{assessmentId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // Tenant-Scoped Questionnaire Templates
       match /questionnaire_templates/{templateId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // Third-Party Assessment Campaigns
       match /assessment_campaigns/{campaignId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // Third-Party Assessment Requests
       match /assessment_requests/{requestId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // Recurring Assessment Schedules
       match /recurring_schedules/{scheduleId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // External Assessment Submissions
       match /assessment_submissions/{submissionId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // Submission Reviews
       match /submission_reviews/{reviewId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'security_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        allow create, update, delete: if false;
       }
 
       // Assessment Access Tokens (Restricted Token Storage - writes via Cloud Functions only)
       match /assessment_access_tokens/{tokenId} {
-        allow read: if isTenantMember(tenantId);
-        allow write: if false; // Issued, validated, and revoked exclusively server-side
+        // Bearer-token hashes, respondent PII, access telemetry and verification
+        // metadata are never exposed to an untrusted browser. Authorized staff
+        // consume redacted request status through server-side query commands.
+        allow read, write: if false;
       }
 
       // Systems & Assets
       match /system_assets/{assetId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Structured Certifications & External Assurance Records
       match /certifications/{certId} {
-        allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager']);
+        // Mutable record fields are exposed only through server projections
+        // that verify the current version, receipt, and audit anchor.
+        allow read, create, update, delete: if false;
+
+        match /versions/{versionId} {
+          allow read, create, update, delete: if false;
+        }
       }
 
       // GDPR: ROPA Entries
       match /ropa_entries/{ropaId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // GDPR: DPIA Assessments
       match /dpia_assessments/{dpiaId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // GDPR: TIA Assessments
       match /tia_assessments/{tiaId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // GDPR: Personal Data Breaches
       match /breaches/{breachId} {
         allow read: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'security_manager', 'compliance_manager', 'auditor']);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'security_manager', 'compliance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'security_manager', 'compliance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // GDPR: DSR Requests
       match /dsr_requests/{dsrId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'privacy_manager', 'compliance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // EU AI Act: AI Systems Register
       match /ai_systems/{systemId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        // Direct client updates cannot arbitrarily alter riskTier (handled by classifyAISystem)
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId)
-                      && request.resource.data.riskTier == resource.data.riskTier;
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
 
         match /substantial_changes/{changeId} {
           allow read: if isTenantMember(tenantId);
-          allow create: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager']);
-          allow update, delete: if false;
+          allow create, update, delete: if false;
         }
 
         match /post_market_logs/{logId} {
           allow read: if isTenantMember(tenantId);
-          allow create: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager']);
-          allow update: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager']);
-          allow delete: if isTenantAdmin(tenantId);
+          allow create, update, delete: if false;
         }
       }
 
       // EU AI Act: AI Assessments (Risk, Impact, FRIA)
       match /ai_assessments/{assessmentId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // EU AI Act: AI Incidents
       match /ai_incidents/{incidentId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'ai_governance_manager', 'compliance_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // EU Data Act: Data Assets & Governance
       match /data_act_assets/{dataAssetId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // EU Data Act: Data Sharing Requests
       match /data_sharing_requests/{requestId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'privacy_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // EU Data Act: Switching Dependencies
       match /switching_dependencies/{dependencyId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // ISO 27001 & ISO 42001 Management Layer Collections
       match /iso_scope_statements/{scopeId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       match /iso_objectives/{objId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       match /iso_soa_entries/{soaId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       match /iso_internal_audits/{auditId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
 
         match /findings/{findingId} {
           allow read: if isTenantMember(tenantId);
-          allow create, update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager']);
-          allow delete: if isTenantAdmin(tenantId);
+          allow create, update, delete: if false;
         }
       }
 
       match /iso_management_reviews/{reviewId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'approver'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'ai_governance_manager', 'approver'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Materialized Summary Metrics
@@ -646,12 +494,7 @@ service cloud.firestore {
       // Notifications (In-App & Lifecycle Alerts)
       match /notifications/{notificationId} {
         allow read: if isTenantMember(tenantId) && resource.data.recipientId == request.auth.uid;
-        allow update: if isTenantMember(tenantId) &&
-                         resource.data.recipientId == request.auth.uid &&
-                         request.resource.data.recipientId == resource.data.recipientId &&
-                         request.resource.data.tenantId == resource.data.tenantId &&
-                         request.resource.data.type == resource.data.type;
-        allow create, delete: if false; // Generated and dispatched server-side by Cloud Functions
+        allow create, update, delete: if false;
       }
 
       // Export Jobs
@@ -660,100 +503,61 @@ service cloud.firestore {
           resource.data.requestedBy == request.auth.uid ||
           isTenantAdmin(tenantId)
         );
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId)
-                      && request.resource.data.requestedBy == request.auth.uid;
-        allow update, delete: if false; // Status transitions managed by backend
+        allow create, update, delete: if false;
       }
 
       // Framework Adoption & Scoping
       match /adopted_frameworks/{frameworkId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Requirement Applicability & Scoping Decisions
       match /requirement_applicability/{reqId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Tenant Scope Profiles
       match /scope_profiles/{profileId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Tenant Scope Facts
       match /scope_facts/{factId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager']);
+        allow create, update, delete: if false;
       }
 
       // Tenant Scope Answers
       match /scope_answers/{answerId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager']);
+        allow create, update, delete: if false;
       }
 
       // Tenant Applicability Decisions
       match /applicability_decisions/{decisionId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Tenant Requirement Instances
       match /requirement_instances/{instanceId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager', 'contributor'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Tenant Control Mappings
       match /control_mappings/{mappingId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
 
       // Tenant Statutory Obligation Flags
       match /statutory_obligations/{obligationId} {
         allow read: if isTenantMember(tenantId);
-        allow create: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedCreate(tenantId);
-        allow update: if hasAnyRole(tenantId, ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'])
-                      && validTenantScopedUpdate(tenantId);
-        allow delete: if isTenantAdmin(tenantId);
+        allow create, update, delete: if false;
       }
     }
 

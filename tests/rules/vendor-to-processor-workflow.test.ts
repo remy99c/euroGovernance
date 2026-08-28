@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -215,18 +214,17 @@ describe('Vendor-to-Managed-Processor Onboarding & Multi-Engagement Suite', () =
 
       expect(validateProcessorProfile(profilePayload).valid).toBe(true);
 
-      // Create the processor profile in Firestore
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_apm`).set(profilePayload));
-
-      // Mark the vendor as processor-active
-      await assertSucceeds(
-        privacyDb.doc(`tenants/${tenantA}/vendors/vnd_datadog_eu`).update({
+      // Authoritative workflow state is committed by the server command boundary.
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const serverDb = context.firestore();
+        await serverDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_apm`).set(profilePayload);
+        await serverDb.doc(`tenants/${tenantA}/vendors/vnd_datadog_eu`).update({
           hasProcessorProfile: true,
           activeProcessorProfileId: 'prof_datadog_apm',
           updatedAt: new Date().toISOString(),
           updatedBy: PERSONAS.privacyA.uid,
-        })
-      );
+        });
+      });
 
       // Verify vendor state updated
       const vendorSnap = await privacyDb.doc(`tenants/${tenantA}/vendors/vnd_datadog_eu`).get();
@@ -312,8 +310,11 @@ describe('Vendor-to-Managed-Processor Onboarding & Multi-Engagement Suite', () =
         ownerId: PERSONAS.privacyA.uid,
       };
 
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_infra`).set(engagement1));
-      await assertSucceeds(privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_rum`).set(engagement2));
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const serverDb = context.firestore();
+        await serverDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_infra`).set(engagement1);
+        await serverDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_rum`).set(engagement2);
+      });
 
       const snap1 = await privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_infra`).get();
       const snap2 = await privacyDb.doc(`tenants/${tenantA}/processor_profiles/prof_datadog_rum`).get();
@@ -331,13 +332,13 @@ describe('Vendor-to-Managed-Processor Onboarding & Multi-Engagement Suite', () =
   // 3. Authorization & RBAC Validation
   // ---------------------------------------------------------------------------
   describe('3. Authorization & Privacy Role Enforcement', () => {
-    test('Compliance Manager, Privacy Manager, Security Manager, and Tenant Admin can manage processor conversions', async () => {
+    test('processor conversions require server commands for all manager and admin browser personas', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const secDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
       const adminDb = testEnv.authenticatedContext(PERSONAS.adminA.uid).firestore();
 
       // Compliance manager writes
-      await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/processor_profiles/prof_comp_test`).set({
           id: 'prof_comp_test',
           tenantId: tenantA,
@@ -364,7 +365,7 @@ describe('Vendor-to-Managed-Processor Onboarding & Multi-Engagement Suite', () =
       );
 
       // Security manager updates
-      await assertSucceeds(
+      await assertFails(
         secDb.doc(`tenants/${tenantA}/processor_profiles/prof_comp_test`).update({
           criticality: 'medium',
           updatedAt: new Date().toISOString(),
@@ -373,7 +374,7 @@ describe('Vendor-to-Managed-Processor Onboarding & Multi-Engagement Suite', () =
       );
 
       // Admin deletes
-      await assertSucceeds(adminDb.doc(`tenants/${tenantA}/processor_profiles/prof_comp_test`).delete());
+      await assertFails(adminDb.doc(`tenants/${tenantA}/processor_profiles/prof_comp_test`).delete());
     });
 
     test('Unauthorized roles (Contributor, Auditor, Viewer, Cross-Tenant) cannot create or update processor profiles', async () => {

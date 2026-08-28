@@ -10,6 +10,13 @@ out/
 /lib/
 *.tsbuildinfo
 
+# The Firebase Functions upload is self-contained. Its checked-in local package
+# must remain available in a clean checkout even though other dist trees are generated.
+!functions/vendor/
+!functions/vendor/shared-types/
+!functions/vendor/shared-types/dist/
+!functions/vendor/shared-types/dist/**
+
 # Firebase
 .firebase/
 firebase-debug.log*

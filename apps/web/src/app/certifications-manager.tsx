@@ -14,44 +14,63 @@ import {
   SystemAsset,
   Vendor,
 } from '@eurogovernance/shared-types';
-import { db, functions } from '../lib/firebase';
-import { collection, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { functions } from '../lib/firebase';
 import { httpsCallable } from 'firebase/functions';
+import {
+  clearRetryableTenantCommand,
+  retryableTenantCommand,
+  RetryableTenantCommandReference,
+} from '../lib/commands';
 import { UIPageHeader } from './components/ui-page-header';
 import { UIStatCard } from './components/ui-stat-card';
 import { UIBadge } from './components/ui-badge';
+
+const CERTIFICATION_COMMAND_VERSION = 1;
+
+type CertificationAssuranceStatus =
+  | CertificationStatus
+  | 'legacy_unverified'
+  | 'invalid_recorded_status';
+
+interface CertificationProjection extends Certification {
+  recordedStatus?: CertificationStatus | 'invalid_recorded_status';
+  assuranceStatus?: CertificationAssuranceStatus;
+  currentArtifactVerified?: boolean;
+}
 
 interface CertificationsManagerProps {
   tenantId: string;
   userRole: string;
   userId: string;
-  certifications: Certification[];
+  certifications: CertificationProjection[];
   evidenceList: Evidence[];
   controlsList: Control[];
   systemsList?: SystemAsset[];
   vendorsList?: Vendor[];
+  onChanged: () => void;
 }
 
 export function CertificationsManager({
   tenantId,
   userRole,
-  userId,
   certifications,
   evidenceList,
   controlsList,
   systemsList = [],
   vendorsList = [],
+  onChanged,
 }: CertificationsManagerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('ALL');
-  const [selectedCert, setSelectedCert] = useState<Certification | null>(null);
+  const [selectedCert, setSelectedCert] = useState<CertificationProjection | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [isLinkingEvidence, setIsLinkingEvidence] = useState(false);
-  const [selectedEvidenceIdToLink, setSelectedEvidenceIdToLink] = useState('');
+  const [statusRationale, setStatusRationale] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [pendingEditorCommand, setPendingEditorCommand] =
+    useState<RetryableTenantCommandReference | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<Certification>>({
@@ -67,22 +86,36 @@ export function CertificationsManager({
     surveillanceAuditDueDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     leadAuditorName: '',
     leadAuditorContact: '',
-    frameworkIds: ['iso_27001'],
+    frameworkIds: [],
     linkedControlIds: [],
     linkedEvidenceIds: [],
     linkedVendorIds: [],
     linkedProcessorProfileIds: [],
     linkedSystemAssetIds: [],
-    continuousComplianceStatus: 'compliant',
+    continuousComplianceStatus: 'not_assessed',
     unresolvedFindingsCount: 0,
     notes: '',
   });
 
   const canMutate = ['tenant_admin', 'compliance_manager', 'security_manager', 'privacy_manager', 'ai_governance_manager'].includes(userRole);
+  const canArchive = ['tenant_admin', 'compliance_manager'].includes(userRole);
 
   // Evaluate Risk Summary across all certifications
   const riskSummary = useMemo(() => {
-    return evaluateCertificationRiskFlags(certifications, evidenceList);
+    const base = evaluateCertificationRiskFlags(certifications, evidenceList);
+    const invalidCurrentArtifactCount = certifications.filter(
+      (certification) => certification.currentArtifactVerified !== true
+    ).length;
+    return {
+      ...base,
+      invalidCurrentArtifactCount,
+      overallAssuranceRiskLevel:
+        invalidCurrentArtifactCount > 0 &&
+        (base.overallAssuranceRiskLevel === 'low' ||
+          base.overallAssuranceRiskLevel === 'medium')
+          ? 'high'
+          : base.overallAssuranceRiskLevel,
+    };
   }, [certifications, evidenceList]);
 
   // Filtered Certifications
@@ -102,6 +135,8 @@ export function CertificationsManager({
   }, [certifications, selectedTypeFilter, selectedStatusFilter, searchQuery]);
 
   const handleOpenCreate = () => {
+    setSelectedCert(null);
+    setStatusRationale('');
     setFormData({
       certificationName: '',
       certificationType: 'iso_27001',
@@ -115,13 +150,13 @@ export function CertificationsManager({
       surveillanceAuditDueDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       leadAuditorName: '',
       leadAuditorContact: '',
-      frameworkIds: ['iso_27001'],
+      frameworkIds: [],
       linkedControlIds: [],
       linkedEvidenceIds: [],
       linkedVendorIds: [],
       linkedProcessorProfileIds: [],
       linkedSystemAssetIds: [],
-      continuousComplianceStatus: 'compliant',
+      continuousComplianceStatus: 'not_assessed',
       unresolvedFindingsCount: 0,
       notes: '',
     });
@@ -129,9 +164,14 @@ export function CertificationsManager({
   };
 
   const handleOpenEdit = (cert: Certification) => {
+    setStatusRationale('');
     setSelectedCert(cert);
     setFormData({
       ...cert,
+      continuousComplianceStatus:
+        cert.continuousComplianceStatus === 'compliant'
+          ? 'not_assessed'
+          : cert.continuousComplianceStatus,
       issueDate: cert.issueDate.split('T')[0],
       expiryDate: cert.expiryDate.split('T')[0],
       surveillanceAuditDueDate: cert.surveillanceAuditDueDate ? cert.surveillanceAuditDueDate.split('T')[0] : '',
@@ -141,78 +181,122 @@ export function CertificationsManager({
 
   const handleSaveCertification = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.certificationName || !formData.certificateNumber || !formData.issuingBody) {
+    if (
+      !formData.certificationName ||
+      !formData.certificateNumber ||
+      !formData.issuingBody ||
+      !formData.issueDate ||
+      !formData.expiryDate ||
+      !formData.applicableStandardVersion
+    ) {
       alert('Please fill in all mandatory fields.');
+      return;
+    }
+    const statusChanges = Boolean(
+      selectedCert && formData.status && selectedCert.status !== formData.status
+    );
+    if (
+      (statusChanges || ['under_audit', 'suspended', 'revoked'].includes(formData.status || '')) &&
+      statusRationale.trim().length < 10
+    ) {
+      alert('Provide a status rationale of at least 10 characters.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const now = new Date().toISOString();
+      const certificationPayload = {
+        certificationName: formData.certificationName.trim(),
+        certificationType: (formData.certificationType as CertificationType) || 'iso_27001',
+        issuingBody: formData.issuingBody.trim(),
+        certificateNumber: formData.certificateNumber.trim(),
+        scopeDescription: formData.scopeDescription?.trim() || '',
+        scopeDetails: formData.scopeDetails || {
+          sites: [],
+          products: [],
+          cloudEnvironments: [],
+          organizationalUnits: [],
+        },
+        applicableStandardVersion: formData.applicableStandardVersion?.trim() || '2022',
+        issueDate: new Date(formData.issueDate!).toISOString(),
+        expiryDate: new Date(formData.expiryDate!).toISOString(),
+        status: (formData.status as CertificationStatus) || 'active_valid',
+        statusRationale: statusRationale.trim() || null,
+        surveillanceAuditDueDate: formData.surveillanceAuditDueDate
+          ? new Date(formData.surveillanceAuditDueDate).toISOString()
+          : null,
+        leadAuditorName: formData.leadAuditorName?.trim() || null,
+        leadAuditorContact: formData.leadAuditorContact?.trim() || null,
+        frameworkIds: formData.frameworkIds || [],
+        linkedControlIds: formData.linkedControlIds || [],
+        linkedEvidenceIds: formData.linkedEvidenceIds || [],
+        linkedVendorIds: formData.linkedVendorIds || [],
+        linkedProcessorProfileIds: formData.linkedProcessorProfileIds || [],
+        linkedSystemAssetIds: formData.linkedSystemAssetIds || [],
+        continuousComplianceStatus:
+          (formData.continuousComplianceStatus as ContinuousComplianceStatus) || 'not_assessed',
+        unresolvedFindingsCount: Number(formData.unresolvedFindingsCount || 0),
+        notes: formData.notes?.trim() || null,
+      };
+
       if (isCreating) {
-        const newRef = doc(collection(db, 'tenants', tenantId, 'certifications'));
-        const newRecord: Certification = {
-          id: newRef.id,
+        const createCertification = httpsCallable(functions, 'createTenantCertification');
+        const action = 'certification.create';
+        const command = await retryableTenantCommand({
+          commandVersion: CERTIFICATION_COMMAND_VERSION,
           tenantId,
-          certificationName: formData.certificationName.trim(),
-          certificationType: (formData.certificationType as CertificationType) || 'iso_27001',
-          issuingBody: formData.issuingBody.trim(),
-          certificateNumber: formData.certificateNumber.trim(),
-          scopeDescription: formData.scopeDescription?.trim() || '',
-          applicableStandardVersion: formData.applicableStandardVersion?.trim() || '2022',
-          issueDate: new Date(formData.issueDate!).toISOString(),
-          expiryDate: new Date(formData.expiryDate!).toISOString(),
-          status: (formData.status as CertificationStatus) || 'active_valid',
-          surveillanceAuditDueDate: formData.surveillanceAuditDueDate ? new Date(formData.surveillanceAuditDueDate).toISOString() : null,
-          leadAuditorName: formData.leadAuditorName?.trim() || null,
-          leadAuditorContact: formData.leadAuditorContact?.trim() || null,
-          frameworkIds: formData.frameworkIds || [],
-          linkedControlIds: formData.linkedControlIds || [],
-          linkedEvidenceIds: formData.linkedEvidenceIds || [],
-          linkedVendorIds: formData.linkedVendorIds || [],
-          linkedProcessorProfileIds: formData.linkedProcessorProfileIds || [],
-          linkedSystemAssetIds: formData.linkedSystemAssetIds || [],
-          continuousComplianceStatus: (formData.continuousComplianceStatus as ContinuousComplianceStatus) || 'compliant',
-          unresolvedFindingsCount: Number(formData.unresolvedFindingsCount || 0),
-          notes: formData.notes?.trim() || null,
-          ownerId: userId,
-          createdBy: userId,
-          updatedBy: userId,
-          createdAt: now,
-          updatedAt: now,
+          action,
+          payload: certificationPayload,
+          expectedRevision: null,
+        });
+        const commandReference = {
+          commandVersion: CERTIFICATION_COMMAND_VERSION,
+          tenantId,
+          action,
+          commandId: command.commandId,
         };
-        await setDoc(newRef, newRecord);
+        if (
+          pendingEditorCommand &&
+          pendingEditorCommand.commandId !== commandReference.commandId
+        ) {
+          await clearRetryableTenantCommand(pendingEditorCommand);
+        }
+        setPendingEditorCommand(commandReference);
+        await createCertification(command);
+        await clearRetryableTenantCommand(commandReference);
+        setPendingEditorCommand(null);
         setIsCreating(false);
+        onChanged();
       } else if (isEditing && selectedCert) {
-        const certRef = doc(db, 'tenants', tenantId, 'certifications', selectedCert.id);
-        const updates: Partial<Certification> = {
-          certificationName: formData.certificationName.trim(),
-          certificationType: (formData.certificationType as CertificationType) || 'iso_27001',
-          issuingBody: formData.issuingBody.trim(),
-          certificateNumber: formData.certificateNumber.trim(),
-          scopeDescription: formData.scopeDescription?.trim() || '',
-          applicableStandardVersion: formData.applicableStandardVersion?.trim() || '2022',
-          issueDate: new Date(formData.issueDate!).toISOString(),
-          expiryDate: new Date(formData.expiryDate!).toISOString(),
-          status: (formData.status as CertificationStatus) || 'active_valid',
-          surveillanceAuditDueDate: formData.surveillanceAuditDueDate ? new Date(formData.surveillanceAuditDueDate).toISOString() : null,
-          leadAuditorName: formData.leadAuditorName?.trim() || null,
-          leadAuditorContact: formData.leadAuditorContact?.trim() || null,
-          frameworkIds: formData.frameworkIds || [],
-          linkedControlIds: formData.linkedControlIds || [],
-          linkedEvidenceIds: formData.linkedEvidenceIds || [],
-          linkedVendorIds: formData.linkedVendorIds || [],
-          linkedProcessorProfileIds: formData.linkedProcessorProfileIds || [],
-          linkedSystemAssetIds: formData.linkedSystemAssetIds || [],
-          continuousComplianceStatus: (formData.continuousComplianceStatus as ContinuousComplianceStatus) || 'compliant',
-          unresolvedFindingsCount: Number(formData.unresolvedFindingsCount || 0),
-          notes: formData.notes?.trim() || null,
-          updatedBy: userId,
-          updatedAt: now,
+        const updateCertification = httpsCallable(functions, 'updateTenantCertification');
+        const action = 'certification.update';
+        const command = await retryableTenantCommand({
+          commandVersion: CERTIFICATION_COMMAND_VERSION,
+          tenantId,
+          action,
+          logicalKey: selectedCert.id,
+          payload: { certificationId: selectedCert.id, ...certificationPayload },
+          expectedRevision: selectedCert.revision ?? 0,
+        });
+        const commandReference = {
+          commandVersion: CERTIFICATION_COMMAND_VERSION,
+          tenantId,
+          action,
+          commandId: command.commandId,
         };
-        await updateDoc(certRef, updates);
+        if (
+          pendingEditorCommand &&
+          pendingEditorCommand.commandId !== commandReference.commandId
+        ) {
+          await clearRetryableTenantCommand(pendingEditorCommand);
+        }
+        setPendingEditorCommand(commandReference);
+        await updateCertification(command);
+        await clearRetryableTenantCommand(commandReference);
+        setPendingEditorCommand(null);
         setIsEditing(false);
         setSelectedCert(null);
+        onChanged();
       }
     } catch (err: any) {
       alert(`Error saving certification: ${err.message}`);
@@ -221,33 +305,38 @@ export function CertificationsManager({
     }
   };
 
-  const handleDeleteCertification = async (certId: string) => {
-    if (!confirm('Are you sure you want to permanently delete this certification record?')) return;
+  const handleDeleteCertification = async (certification: Certification) => {
+    if (!confirm('Archive this certification record? Its history will remain available for audit.')) return;
+    const archiveReason = prompt('Enter the reason for archiving this certification:')?.trim() || '';
+    if (archiveReason.length < 10) {
+      alert('An archive reason of at least 10 characters is required.');
+      return;
+    }
     try {
-      await deleteDoc(doc(db, 'tenants', tenantId, 'certifications', certId));
-      if (selectedCert?.id === certId) setSelectedCert(null);
+      const archiveCertification = httpsCallable(functions, 'deleteTenantCertification');
+      const action = 'certification.archive';
+      const command = await retryableTenantCommand({
+        commandVersion: CERTIFICATION_COMMAND_VERSION,
+        tenantId,
+        action,
+        logicalKey: certification.id,
+        payload: {
+          certificationId: certification.id,
+          archiveReason,
+        },
+        expectedRevision: certification.revision ?? 0,
+      });
+      await archiveCertification(command);
+      await clearRetryableTenantCommand({
+        commandVersion: CERTIFICATION_COMMAND_VERSION,
+        tenantId,
+        action,
+        commandId: command.commandId,
+      });
+      onChanged();
+      if (selectedCert?.id === certification.id) setSelectedCert(null);
     } catch (err: any) {
       alert(`Error deleting certification: ${err.message}`);
-    }
-  };
-
-  const handleLinkEvidenceSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCert || !selectedEvidenceIdToLink) return;
-    setIsSubmitting(true);
-    try {
-      const linkFn = httpsCallable(functions, 'linkEvidenceToCertification');
-      await linkFn({
-        tenantId,
-        certificationId: selectedCert.id,
-        evidenceId: selectedEvidenceIdToLink,
-      });
-      setIsLinkingEvidence(false);
-      setSelectedEvidenceIdToLink('');
-    } catch (err: any) {
-      alert(`Error linking evidence: ${err.message}`);
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -259,13 +348,44 @@ export function CertificationsManager({
         tenantId,
         exportType: 'certification_register_report',
       });
-      setExportNotice(`Export queued successfully (Job ID: ${res.data?.jobId || 'submitted'}). Check Notifications when ready.`);
+      setExportNotice(
+        `JSON draft queued (Job ID: ${res.data?.jobId || 'submitted'}). Browser download remains unavailable until authorized download sessions are implemented.`
+      );
       setTimeout(() => setExportNotice(null), 6000);
     } catch (err: any) {
       setExportNotice(`Export failed: ${err.message}`);
       setTimeout(() => setExportNotice(null), 6000);
     }
   };
+
+  const nowMillis = Date.now();
+  const dateCurrentCount = certifications.filter((certification) => {
+    const issueMillis = Date.parse(certification.issueDate);
+    const expiryMillis = Date.parse(certification.expiryDate);
+    return (
+      Number.isFinite(issueMillis) &&
+      Number.isFinite(expiryMillis) &&
+      issueMillis <= nowMillis &&
+      expiryMillis > nowMillis
+    );
+  }).length;
+  const verifiedAssuranceCount = certifications.filter((certification) => {
+    const completeness = evaluateCertificationCompleteness(
+      certification,
+      evidenceList
+    );
+    return (
+      certification.currentArtifactVerified === true &&
+      certification.assuranceStatus !== 'legacy_unverified' &&
+      certification.assuranceStatus !== 'invalid_recorded_status' &&
+      certification.assuranceStatus !== 'archived' &&
+      certification.assuranceStatus !== 'expired' &&
+      certification.assuranceStatus !== 'suspended' &&
+      certification.assuranceStatus !== 'revoked' &&
+      completeness.isComplete &&
+      completeness.hasValidCertificateDocument
+    );
+  }).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', color: 'var(--text-primary)' }}>
@@ -291,10 +411,7 @@ export function CertificationsManager({
             ? {
                 label: '+ Register Certification',
                 icon: '📜',
-                onClick: () => {
-                  setSelectedCert(null);
-                  setIsCreating(true);
-                },
+                onClick: handleOpenCreate,
                 variant: 'primary',
               }
             : undefined
@@ -320,16 +437,16 @@ export function CertificationsManager({
         <UIStatCard
           label="Total Certifications"
           value={certifications.length}
-          subtext="Accredited standards & audit reports"
+          subtext="Recorded certificates and assurance reports"
           valueColor="var(--accent-primary)"
         />
 
         <UIStatCard
-          label="Active Valid"
-          value={certifications.filter((c) => c.status === 'active_valid').length}
-          subtext="In good standing & compliant"
-          valueColor="var(--status-compliant-fg)"
-          progressPercentage={certifications.length > 0 ? (certifications.filter((c) => c.status === 'active_valid').length / certifications.length) * 100 : 0}
+          label="Verified Assurance"
+          value={verifiedAssuranceCount}
+          subtext={`${dateCurrentCount} date-current record(s); chain and evidence required`}
+          valueColor={verifiedAssuranceCount > 0 ? 'var(--status-compliant-fg)' : 'var(--status-warning-fg)'}
+          progressPercentage={certifications.length > 0 ? (verifiedAssuranceCount / certifications.length) * 100 : 0}
         />
 
         <UIStatCard
@@ -341,9 +458,9 @@ export function CertificationsManager({
 
         <UIStatCard
           label="Governance Flags"
-          value={riskSummary.flags.length}
-          subtext="Audit non-conformities & gaps"
-          valueColor={riskSummary.flags.length > 0 ? 'var(--status-warning-fg)' : 'var(--text-muted)'}
+          value={riskSummary.flags.length + riskSummary.invalidCurrentArtifactCount}
+          subtext={`${riskSummary.invalidCurrentArtifactCount} record-chain exception(s)`}
+          valueColor={riskSummary.flags.length + riskSummary.invalidCurrentArtifactCount > 0 ? 'var(--status-warning-fg)' : 'var(--text-muted)'}
         />
       </div>
 
@@ -414,11 +531,13 @@ export function CertificationsManager({
             }}
           >
             <option value="ALL">All Lifecycle Statuses</option>
-            <option value="active_valid">Active Valid</option>
+            <option value="active_valid">Date-Current Record</option>
             <option value="expiring_soon">Expiring Soon</option>
             <option value="expired">Expired</option>
             <option value="under_audit">Under Audit</option>
             <option value="suspended">Suspended</option>
+            <option value="revoked">Revoked</option>
+            <option value="archived">Archived</option>
           </select>
         </div>
 
@@ -484,6 +603,10 @@ export function CertificationsManager({
                 const completeness = evaluateCertificationCompleteness(cert, evidenceList);
                 const isExp = completeness.isExpired;
                 const isSoon = completeness.isExpiringSoon;
+                const assuranceStatus = cert.assuranceStatus ?? 'legacy_unverified';
+                const assuranceVerified =
+                  cert.currentArtifactVerified === true &&
+                  completeness.hasValidCertificateDocument;
 
                 return (
                   <tr
@@ -522,11 +645,19 @@ export function CertificationsManager({
                     </td>
 
                     <td style={{ padding: '1rem' }}>
-                      <div style={{ color: isExp ? '#ef4444' : isSoon ? '#f59e0b' : '#10b981', fontWeight: 600 }}>
+                      <div style={{ color: assuranceStatus === 'legacy_unverified' || assuranceStatus === 'invalid_recorded_status' ? '#f59e0b' : cert.status === 'archived' || isExp ? '#94a3b8' : isSoon ? '#f59e0b' : '#10b981', fontWeight: 600 }}>
                         {new Date(cert.expiryDate).toLocaleDateString()}
                       </div>
                       <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.25rem' }}>
-                        {isExp ? '❌ Expired' : isSoon ? `⚠️ ${completeness.daysUntilExpiry}d remaining` : '✅ Active'}
+                        {assuranceStatus === 'legacy_unverified' || assuranceStatus === 'invalid_recorded_status'
+                          ? `Recorded ${cert.recordedStatus ?? cert.status}; immutable chain unverified`
+                          : cert.status === 'archived'
+                          ? 'Archived record'
+                          : isExp
+                            ? 'Expired'
+                            : isSoon
+                              ? `${completeness.daysUntilExpiry}d remaining`
+                              : cert.status.replace(/_/g, ' ')}
                       </div>
                     </td>
 
@@ -538,20 +669,18 @@ export function CertificationsManager({
                           fontSize: '0.75rem',
                           fontWeight: 600,
                           background:
-                            cert.continuousComplianceStatus === 'compliant'
-                              ? 'rgba(34, 197, 94, 0.15)'
-                              : cert.continuousComplianceStatus === 'major_non_conformity'
+                            cert.continuousComplianceStatus === 'major_non_conformity'
                               ? 'rgba(239, 68, 68, 0.15)'
                               : 'rgba(245, 158, 11, 0.15)',
                           color:
-                            cert.continuousComplianceStatus === 'compliant'
-                              ? '#22c55e'
-                              : cert.continuousComplianceStatus === 'major_non_conformity'
+                            cert.continuousComplianceStatus === 'major_non_conformity'
                               ? '#ef4444'
                               : '#f59e0b',
                         }}
                       >
-                        {cert.continuousComplianceStatus.replace(/_/g, ' ').toUpperCase()}
+                        {cert.continuousComplianceStatus === 'compliant'
+                          ? 'COMPLIANT (LEGACY / UNVERIFIED)'
+                          : cert.continuousComplianceStatus.replace(/_/g, ' ').toUpperCase()}
                       </span>
                       {cert.surveillanceAuditDueDate && (
                         <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.35rem' }}>
@@ -561,13 +690,15 @@ export function CertificationsManager({
                     </td>
 
                     <td style={{ padding: '1rem' }}>
-                      {completeness.hasValidCertificateDocument ? (
-                        <span style={{ color: '#4ade80', fontSize: '0.85rem' }}>
-                          📄 {cert.linkedEvidenceIds.length} Verified Document(s)
+                      {cert.linkedEvidenceIds.length > 0 ? (
+                        <span style={{ color: assuranceVerified ? '#10b981' : '#f59e0b', fontSize: '0.85rem' }}>
+                          {assuranceVerified
+                            ? `${cert.linkedEvidenceIds.length} linked record(s); record chain and evidence verified`
+                            : `${cert.linkedEvidenceIds.length} linked record(s); assurance unverified`}
                         </span>
                       ) : (
                         <span style={{ color: '#f87171', fontSize: '0.85rem', fontWeight: 600 }}>
-                          ⚠️ No PDF Attached
+                          No evidence record linked
                         </span>
                       )}
                     </td>
@@ -588,7 +719,7 @@ export function CertificationsManager({
                         >
                           🔍 Inspect
                         </button>
-                        {canMutate && (
+                        {canMutate && cert.status !== 'archived' && (
                           <>
                             <button
                               onClick={() => handleOpenEdit(cert)}
@@ -604,20 +735,22 @@ export function CertificationsManager({
                             >
                               Edit
                             </button>
-                            <button
-                              onClick={() => handleDeleteCertification(cert.id)}
-                              style={{
-                                background: 'rgba(239, 68, 68, 0.2)',
-                                color: '#ef4444',
-                                border: '1px solid #ef4444',
-                                padding: '0.35rem 0.6rem',
-                                borderRadius: '0.25rem',
-                                fontSize: '0.8rem',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              Delete
-                            </button>
+                            {canArchive && (
+                              <button
+                                onClick={() => handleDeleteCertification(cert)}
+                                style={{
+                                  background: 'rgba(239, 68, 68, 0.2)',
+                                  color: '#ef4444',
+                                  border: '1px solid #ef4444',
+                                  padding: '0.35rem 0.6rem',
+                                  borderRadius: '0.25rem',
+                                  fontSize: '0.8rem',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Archive
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
@@ -678,20 +811,27 @@ export function CertificationsManager({
             {/* Completeness & Gaps Warning */}
             {(() => {
               const diag = evaluateCertificationCompleteness(selectedCert, evidenceList);
+              const assuranceComplete =
+                diag.isComplete && selectedCert.currentArtifactVerified === true;
               return (
                 <div
                   style={{
-                    background: diag.isComplete ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                    border: `1px solid ${diag.isComplete ? '#22c55e' : '#ef4444'}`,
+                    background: assuranceComplete ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    border: `1px solid ${assuranceComplete ? '#22c55e' : '#ef4444'}`,
                     padding: '1rem',
                     borderRadius: '0.375rem',
                   }}
                 >
-                  <div style={{ fontWeight: 600, color: diag.isComplete ? '#4ade80' : '#f87171' }}>
-                    {diag.isComplete
-                      ? '✅ Certification Assurance Fully Validated (No Compliance Gaps)'
-                      : `⚠️ ${diag.gaps.length} Assurance Gap(s) Identified`}
+                  <div style={{ fontWeight: 600, color: assuranceComplete ? '#4ade80' : '#f87171' }}>
+                    {assuranceComplete
+                      ? 'Current record chain and linked evidence object checks passed; issuer authenticity is not independently validated'
+                      : `⚠️ ${diag.gaps.length + (selectedCert.currentArtifactVerified === true ? 0 : 1)} Assurance Gap(s) Identified`}
                   </div>
+                  {selectedCert.currentArtifactVerified !== true && (
+                    <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#cbd5e1' }}>
+                      <strong>CERTIFICATION_RECORD_CHAIN_UNVERIFIED</strong>: The mutable record does not match a valid current version, command receipt, and audit anchor.
+                    </div>
+                  )}
                   {diag.gaps.length > 0 && (
                     <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', fontSize: '0.85rem', color: '#cbd5e1' }}>
                       {diag.gaps.map((g, idx) => (
@@ -735,8 +875,12 @@ export function CertificationsManager({
                 </div>
               </div>
               <div>
-                <strong style={{ color: '#94a3b8' }}>Continuous Compliance:</strong>
-                <div style={{ marginTop: '0.25rem' }}>{selectedCert.continuousComplianceStatus.toUpperCase()}</div>
+                <strong style={{ color: '#94a3b8' }}>Recorded Finding Posture:</strong>
+                <div style={{ marginTop: '0.25rem' }}>
+                  {selectedCert.continuousComplianceStatus === 'compliant'
+                    ? 'COMPLIANT (LEGACY / UNVERIFIED)'
+                    : selectedCert.continuousComplianceStatus.replace(/_/g, ' ').toUpperCase()}
+                </div>
               </div>
             </div>
 
@@ -794,18 +938,19 @@ export function CertificationsManager({
                 </strong>
                 {canMutate && (
                   <button
-                    onClick={() => setIsLinkingEvidence(true)}
+                    disabled
+                    title="Available after server-verified evidence upload and download sessions are enabled."
                     style={{
                       background: '#334155',
-                      color: '#38bdf8',
-                      border: '1px solid #38bdf8',
+                      color: '#94a3b8',
+                      border: '1px solid #64748b',
                       padding: '0.2rem 0.5rem',
                       borderRadius: '0.25rem',
                       fontSize: '0.75rem',
-                      cursor: 'pointer',
+                      cursor: 'not-allowed',
                     }}
                   >
-                    📎 Link Evidence File
+                    Evidence linking unavailable
                   </button>
                 )}
               </div>
@@ -1116,7 +1261,9 @@ export function CertificationsManager({
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               <div>
-                <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Lifecycle Status</label>
+                <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                  Requested Lifecycle State
+                </label>
                 <select
                   value={formData.status || 'active_valid'}
                   onChange={(e) => setFormData({ ...formData, status: e.target.value as CertificationStatus })}
@@ -1130,7 +1277,7 @@ export function CertificationsManager({
                     marginTop: '0.2rem',
                   }}
                 >
-                  <option value="active_valid">Active Valid</option>
+                  <option value="active_valid">Date-Current Record</option>
                   <option value="expiring_soon">Expiring Soon</option>
                   <option value="expired">Expired</option>
                   <option value="under_audit">Under Audit</option>
@@ -1140,9 +1287,11 @@ export function CertificationsManager({
               </div>
 
               <div>
-                <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Continuous Compliance Status</label>
+                <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                  Recorded Finding Posture (not assurance)
+                </label>
                 <select
-                  value={formData.continuousComplianceStatus || 'compliant'}
+                  value={formData.continuousComplianceStatus || 'not_assessed'}
                   onChange={(e) =>
                     setFormData({ ...formData, continuousComplianceStatus: e.target.value as ContinuousComplianceStatus })
                   }
@@ -1156,7 +1305,7 @@ export function CertificationsManager({
                     marginTop: '0.2rem',
                   }}
                 >
-                  <option value="compliant">Compliant</option>
+                  <option value="not_assessed">Not Assessed</option>
                   <option value="minor_non_conformity">Minor Non-Conformity</option>
                   <option value="major_non_conformity">Major Non-Conformity</option>
                   <option value="opportunity_for_improvement">Opportunity for Improvement</option>
@@ -1164,10 +1313,41 @@ export function CertificationsManager({
               </div>
             </div>
 
+            <div>
+              <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                Status Rationale{' '}
+                {(selectedCert && selectedCert.status !== formData.status) ||
+                ['under_audit', 'suspended', 'revoked'].includes(formData.status || '')
+                  ? '(required)'
+                  : '(if changed)'}
+              </label>
+              <textarea
+                value={statusRationale}
+                maxLength={2000}
+                onChange={(event) => setStatusRationale(event.target.value)}
+                placeholder="Explain an under-audit, suspended, revoked, or other status change. Date-based active/expiring/expired states are recalculated by the server."
+                style={{
+                  width: '100%',
+                  minHeight: '4.5rem',
+                  padding: '0.5rem',
+                  background: '#0f172a',
+                  border: '1px solid #334155',
+                  borderRadius: '0.375rem',
+                  color: '#fff',
+                  marginTop: '0.2rem',
+                  resize: 'vertical',
+                }}
+              />
+            </div>
+
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
               <button
                 type="button"
                 onClick={() => {
+                  if (pendingEditorCommand) {
+                    void clearRetryableTenantCommand(pendingEditorCommand);
+                    setPendingEditorCommand(null);
+                  }
                   setIsCreating(false);
                   setIsEditing(false);
                 }}
@@ -1205,102 +1385,6 @@ export function CertificationsManager({
         </div>
       )}
 
-      {/* Modal 3: Link Evidence File */}
-      {isLinkingEvidence && selectedCert && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 120,
-            padding: '1rem',
-          }}
-        >
-          <form
-            onSubmit={handleLinkEvidenceSubmit}
-            style={{
-              background: '#1e293b',
-              border: '1px solid #334155',
-              borderRadius: '0.5rem',
-              width: '100%',
-              maxWidth: '550px',
-              padding: '1.5rem',
-              color: '#f8fafc',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '1rem',
-            }}
-          >
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>
-              Link Evidence to {selectedCert.certificationName}
-            </h3>
-
-            <div>
-              <label style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
-                Select Evidence Document from Repository:
-              </label>
-              <select
-                required
-                value={selectedEvidenceIdToLink}
-                onChange={(e) => setSelectedEvidenceIdToLink(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  background: '#0f172a',
-                  border: '1px solid #334155',
-                  borderRadius: '0.375rem',
-                  color: '#fff',
-                  marginTop: '0.35rem',
-                }}
-              >
-                <option value="">-- Choose Evidence File --</option>
-                {evidenceList.map((ev) => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.title} ({ev.category} · {ev.status})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-              <button
-                type="button"
-                onClick={() => setIsLinkingEvidence(false)}
-                style={{
-                  background: '#334155',
-                  color: '#f8fafc',
-                  border: 'none',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  fontSize: '0.9rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting || !selectedEvidenceIdToLink}
-                style={{
-                  background: '#2563eb',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.375rem',
-                  fontSize: '0.9rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                {isSubmitting ? 'Linking...' : 'Confirm Link'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 }

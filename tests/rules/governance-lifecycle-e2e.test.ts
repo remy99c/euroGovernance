@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -120,7 +119,7 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
   // 1. Platform Admin Maintains Master Frameworks
   // ---------------------------------------------------------------------------
   describe('1. Master Framework & Library Governance', () => {
-    test('platform admin can create and update global master frameworks; regular tenants cannot', async () => {
+    test('browser clients cannot mutate global master frameworks, including platform admins', async () => {
       const platformAdminDb = testEnv
         .authenticatedContext('platform_sys_admin', { platform_admin: true })
         .firestore();
@@ -128,8 +127,8 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
         .authenticatedContext(PERSONAS.adminA.uid, { email: PERSONAS.adminA.email })
         .firestore();
 
-      // Platform Admin creates master framework
-      await assertSucceeds(
+      // Platform-admin browser writes are rejected; the master-data command is server-only.
+      await assertFails(
         platformAdminDb.doc('frameworks/eu_ai_act').set({
           id: 'eu_ai_act',
           name: 'EU Artificial Intelligence Act',
@@ -158,12 +157,12 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
   // 2. Tenant Admin Adopts Framework
   // ---------------------------------------------------------------------------
   describe('2. Framework Adoption Lifecycle', () => {
-    test('tenant admin adopts framework; contributor cannot adopt', async () => {
+    test('browser clients cannot write authoritative framework-adoption records directly', async () => {
       const adminDb = testEnv.authenticatedContext(PERSONAS.adminA.uid).firestore();
       const contribDb = testEnv.authenticatedContext(PERSONAS.contributorA.uid).firestore();
 
-      // Tenant Admin adopts GDPR
-      await assertSucceeds(
+      // Tenant-admin browser writes must go through the framework-adoption command.
+      await assertFails(
         adminDb.doc(`tenants/${tenantA}/adopted_frameworks/gdpr`).set({
           id: 'gdpr',
           tenantId: tenantA,
@@ -201,11 +200,11 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
   // 3. Tenant Completes Scope Questionnaire & Facts
   // ---------------------------------------------------------------------------
   describe('3. Scope Questionnaire Completion & Fact Capture', () => {
-    test('contributor records questionnaire answer and derives structured scope fact', async () => {
+    test('browser clients cannot directly persist scope answers or derived facts', async () => {
       const contribDb = testEnv.authenticatedContext(PERSONAS.contributorA.uid).firestore();
 
-      // 1. Submit Questionnaire Answer
-      await assertSucceeds(
+      // 1. Scope-answer submission must use the trusted command boundary.
+      await assertFails(
         contribDb.doc(`tenants/${tenantA}/scope_answers/ans_personal_data`).set({
           id: 'ans_personal_data',
           tenantId: tenantA,
@@ -223,8 +222,8 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
         })
       );
 
-      // 2. Record Derived Scope Fact
-      await assertSucceeds(
+      // 2. Derived facts are authoritative server output.
+      await assertFails(
         contribDb.doc(`tenants/${tenantA}/scope_facts/processesPersonalData`).set({
           id: 'processesPersonalData',
           tenantId: tenantA,
@@ -248,7 +247,7 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
   // 4. Applicability Engine Runs
   // ---------------------------------------------------------------------------
   describe('4. Applicability Engine Execution & Decision Generation', () => {
-    test('evaluates machine-readable rule against tenant facts and writes decision', async () => {
+    test('evaluates a machine-readable rule while blocking direct decision persistence', async () => {
       const rule: ApplicabilityRule = {
         id: 'rule_gdpr_art30_records',
         ruleName: 'Article 30 ROPA Mandatory Trigger',
@@ -283,9 +282,9 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
       expect(evalResult.resultingOutcome).toBe('applicable');
       expect(evalResult.matched).toBe(true);
 
-      // Compliance Manager writes decision
+      // A compliance-manager browser cannot directly persist the engine decision.
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
-      await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/applicability_decisions/dec_art30`).set({
           id: 'dec_art30',
           tenantId: tenantA,
@@ -317,11 +316,11 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
   // 5. Tenant Controls & Statutory Obligations Generation
   // ---------------------------------------------------------------------------
   describe('5. Tenant Controls & Statutory Obligations Instantiation', () => {
-    test('instantiates tenant requirement instance and statutory obligation register', async () => {
+    test('blocks direct instantiation of requirement and statutory-obligation records', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
-      // 1. Requirement Instance
-      await assertSucceeds(
+      // 1. Requirement instances are emitted by the trusted instantiation command.
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/requirement_instances/req_art30`).set({
           id: 'req_art30',
           tenantId: tenantA,
@@ -349,8 +348,8 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
         })
       );
 
-      // 2. Statutory Obligation Register
-      await assertSucceeds(
+      // 2. Statutory-obligation records are emitted by that same trusted workflow.
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/statutory_obligations/obl_ropa`).set({
           id: 'obl_ropa',
           tenantId: tenantA,
@@ -402,9 +401,11 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
         ownerId: PERSONAS.complianceA.uid,
       };
 
-      await assertSucceeds(
-        compDb.doc(`tenants/${tenantA}/controls/ctl_crypto_unified`).set(unifiedControl)
-      );
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore()
+          .doc(`tenants/${tenantA}/controls/ctl_crypto_unified`)
+          .set(unifiedControl);
+      });
 
       // Verify harmonization flag and dual-framework coverage
       const snap = await compDb.doc(`tenants/${tenantA}/controls/ctl_crypto_unified`).get();
@@ -548,12 +549,12 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
   // 9. Export Access Is Tenant-Safe & Role-Guarded
   // ---------------------------------------------------------------------------
   describe('9. Export Jobs & Tenant Storage Protection', () => {
-    test('compliance manager can create export jobs; Tenant B cannot access Tenant A exports', async () => {
+    test('export jobs require a trusted command and remain tenant-isolated', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
       const adminBDb = testEnv.authenticatedContext(PERSONAS.adminB.uid).firestore();
 
-      // Compliance Manager creates export job
-      await assertSucceeds(
+      // Direct browser creation is rejected for the compliance manager.
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/export_jobs/job_e2e_01`).set({
           id: 'job_e2e_01',
           tenantId: tenantA,
@@ -569,6 +570,25 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
           filtersApplied: {},
         })
       );
+
+      // Seed the authoritative job returned by the trusted export command so
+      // cross-tenant isolation is tested against an existing record.
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await context.firestore().doc(`tenants/${tenantA}/export_jobs/job_e2e_01`).set({
+          id: 'job_e2e_01',
+          tenantId: tenantA,
+          exportType: 'adopted_frameworks_summary',
+          status: 'queued',
+          requestedBy: PERSONAS.complianceA.uid,
+          requestedAt: now,
+          completedAt: null,
+          fileStoragePath: null,
+          fileDownloadUrl: null,
+          fileSizeBytes: null,
+          errorMessage: null,
+          filtersApplied: {},
+        });
+      });
 
       // Tenant B Admin CANNOT access Tenant A export job
       await assertFails(adminBDb.doc(`tenants/${tenantA}/export_jobs/job_e2e_01`).get());

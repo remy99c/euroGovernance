@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
@@ -93,7 +92,7 @@ describe('Framework Adoption & Applicability Export/Report Generation Suite', ()
 
   // 1. Export Authorization & Tenant Isolation (Firestore Rules)
   describe('1. Export Job Security & Role Authorization', () => {
-    test('compliance manager can request all 5 framework export types while direct auditor requests are denied', async () => {
+    test('all 5 framework export types require server commands for managers and auditors', async () => {
       const complianceDb = testEnv.authenticatedContext(userComplianceA).firestore();
       const auditorDb = testEnv.authenticatedContext(userAuditorA).firestore();
 
@@ -109,7 +108,7 @@ describe('Framework Adoption & Applicability Export/Report Generation Suite', ()
         const expType = newExportTypes[i]!;
         const jobId = `job_comp_${i}`;
 
-        await assertSucceeds(
+        await assertFails(
           complianceDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
             id: jobId,
             tenantId: tenantA,

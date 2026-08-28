@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -109,16 +108,16 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
   // ===========================================================================
   // Step 1: Create Processor Profile
   // ===========================================================================
-  test('Step 1: Create Processor Profile with criticality, data categories, and owner', async () => {
+  test('Step 1: trusted command creates a Processor Profile with criticality, data categories, and owner', async () => {
     const fixtures = buildProcessorCertificationE2EFixtures(fixtureOptions);
     const secDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
 
-    // Security Manager creates processor profile
-    await assertSucceeds(
-      secDb.doc(`tenants/${tenantA}/processor_profiles/${fixtureOptions.processorProfileId}`).set(
-        fixtures.processorProfile
-      )
-    );
+    // The security manager initiates a trusted command; seed its persisted result.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore()
+        .doc(`tenants/${tenantA}/processor_profiles/${fixtureOptions.processorProfileId}`)
+        .set(fixtures.processorProfile);
+    });
 
     // Verify stored fields and relationship metadata
     const snap = await secDb.doc(`tenants/${tenantA}/processor_profiles/${fixtureOptions.processorProfileId}`).get();
@@ -134,18 +133,18 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
   // ===========================================================================
   // Step 2: Add ISO 27001 Certification
   // ===========================================================================
-  test('Step 2: Add ISO 27001 Accredited Certification with valid dates and scope', async () => {
+  test('Step 2: trusted command adds an ISO 27001 certification with valid dates and scope', async () => {
     await seedProcessorCertificationE2EEnvironment(testEnv, fixtureOptions);
     const fixtures = buildProcessorCertificationE2EFixtures(fixtureOptions);
 
     const secDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
 
-    // Security Manager records ISO 27001 accredited certification
-    await assertSucceeds(
-      secDb.doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`).set(
-        fixtures.iso27001Cert
-      )
-    );
+    // Seed the record produced by the trusted certification command.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore()
+        .doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`)
+        .set(fixtures.iso27001Cert);
+    });
 
     const snap = await secDb.doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`).get();
     expect(snap.exists).toBe(true);
@@ -161,18 +160,18 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
   // ===========================================================================
   // Step 3: Link Evidence File
   // ===========================================================================
-  test('Step 3: Link Evidence File (verified hash & PDF artifact) to ISO certification', async () => {
+  test('Step 3: trusted command links verified PDF evidence to the ISO certification', async () => {
     await seedProcessorCertificationE2EEnvironment(testEnv, fixtureOptions);
     const fixtures = buildProcessorCertificationE2EFixtures(fixtureOptions);
 
     const secDb = testEnv.authenticatedContext(PERSONAS.securityA.uid).firestore();
 
-    // Save cert with linked evidence id
-    await assertSucceeds(
-      secDb.doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`).set(
-        fixtures.iso27001Cert
-      )
-    );
+    // Save the certification state produced by the trusted evidence-link command.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore()
+        .doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`)
+        .set(fixtures.iso27001Cert);
+    });
 
     // Verify evidence doc exists in tenant evidence locker
     const evSnap = await secDb.doc(`tenants/${tenantA}/evidence/${fixtureOptions.evidenceIsoId}`).get();
@@ -191,7 +190,7 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
   // ===========================================================================
   // Step 4: Mark Review Accepted
   // ===========================================================================
-  test('Step 4: Mark Review Accepted with verification notes and audit attribution', async () => {
+  test('Step 4: trusted review command records acceptance, notes, and audit attribution', async () => {
     await seedProcessorCertificationE2EEnvironment(testEnv, fixtureOptions);
     const fixtures = buildProcessorCertificationE2EFixtures(fixtureOptions);
 
@@ -202,15 +201,15 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
 
     const approverDb = testEnv.authenticatedContext(PERSONAS.approverA.uid).firestore();
 
-    // Approver records accepted review outcome
-    await assertSucceeds(
-      approverDb.doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`).update({
+    // Seed the accepted state produced by the approver's trusted review command.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`).update({
         reviewStatus: 'accepted',
         reviewNotes: 'Verified certificate validity on TÜV Rheinland online registrar. Scope covers EU VPC.',
         updatedBy: PERSONAS.approverA.uid,
         updatedAt: nowIso,
-      })
-    );
+      });
+    });
 
     const updatedSnap = await approverDb.doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.isoCertId}`).get();
     const cert = updatedSnap.data() as ProcessorCertification;
@@ -222,18 +221,18 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
   // ===========================================================================
   // Step 5: Add SOC 2 Report with Report Period
   // ===========================================================================
-  test('Step 5: Add SOC 2 Type II report with required audit coverage period', async () => {
+  test('Step 5: trusted command adds a SOC 2 Type II report with its audit coverage period', async () => {
     await seedProcessorCertificationE2EEnvironment(testEnv, fixtureOptions);
     const fixtures = buildProcessorCertificationE2EFixtures(fixtureOptions);
 
     const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
-    // Compliance Manager adds SOC 2 Type II report
-    await assertSucceeds(
-      compDb.doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.socReportId}`).set(
-        fixtures.soc2Report
-      )
-    );
+    // Seed the SOC 2 record produced by the trusted command.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore()
+        .doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.socReportId}`)
+        .set(fixtures.soc2Report);
+    });
 
     const snap = await compDb.doc(`tenants/${tenantA}/processor_certifications/${fixtureOptions.socReportId}`).get();
     expect(snap.exists).toBe(true);
@@ -283,8 +282,8 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
     expect(notifSnap.data()?.type).toBe('processor_certification_expiring_soon');
     expect(notifSnap.data()?.isRead).toBe(false);
 
-    // Compliance Manager acknowledges reminder
-    await assertSucceeds(
+    // Browser acknowledgement is rejected; notification mutation must use a trusted command.
+    await assertFails(
       compDb.doc(`tenants/${tenantA}/notifications/notif_expiring_${socReport.id}`).update({
         isRead: true,
         readAt: nowIso,
@@ -472,11 +471,11 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
     expect(critPayload.exportHeader.tenantId).toBe(tenantA);
     expect(critPayload.exportHeader.totalCriticalProcessorsCount).toBe(1);
 
-    // Verify Export Job Security in Firestore Rules
+    // Verify export-job command-boundary and tenant-isolation rules.
     const adminDb = testEnv.authenticatedContext(PERSONAS.adminA.uid).firestore();
     const jobId = 'job_e2e_assurance_register';
 
-    await assertSucceeds(
+    await assertFails(
       adminDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
         id: jobId,
         tenantId: tenantA,
@@ -492,6 +491,25 @@ describe('Processor Certification & Assurance Lifecycle End-to-End Test Pack', (
         filtersApplied: {},
       })
     );
+
+    // Seed the result a trusted export command would create so the isolation
+    // assertion below exercises an existing authoritative document.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
+        id: jobId,
+        tenantId: tenantA,
+        exportType: 'processor_assurance_register',
+        status: 'queued',
+        requestedBy: PERSONAS.adminA.uid,
+        requestedAt: nowIso,
+        completedAt: null,
+        fileStoragePath: null,
+        fileDownloadUrl: null,
+        fileSizeBytes: null,
+        errorMessage: null,
+        filtersApplied: {},
+      });
+    });
 
     // Cross-tenant user cannot read the export job
     const tenantBUserDb = testEnv.authenticatedContext(PERSONAS.adminB.uid).firestore();

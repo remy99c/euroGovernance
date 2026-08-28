@@ -172,12 +172,12 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
   });
 
   // 1. Scopes, Objectives, and SoA RBAC
-  test('Security Manager can manage scopes, objectives, and SoA; Contributors cannot', async () => {
+  test('ISO scopes, objectives, and SoA mutations require server commands for every browser persona', async () => {
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    // Security Manager CAN create/update
-    await assertSucceeds(
+    // Security Manager direct mutations are denied.
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/iso_objectives/obj_ai_safety`).set({
         id: 'obj_ai_safety',
         tenantId: tenantA,
@@ -188,7 +188,7 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       securityDb.doc(`tenants/${tenantA}/iso_soa_entries/${soaId}`).update({
         justification: 'Updated with WebAuthn technical requirement',
       })
@@ -211,13 +211,13 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
   });
 
   // 2. Internal Audits & Findings RBAC
-  test('Compliance Managers can log audits and findings; Auditors and Viewers cannot', async () => {
+  test('audit and finding creation is server-only for managers and read-only personas', async () => {
     const complianceDb = testEnv.authenticatedContext(userComplianceA, { email: 'comp@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    // Compliance Manager CAN create internal audit and log finding
-    await assertSucceeds(
+    // Internal audits and findings are created through server commands.
+    await assertFails(
       complianceDb.doc(`tenants/${tenantA}/iso_internal_audits/adt_q2`).set({
         id: 'adt_q2',
         tenantId: tenantA,
@@ -227,7 +227,7 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
       })
     );
 
-    await assertSucceeds(
+    await assertFails(
       complianceDb
         .doc(`tenants/${tenantA}/iso_internal_audits/${auditId}/findings/fnd_02`)
         .set({
@@ -269,13 +269,13 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
   });
 
   // 3. Management Reviews RBAC
-  test('Approvers and Compliance Managers can create management reviews; Auditors and Contributors cannot', async () => {
+  test('management-review creation is server-only for every browser persona', async () => {
     const approverDb = testEnv.authenticatedContext(userApproverA, { email: 'exec@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const contribDb = testEnv.authenticatedContext(userContributorA, { email: 'dev@eurocorp.de' }).firestore();
 
-    // Approver CAN create review
-    await assertSucceeds(
+    // Approver direct review creation is denied.
+    await assertFails(
       approverDb.doc(`tenants/${tenantA}/iso_management_reviews/mgt_rev_q3`).set({
         id: 'mgt_rev_q3',
         tenantId: tenantA,
@@ -320,7 +320,7 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
   });
 
   // 5. Deletion Restriction Across ISO Collections
-  test('Only Tenant Admin can delete ISO management records', async () => {
+  test('ISO management records cannot be deleted directly even by Tenant Admin', async () => {
     const adminDb = testEnv.authenticatedContext(userAdminA, { email: 'admin@eurocorp.de' }).firestore();
     const securityDb = testEnv.authenticatedContext(userSecurityA, { email: 'sec@eurocorp.de' }).firestore();
 
@@ -328,12 +328,12 @@ describe('ISO 27001 & ISO 42001 Management Layer Security Rules', () => {
     await assertFails(securityDb.doc(`tenants/${tenantA}/iso_scope_statements/${scopeId}`).delete());
     await assertFails(securityDb.doc(`tenants/${tenantA}/iso_internal_audits/${auditId}`).delete());
 
-    // Tenant Admin CAN delete
-    await assertSucceeds(
+    // Tenant Admin direct deletion is denied.
+    await assertFails(
       adminDb.doc(`tenants/${tenantA}/iso_internal_audits/${auditId}/findings/${findingId}`).delete()
     );
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/iso_internal_audits/${auditId}`).delete());
-    await assertSucceeds(adminDb.doc(`tenants/${tenantA}/iso_scope_statements/${scopeId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/iso_internal_audits/${auditId}`).delete());
+    await assertFails(adminDb.doc(`tenants/${tenantA}/iso_scope_statements/${scopeId}`).delete());
   });
 
   // 6. Cross-Tenant Denial

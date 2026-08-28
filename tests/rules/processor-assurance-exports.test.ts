@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -125,14 +124,14 @@ describe('Processor Assurance Export Reporting & Tenant Isolation Test Suite', (
   // 1. Authorization & Security Rules
   // ---------------------------------------------------------------------------
   describe('1. Export Job Authorization & Security Rules', () => {
-    test('Compliance Manager can create jobs for all 6 processor assurance export types', async () => {
+    test('Compliance Manager must request all 6 processor assurance exports through server commands', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
       for (let i = 0; i < assuranceExportTypes.length; i++) {
         const expType = assuranceExportTypes[i]!;
         const jobId = `job_comp_${i}`;
 
-        await assertSucceeds(
+        await assertFails(
           compDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
             id: jobId,
             tenantId: tenantA,
@@ -151,14 +150,14 @@ describe('Processor Assurance Export Reporting & Tenant Isolation Test Suite', (
       }
     });
 
-    test('Tenant Admin can create jobs for all 6 processor assurance export types', async () => {
+    test('Tenant Admin must request all 6 processor assurance exports through server commands', async () => {
       const adminDb = testEnv.authenticatedContext(PERSONAS.adminA.uid).firestore();
 
       for (let i = 0; i < assuranceExportTypes.length; i++) {
         const expType = assuranceExportTypes[i]!;
         const jobId = `job_admin_${i}`;
 
-        await assertSucceeds(
+        await assertFails(
           adminDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
             id: jobId,
             tenantId: tenantA,
@@ -177,14 +176,14 @@ describe('Processor Assurance Export Reporting & Tenant Isolation Test Suite', (
       }
     });
 
-    test('Privacy Officer can create jobs for all 6 processor assurance export types', async () => {
+    test('Privacy Officer must request all 6 processor assurance exports through server commands', async () => {
       const privDb = testEnv.authenticatedContext(PERSONAS.privacyA.uid).firestore();
 
       for (let i = 0; i < assuranceExportTypes.length; i++) {
         const expType = assuranceExportTypes[i]!;
         const jobId = `job_priv_${i}`;
 
-        await assertSucceeds(
+        await assertFails(
           privDb.doc(`tenants/${tenantA}/export_jobs/${jobId}`).set({
             id: jobId,
             tenantId: tenantA,
