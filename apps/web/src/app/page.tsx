@@ -391,38 +391,67 @@ export default function DashboardPage() {
       () => handleSubscriptionError('evidence')
     );
 
-    // 4. Risks
-    const risksRef = collection(db, 'tenants', tenantId, 'risks');
-    const unsubRisks = onSnapshot(
-      risksRef,
-      (snap) => {
-        setRisksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    // 4-6. Operational registers. Raw records and immutable history are
+    // deliberately not browser-readable; these bounded projections verify the
+    // current state/version/receipt/audit anchor before assigning assurance.
+    const unsubRisks = () => {};
+    const unsubTasks = () => {};
+    const unsubIssues = () => {};
+    const loadOperationalProjection = async (
+      callableName: 'listTenantRisks' | 'listTenantTasks' | 'listTenantIssues',
+      field: 'risks' | 'tasks' | 'issues'
+    ): Promise<unknown[]> => {
+      const listPage = httpsCallable<
+        { tenantId: string; pageSize: number; cursor?: string },
+        {
+          risks?: unknown[];
+          tasks?: unknown[];
+          issues?: unknown[];
+          truncated?: boolean;
+          nextCursor?: string | null;
+        }
+      >(functions, callableName);
+      const records: unknown[] = [];
+      let cursor: string | undefined;
+      // The landing workspace is deliberately complete-or-unavailable. Ten
+      // pages avoids silently presenting a partial register while keeping the
+      // initial load bounded; dedicated register pagination can scale beyond it.
+      for (let page = 0; page < 10; page += 1) {
+        const response = await listPage({ tenantId, pageSize: 100, ...(cursor ? { cursor } : {}) });
+        const pageRecords = response.data[field];
+        if (!Array.isArray(pageRecords)) {
+          throw new Error(`${field} projection response is invalid.`);
+        }
+        records.push(...pageRecords);
+        if (!response.data.truncated) return records;
+        if (!response.data.nextCursor || response.data.nextCursor === cursor) {
+          throw new Error(`${field} projection pagination is invalid.`);
+        }
+        cursor = response.data.nextCursor;
+      }
+      throw new Error(`${field} register exceeds the bounded workspace projection.`);
+    };
+    void loadOperationalProjection('listTenantRisks', 'risks')
+      .then((records) => {
+        if (!subscriptionActive) return;
+        setRisksList(records);
         markSubscriptionInitialized('risks');
-      },
-      () => handleSubscriptionError('risks')
-    );
-
-    // 5. Tasks
-    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-    const unsubTasks = onSnapshot(
-      tasksRef,
-      (snap) => {
-        setTasksList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      })
+      .catch(() => handleSubscriptionError('risks'));
+    void loadOperationalProjection('listTenantTasks', 'tasks')
+      .then((records) => {
+        if (!subscriptionActive) return;
+        setTasksList(records);
         markSubscriptionInitialized('tasks');
-      },
-      () => handleSubscriptionError('tasks')
-    );
-
-    // 6. Issues
-    const issuesRef = collection(db, 'tenants', tenantId, 'issues');
-    const unsubIssues = onSnapshot(
-      issuesRef,
-      (snap) => {
-        setIssuesList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      })
+      .catch(() => handleSubscriptionError('tasks'));
+    void loadOperationalProjection('listTenantIssues', 'issues')
+      .then((records) => {
+        if (!subscriptionActive) return;
+        setIssuesList(records);
         markSubscriptionInitialized('issues');
-      },
-      () => handleSubscriptionError('issues')
-    );
+      })
+      .catch(() => handleSubscriptionError('issues'));
 
     // 7. Audit Logs
     let unsubAudit = () => {};
@@ -1412,7 +1441,15 @@ export default function DashboardPage() {
 
           {/* TAB 4: RISKS & TASKS */}
           {activeTab === 'risks_tasks' && (
-            <RisksTasksTabView risksList={risksList} tasksList={tasksList} />
+            <RisksTasksTabView
+              tenantId={tenantId}
+              userId={user.uid}
+              userRole={userRole}
+              risksList={risksList}
+              issuesList={issuesList}
+              tasksList={tasksList}
+              onChanged={() => setTenantDataReloadKey((value) => value + 1)}
+            />
           )}
 
           {/* TAB 5: GDPR & PRIVACY */}

@@ -271,20 +271,31 @@ service cloud.firestore {
 
       // Risks
       match /risks/{riskId} {
-        allow read: if isTenantMember(tenantId);
-        allow create, update, delete: if false;
+        // Authoritative records are projected through bounded callables that
+        // verify the current state -> version -> receipt -> audit anchor.
+        allow read, create, update, delete: if false;
+
+        match /versions/{versionId} {
+          allow read, create, update, delete: if false;
+        }
       }
 
       // Issues & Remediations
       match /issues/{issueId} {
-        allow read: if isTenantMember(tenantId);
-        allow create, update, delete: if false;
+        allow read, create, update, delete: if false;
+
+        match /versions/{versionId} {
+          allow read, create, update, delete: if false;
+        }
       }
 
       // Tasks
       match /tasks/{taskId} {
-        allow read: if isTenantMember(tenantId);
-        allow create, update, delete: if false;
+        allow read, create, update, delete: if false;
+
+        match /versions/{versionId} {
+          allow read, create, update, delete: if false;
+        }
       }
 
       // Vendors & Third Parties (Commercial Master)

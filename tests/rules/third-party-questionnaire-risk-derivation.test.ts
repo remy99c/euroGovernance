@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -386,12 +385,18 @@ describe('Third-Party Questionnaire Risk Derivation & Scoring Test Pack', () => 
 
       const dbCompliance = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
-      const riskSnap = await assertSucceeds(
+      await assertFails(
         dbCompliance.doc(`tenants/${tenantA}/risks/${riskDoc.id}`).get()
       );
-      expect(riskSnap.exists).toBe(true);
-      const rData = riskSnap.data() as Risk;
-      expect(rData.deduplicationKey).toBe('TP_RISK_VEND_ACME_01_RISK_PLAINTEXT_STORAGE');
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const riskSnap = await context
+          .firestore()
+          .doc(`tenants/${tenantA}/risks/${riskDoc.id}`)
+          .get();
+        expect(riskSnap.exists).toBe(true);
+        const rData = riskSnap.data() as Risk;
+        expect(rData.deduplicationKey).toBe('TP_RISK_VEND_ACME_01_RISK_PLAINTEXT_STORAGE');
+      });
     });
 
     it('prevents Tenant B user from reading Tenant A derived risks', async () => {

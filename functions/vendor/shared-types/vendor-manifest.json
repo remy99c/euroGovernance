@@ -166,13 +166,13 @@
     },
     {
       "path": "dist/grc.d.ts",
-      "bytes": 14117,
-      "sha256": "35a3c6cfc99145306ddc4630697fb8e26f097e6d753a6789df086f39b6a4a69f"
+      "bytes": 14985,
+      "sha256": "a1ac66bbc08a469a16942d3aea390b63b94a01091265017c6e7951e52d30de52"
     },
     {
       "path": "dist/grc.d.ts.map",
-      "bytes": 11310,
-      "sha256": "018a5233702f5cbe4f93b094cb031c437158707eaea55a096934a10c6729680c"
+      "bytes": 11833,
+      "sha256": "3dc63062da5216a285dcecf06a6fa343b809b7fcf85b0f8ecde0f1c8ddb10671"
     },
     {
       "path": "dist/grc.js",
@@ -182,7 +182,7 @@
     {
       "path": "dist/grc.js.map",
       "bytes": 614,
-      "sha256": "c4286bf42cd1fd17a3e8fd658b3110a5a986e27fc9032dad544989b89a8b0c58"
+      "sha256": "537cb19b75c69e9874f4385030d6b4e9176b38d132cc7893f8d2d055e44f1692"
     },
     {
       "path": "dist/index.d.ts",

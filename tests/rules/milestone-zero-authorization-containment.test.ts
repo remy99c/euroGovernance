@@ -327,11 +327,11 @@ describe('Milestone 0 Firestore authorization containment', () => {
   test.each([
     ['auditor', USERS.activeAuditorA],
     ['viewer', USERS.activeViewerA],
-  ])('%s remains readable but has zero direct mutation privileges', async (_role, uid) => {
+  ])('%s uses governed operational projections and has zero direct mutation privileges', async (_role, uid) => {
     const db = testEnv.authenticatedContext(uid).firestore();
 
-    await assertSucceeds(db.doc(`tenants/${TENANT_A}/issues/existing_issue`).get());
-    await assertSucceeds(db.doc(`tenants/${TENANT_A}/tasks/existing_task`).get());
+    await assertFails(db.doc(`tenants/${TENANT_A}/issues/existing_issue`).get());
+    await assertFails(db.doc(`tenants/${TENANT_A}/tasks/existing_task`).get());
     await assertSucceeds(db.doc(`tenants/${TENANT_A}/controls/existing_control`).get());
     await assertSucceeds(db.doc(`tenants/${TENANT_A}/iso_internal_audits/existing_audit`).get());
 

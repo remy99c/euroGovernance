@@ -59,6 +59,7 @@ export {
   updateTenantTask,
   deleteTenantTask,
   listTenantTasks,
+  listTenantOperationalAssignees,
 } from './handlers/risks.js';
 
 // Vendor, Processor, Transfer Arrangement & System Asset Handlers

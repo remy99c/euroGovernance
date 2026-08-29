@@ -520,12 +520,18 @@ describe('Processor Governance Operational Hub Data & Authorization Suite', () =
       expect(brc.reportingSource).toBe('reported_by_processor');
 
       // 9. Linked Risk
-      const rskSnap = await assertSucceeds(
+      await assertFails(
         privDb.doc(`tenants/${tenantA}/risks/rsk_processor_transfer_schrems`).get()
       );
-      expect(rskSnap.exists).toBe(true);
-      const rsk = rskSnap.data() as Risk;
-      expect(rsk.processorProfileIds).toContain('prof_cloud_scale_main');
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const rskSnap = await context
+          .firestore()
+          .doc(`tenants/${tenantA}/risks/rsk_processor_transfer_schrems`)
+          .get();
+        expect(rskSnap.exists).toBe(true);
+        const rsk = rskSnap.data() as Risk;
+        expect(rsk.processorProfileIds).toContain('prof_cloud_scale_main');
+      });
     });
 
     test('Viewer role can read processor records and linked governance dimensions but cannot modify them', async () => {

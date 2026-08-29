@@ -36,6 +36,17 @@ export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'completed' | 'can
 export type VendorRiskTier = 'low' | 'medium' | 'high' | 'critical';
 export type SystemCriticality = 'low' | 'medium' | 'high' | 'mission_critical';
 
+export interface GovernedOperationalMetadata {
+  /** Monotonic command-boundary revision; absent only on legacy records. */
+  revision?: number;
+  /** Server-owned workflow contract version; absent only on legacy records. */
+  workflowSchemaVersion?: number;
+  /** Soft-retirement metadata. Authoritative records are never hard-deleted. */
+  retiredAt?: string | null;
+  retiredBy?: string | null;
+  retirementReason?: string | null;
+}
+
 export type FrameworkType =
   | 'regulation'
   | 'directive'
@@ -336,7 +347,7 @@ export interface Policy extends BaseEntity {
 /**
  * Risk Register Entry (/tenants/{tenantId}/risks/{riskId})
  */
-export interface Risk extends BaseEntity {
+export interface Risk extends BaseEntity, GovernedOperationalMetadata {
   code: string;
   title: string;
   description: string;
@@ -360,12 +371,18 @@ export interface Risk extends BaseEntity {
   deduplicationKey?: string | null;
   sourceEntityType?: string | null;
   sourceEntityId?: string | null;
+  /** Server-derived four-eyes acceptance attribution for accepted residual risk. */
+  acceptedBy?: string | null;
+  acceptedAt?: string | null;
+  /** Server-derived independent closure attribution for manually managed risks. */
+  closedBy?: string | null;
+  closedAt?: string | null;
 }
 
 /**
  * Issue and Remediation (/tenants/{tenantId}/issues/{issueId})
  */
-export interface Issue extends BaseEntity {
+export interface Issue extends BaseEntity, GovernedOperationalMetadata {
   code: string;
   title: string;
   description: string;
@@ -378,12 +395,13 @@ export interface Issue extends BaseEntity {
   resolutionPlan: string;
   resolvedAt: string | null;
   verifiedBy: string | null;
+  verifiedAt?: string | null;
 }
 
 /**
  * Task Execution Item (/tenants/{tenantId}/tasks/{taskId})
  */
-export interface Task extends BaseEntity {
+export interface Task extends BaseEntity, GovernedOperationalMetadata {
   title: string;
   description: string;
   status: TaskStatus;

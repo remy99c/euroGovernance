@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -221,18 +220,19 @@ describe('Risk Register, Issues & Remediation Tasks Security Rules', () => {
     );
   });
 
-  // 3. Read Permissions Across Tenant Members
-  test('All active tenant members can read risks, issues, and tasks', async () => {
+  // 3. Read projections are server-only so assurance and redaction cannot be bypassed.
+  test('raw risks, issues, tasks, and immutable versions are not browser-readable', async () => {
     const auditorDb = testEnv.authenticatedContext(userAuditorA, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewerA, { email: 'view@eurocorp.de' }).firestore();
 
-    await assertSucceeds(auditorDb.doc(`tenants/${tenantA}/risks/${riskId}`).get());
-    await assertSucceeds(auditorDb.doc(`tenants/${tenantA}/issues/${issueId}`).get());
-    await assertSucceeds(auditorDb.doc(`tenants/${tenantA}/tasks/${taskId}`).get());
-
-    await assertSucceeds(viewerDb.doc(`tenants/${tenantA}/risks/${riskId}`).get());
-    await assertSucceeds(viewerDb.doc(`tenants/${tenantA}/issues/${issueId}`).get());
-    await assertSucceeds(viewerDb.doc(`tenants/${tenantA}/tasks/${taskId}`).get());
+    for (const db of [auditorDb, viewerDb]) {
+      await assertFails(db.doc(`tenants/${tenantA}/risks/${riskId}`).get());
+      await assertFails(db.doc(`tenants/${tenantA}/issues/${issueId}`).get());
+      await assertFails(db.doc(`tenants/${tenantA}/tasks/${taskId}`).get());
+      await assertFails(db.doc(`tenants/${tenantA}/risks/${riskId}/versions/r0000000001`).get());
+      await assertFails(db.doc(`tenants/${tenantA}/issues/${issueId}/versions/r0000000001`).get());
+      await assertFails(db.doc(`tenants/${tenantA}/tasks/${taskId}/versions/r0000000001`).get());
+    }
   });
 
   // 4. Deletion Restrictions

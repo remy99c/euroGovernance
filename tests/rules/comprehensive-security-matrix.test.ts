@@ -204,13 +204,13 @@ describe('Comprehensive Security Matrix & Invariant Test Suite', () => {
   // 2. ROLE-BASED ACCESS CONTROL & LEAST PRIVILEGE
   // ---------------------------------------------------------------------------
   describe('2. Role-Based Read/Write Restrictions', () => {
-    test('Viewers have read-only access and are blocked from mutating controls or risks', async () => {
+    test('Viewers use governed risk projections and are blocked from mutations', async () => {
       const viewerDb = testEnv.authenticatedContext(PERSONAS.viewerA.uid, { email: PERSONAS.viewerA.email }).firestore();
       const tA = FIXTURE_TENANT_A;
 
       // Read succeeds
       await assertSucceeds(viewerDb.doc(`tenants/${tA}/controls/ctl_01`).get());
-      await assertSucceeds(viewerDb.doc(`tenants/${tA}/risks/rsk_01`).get());
+      await assertFails(viewerDb.doc(`tenants/${tA}/risks/rsk_01`).get());
 
       // Write fails
       await assertFails(

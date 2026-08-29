@@ -1,7 +1,6 @@
 import {
   initializeTestEnvironment,
   RulesTestEnvironment,
-  assertSucceeds,
   assertFails,
 } from '@firebase/rules-unit-testing';
 import {
@@ -336,17 +335,23 @@ describe('Processor & Transfer Records Risk Integration Suite', () => {
   // 2. Risk Register Security Rules & Multi-Tenant Isolation
   // ---------------------------------------------------------------------------
   describe('2. Risk Security Rules & Cross-Tenant Isolation', () => {
-    test('Compliance Manager can read processor-linked risk but updates require a server command', async () => {
+    test('Compliance Manager must use the governed risk projection and server command', async () => {
       const compDb = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
-      const snap = await assertSucceeds(
+      await assertFails(
         compDb.doc(`tenants/${tenantA}/risks/rsk_third_party_telemetry`).get()
       );
-      expect(snap.exists).toBe(true);
-      const data = snap.data() as Risk;
-      expect(data.processorProfileIds).toContain('prof_analytics_corp');
-      expect(data.transferArrangementIds).toContain('trans_analytics_us');
-      expect(data.category).toBe('third_party');
+
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const snap = await context
+          .firestore()
+          .doc(`tenants/${tenantA}/risks/rsk_third_party_telemetry`)
+          .get();
+        const data = snap.data() as Risk;
+        expect(data.processorProfileIds).toContain('prof_analytics_corp');
+        expect(data.transferArrangementIds).toContain('trans_analytics_us');
+        expect(data.category).toBe('third_party');
+      });
 
       // Update residual score following mitigation
       await assertFails(
