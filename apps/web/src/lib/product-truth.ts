@@ -16,10 +16,41 @@ export interface EvidenceReviewSchedule {
  * percentage in the documented 0-100 range. Missing or malformed metrics are
  * deliberately represented as null rather than converted into assurance.
  */
-export function getRecordedComplianceScore(metrics: unknown): number | null {
+export function getRecordedComplianceScore(
+  metrics: unknown,
+  now: Date = new Date(),
+  expectedTenantId?: string
+): number | null {
   if (!metrics || typeof metrics !== 'object') return null;
 
-  const score = (metrics as { overallComplianceScore?: unknown }).overallComplianceScore;
+  const record = metrics as {
+    overallComplianceScore?: unknown;
+    validUntil?: unknown;
+    sourceFingerprint?: unknown;
+    tenantId?: unknown;
+    lastMaterializedAt?: unknown;
+  };
+  const score = record.overallComplianceScore;
+  const validUntilMillis =
+    typeof record.validUntil === 'string' ? Date.parse(record.validUntil) : Number.NaN;
+  const materializedMillis =
+    typeof record.lastMaterializedAt === 'string'
+      ? Date.parse(record.lastMaterializedAt)
+      : Number.NaN;
+  if (
+    !Number.isFinite(validUntilMillis) ||
+    !Number.isFinite(materializedMillis) ||
+    materializedMillis > now.getTime() + 60_000 ||
+    validUntilMillis - materializedMillis > 5 * 60 * 1_000 ||
+    validUntilMillis <= now.getTime() ||
+    typeof record.tenantId !== 'string' ||
+    record.tenantId.length === 0 ||
+    (expectedTenantId !== undefined && record.tenantId !== expectedTenantId) ||
+    typeof record.sourceFingerprint !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(record.sourceFingerprint)
+  ) {
+    return null;
+  }
   if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 100) {
     return null;
   }

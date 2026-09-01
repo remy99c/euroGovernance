@@ -19,6 +19,7 @@ import {
   Evidence,
   ROPAEntry,
   Certification,
+  Control,
   ProcessorCertification,
   ProcessorAssessment,
   synthesizeProcessorAssuranceInventory,
@@ -43,6 +44,10 @@ import {
   generateProspectAssessmentsUnlinkedExportPayload,
 } from '@eurogovernance/shared-types';
 import { loadCurrentCertificationArtifactVerification } from '../lib/certification-assurance-store.js';
+import {
+  projectControlAssuranceSummary,
+  verifyControlCurrentArtifact,
+} from './controls.js';
 
 export interface RequestExportInput {
   tenantId: string;
@@ -58,6 +63,50 @@ export interface GetExportJobInput {
 export interface ListExportJobsInput {
   tenantId: string;
   status?: ExportJobStatus;
+}
+
+async function verifiedControlExportRows(
+  tenantId: string,
+  maximum = 1_000
+): Promise<Record<string, unknown>[]> {
+  const snapshot = await db
+    .collection(`tenants/${tenantId}/controls`)
+    .limit(maximum + 1)
+    .get();
+  if (snapshot.size > maximum) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'The control register exceeds the bounded synchronous export limit.'
+    );
+  }
+  const trust = await Promise.all(
+    snapshot.docs.map((document) =>
+      verifyControlCurrentArtifact(tenantId, document)
+    )
+  );
+  return snapshot.docs.map((document, index) => {
+    const control = document.data() as Control;
+    const result = trust[index]!;
+    return {
+      ...projectControlAssuranceSummary(control, result),
+      currentAssuranceVerified: result.assuranceTrusted,
+    };
+  });
+}
+
+async function boundedExportSnapshot(
+  query: FirebaseFirestore.Query,
+  label: string,
+  maximum = 1_000
+): Promise<FirebaseFirestore.QuerySnapshot> {
+  const snapshot = await query.limit(maximum + 1).get();
+  if (snapshot.size > maximum) {
+    throw new HttpsError(
+      'resource-exhausted',
+      `${label} exceeds the bounded synchronous export limit.`
+    );
+  }
+  return snapshot;
 }
 
 /**
@@ -118,10 +167,15 @@ export async function processExportJob(
         2
       );
     } else if (job.exportType === 'applicability_decisions_report') {
-      const decSnap = await tenantRef.collection('applicability_decisions').get();
+      const decSnap = await boundedExportSnapshot(
+        tenantRef.collection('applicability_decisions'),
+        'Applicability decisions'
+      );
       const decisionsData = decSnap.docs.map((d) => d.data());
 
-      const applicableCount = decisionsData.filter((d: any) => d.status === 'applicable').length;
+      const applicableCount = decisionsData.filter((d: any) =>
+        ['applicable', 'conditionally_applicable', 'inherited'].includes(d.status)
+      ).length;
       const excludedCount = decisionsData.filter((d: any) => d.status === 'not_applicable').length;
       const reviewNeededCount = decisionsData.filter((d: any) => d.status === 'review_required').length;
       const overriddenCount = decisionsData.filter((d: any) => d.isOverridden === true).length;
@@ -147,12 +201,47 @@ export async function processExportJob(
         2
       );
     } else if (job.exportType === 'tenant_control_coverage_report') {
-      const controlsSnap = await tenantRef.collection('controls').get();
-      const reqInstancesSnap = await tenantRef.collection('requirement_instances').get();
-      const obligationsSnap = await tenantRef.collection('statutory_obligations').get();
+      const [reqInstancesSnap, obligationsSnap] = await Promise.all([
+        boundedExportSnapshot(
+          tenantRef.collection('requirement_instances'),
+          'Requirement instances'
+        ),
+        boundedExportSnapshot(
+          tenantRef.collection('statutory_obligations'),
+          'Statutory obligations'
+        ),
+      ]);
 
-      const controlsData = controlsSnap.docs.map((d) => d.data());
-      const reqInstancesData = reqInstancesSnap.docs.map((d) => d.data());
+      const controlsData = await verifiedControlExportRows(tenantId);
+      const requirementCoverage = reqInstancesSnap.docs.map((document) => {
+        const requirement = document.data();
+        const mappedControls = controlsData.filter(
+          (control) =>
+            Array.isArray(control.requirementIds) &&
+            control.requirementIds.includes(requirement.requirementId)
+        );
+        const assuredControls = mappedControls.filter(
+          (control) =>
+            control.currentAssuranceVerified === true &&
+            control.status === 'implemented' &&
+            control.workflowTrust === 'authoritative' &&
+            control.assuranceStatus === 'effective'
+        );
+        return {
+          id: document.id,
+          requirementId: requirement.requirementId,
+          frameworkId: requirement.frameworkId,
+          sectionCode: requirement.sectionCode,
+          title: requirement.title,
+          isMandatory: requirement.isMandatory,
+          coverageStatus:
+            assuredControls.length > 0 ? 'covered' : 'open_gap',
+          mappedControlIds: mappedControls.map((control) => control.id),
+          assuredControlIds: assuredControls.map((control) => control.id),
+          relationshipAuthority: 'verified_control_requirement_ids',
+          legacyInverseProjectionIgnored: true,
+        };
+      });
       const obligationsData = obligationsSnap.docs.map((d) => d.data());
 
       const harmonizedControls = controlsData.filter(
@@ -174,21 +263,26 @@ export async function processExportJob(
           },
           controls: controlsData,
           harmonizedControls,
-          requirementInstances: reqInstancesData,
+          requirementCoverage,
           statutoryObligations: obligationsData,
         },
         null,
         2
       );
     } else if (job.exportType === 'framework_gap_report') {
-      const decSnap = await tenantRef.collection('applicability_decisions').get();
-      const reqInstancesSnap = await tenantRef.collection('requirement_instances').get();
-      const controlsSnap = await tenantRef.collection('controls').get();
-      const evidenceSnap = await tenantRef.collection('evidence').get();
+      const [decSnap, evidenceSnap] = await Promise.all([
+        boundedExportSnapshot(
+          tenantRef.collection('applicability_decisions'),
+          'Applicability decisions'
+        ),
+        boundedExportSnapshot(
+          tenantRef.collection('evidence'),
+          'Evidence records'
+        ),
+      ]);
 
       const decisionsData = decSnap.docs.map((d) => d.data());
-      const reqInstancesData = reqInstancesSnap.docs.map((d) => d.data());
-      const controlsData = controlsSnap.docs.map((d) => d.data());
+      const controlsData = await verifiedControlExportRows(tenantId);
       const evidenceData = evidenceSnap.docs.map((d) => d.data());
 
       // Identify open gaps: applicable requirements lacking implemented controls
@@ -196,18 +290,44 @@ export async function processExportJob(
       const overdueReviews: any[] = [];
 
       for (const dec of decisionsData as any[]) {
-        if (dec.status === 'applicable') {
-          const reqInst = (reqInstancesData as any[]).find((ri) => ri.requirementId === dec.requirementId);
-          const hasSatisfyingControls = reqInst && reqInst.satisfyingControlIds && reqInst.satisfyingControlIds.length > 0;
-          if (!hasSatisfyingControls) {
+        if (
+          dec.status === 'applicable' ||
+          dec.status === 'conditionally_applicable' ||
+          dec.status === 'inherited'
+        ) {
+          // The governed control document is the relationship authority.
+          // Legacy inverse arrays on requirement instances are mutable/stale
+          // projections and cannot close an audit gap.
+          const mappedControls = controlsData.filter(
+            (control: any) =>
+              Array.isArray(control.requirementIds) &&
+              control.requirementIds.includes(dec.requirementId)
+          );
+          const hasVerifiedEffectiveControl = controlsData.some(
+            (control: any) =>
+              Array.isArray(control.requirementIds) &&
+              control.requirementIds.includes(dec.requirementId) &&
+              control.status === 'implemented' &&
+              control.workflowTrust === 'authoritative' &&
+              control.assuranceStatus === 'effective' &&
+              control.currentAssuranceVerified === true
+          );
+          if (!hasVerifiedEffectiveControl) {
             openGaps.push({
               requirementId: dec.requirementId,
               sectionCode: dec.sectionCode,
               requirementTitle: dec.requirementTitle,
               frameworkId: dec.frameworkId,
               statutoryRationale: dec.rationale || dec.ruleEvaluationSummary,
-              issue: 'Applicable statutory requirement has no mapped tenant controls.',
-              remediation: 'Instantiate or map an operational control to satisfy this requirement.',
+              applicabilityStatus: dec.status,
+              issue:
+                mappedControls.length === 0
+                  ? 'Applicable statutory requirement has no mapped tenant controls.'
+                  : 'Mapped controls do not have current, independently reviewed effectiveness assurance.',
+              remediation:
+                mappedControls.length === 0
+                  ? 'Map a governed operational control to this requirement.'
+                  : 'Complete the evidence-backed independent control review workflow.',
             });
           }
         } else if (dec.status === 'review_required') {
@@ -244,9 +364,8 @@ export async function processExportJob(
       );
     } else if (job.exportType === 'gdpr_ropa_xlsx' || job.exportType === 'framework_readiness_pdf') {
       const ropaSnap = await tenantRef.collection('ropa_entries').get();
-      const controlsSnap = await tenantRef.collection('controls').get();
       const ropaData = ropaSnap.docs.map((d) => d.data());
-      const controlsData = controlsSnap.docs.map((d) => d.data());
+      const controlsData = await verifiedControlExportRows(tenantId);
 
       fileName = `${job.exportType}_${tenantId}_${Date.now()}.json`;
       fileContent = JSON.stringify(

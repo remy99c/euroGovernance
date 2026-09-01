@@ -79,6 +79,10 @@ export interface TenantSummaryMetrics {
   id: string;
   tenantId: string;
   lastMaterializedAt: string;
+  /** Latest instant at which this cached projection may be displayed. */
+  validUntil: string;
+  /** Hash of every source document path and update version used. */
+  sourceFingerprint: string;
   totalControlsCount: number;
   implementedControlsCount: number;
   overallComplianceScore: number;

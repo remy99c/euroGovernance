@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -75,7 +74,7 @@ describe('Multi-Tenant Firestore Security Rules Isolation Tests', () => {
     await assertFails(crossTenantRef.get());
   });
 
-  test('Allows Tenant A member to read Tenant A controls', async () => {
+  test('Requires Tenant A members to use governed control projections', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
       await adminDb.doc(`tenants/${tenantA}`).set({ id: tenantA, status: 'active' });
@@ -95,7 +94,7 @@ describe('Multi-Tenant Firestore Security Rules Isolation Tests', () => {
     const aliceDb = testEnv.authenticatedContext(userA, { email: 'alice@tenant-a.com' }).firestore();
     const controlRef = aliceDb.doc(`tenants/${tenantA}/controls/ctl_01`);
 
-    await assertSucceeds(controlRef.get());
+    await assertFails(controlRef.get());
   });
 
   test('Auditor role is read-only and cannot mutate controls', async () => {

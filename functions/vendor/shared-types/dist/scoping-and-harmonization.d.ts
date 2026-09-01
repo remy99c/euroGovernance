@@ -176,7 +176,12 @@ export interface ControlObligationCoverage {
     sectionCode: string;
     requirementTitle: string;
     mappingType: ControlMappingType;
+    /** The library/cross-walk strength of the mapping; it is not assurance. */
+    mappingCoverageRatio: number;
+    /** Current assured coverage. This is zero unless the control artifact is verified and current. */
     coverageRatio: number;
+    countsAsCovered: boolean;
+    assuranceStatus: 'assured_current' | 'mapped_unassured' | 'mapping_unverified';
     isDirect: boolean;
     statutoryRationale: string;
     auditExplanation: string;
@@ -188,11 +193,20 @@ export interface ControlHarmonizedCoverage {
     domain: string;
     status: ControlImplementationStatus;
     healthScore: number;
+    currentArtifactVerified: boolean;
+    assuranceTrusted: boolean;
+    assuranceReason: string;
     isHarmonized: boolean;
+    totalObligationsMapped: number;
     totalObligationsSatisfied: number;
     frameworksCovered: string[];
     obligations: ControlObligationCoverage[];
     coverageSummaryExplanation: string;
+}
+export interface ControlCoverageAssuranceContext {
+    currentArtifactVerified: boolean;
+    assuranceTrusted: boolean;
+    assuranceReason: string;
 }
 /**
  * 1. Tenant Framework Adoption (/tenants/{tenantId}/adopted_frameworks/{frameworkId})
@@ -621,7 +635,7 @@ export declare function instantiateTenantGRC(input: InstantiationInput): Instant
 /**
  * Builds an explainable "One Control, Many Obligations" coverage report for users and auditors.
  */
-export declare function buildControlCoverageSummary(control: TenantControlInstance, allRequirements: Requirement[], canonicalMappings?: CanonicalControlMapping[], frameworks?: Framework[]): ControlHarmonizedCoverage;
+export declare function buildControlCoverageSummary(control: TenantControlInstance, allRequirements: Requirement[], canonicalMappings?: CanonicalControlMapping[], frameworks?: Framework[], assurance?: ControlCoverageAssuranceContext): ControlHarmonizedCoverage;
 /**
  * Evaluates tenant regulatory scope facts against adopted frameworks to derive
  * explicit, typed statutory obligations, required registers, assessments, and operational records.
@@ -652,6 +666,8 @@ export interface FrameworkCoverageMetrics {
     deferredRequirementsCount: number;
     totalControlsCount: number;
     implementedControlsCount: number;
+    /** Applicable/inherited requirements backed by a current authoritative effective mapped control. */
+    coveredRequirementsCount: number;
     harmonizedControlsCount: number;
     openGapsCount: number;
     overdueReviewsCount: number;
@@ -666,6 +682,7 @@ export interface TenantFrameworkCoverageDashboardData {
     totalApplicableCount: number;
     totalNonApplicableCount: number;
     totalReviewNeededCount: number;
+    totalCoveredRequirementsCount: number;
     totalControlsCount: number;
     totalHarmonizedControlsCount: number;
     totalOpenGapsCount: number;

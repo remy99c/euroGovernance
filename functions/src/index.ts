@@ -28,7 +28,11 @@ export {
   updateTenantControl,
   deleteTenantControl,
   recordControlReview,
+  decideControlReview,
   listTenantControls,
+  getTenantControlDetail,
+  getTenantControlHistory,
+  listTenantControlReviewers,
 } from './handlers/controls.js';
 
 // Policy Module Handlers

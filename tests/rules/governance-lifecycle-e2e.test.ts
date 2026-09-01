@@ -407,10 +407,16 @@ describe('End-to-End Governance Lifecycle & Multi-Tenant Emulator Test Pack', ()
           .set(unifiedControl);
       });
 
-      // Verify harmonization flag and dual-framework coverage
-      const snap = await compDb.doc(`tenants/${tenantA}/controls/ctl_crypto_unified`).get();
-      expect(snap.data()?.isHarmonized).toBe(true);
-      expect(snap.data()?.frameworkIds).toEqual(['gdpr', 'iso_27001']);
+      // Raw controls cannot bypass the governed read projection. The fixture
+      // shape remains verifiable in the trusted test context.
+      await assertFails(compDb.doc(`tenants/${tenantA}/controls/ctl_crypto_unified`).get());
+      let persistedControl: Record<string, unknown> | undefined;
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const snap = await context.firestore().doc(`tenants/${tenantA}/controls/ctl_crypto_unified`).get();
+        persistedControl = snap.data();
+      });
+      expect(persistedControl?.isHarmonized).toBe(true);
+      expect(persistedControl?.frameworkIds).toEqual(['gdpr', 'iso_27001']);
     });
   });
 

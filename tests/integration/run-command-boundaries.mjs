@@ -1,5 +1,6 @@
 await import('./certification-command-boundary.mjs');
 await import('./policy-command-boundary.mjs');
+await import('./control-command-boundary.mjs');
 await import('./tenant-provisioning.mjs');
 await import('./operational-command-boundary.mjs');
 await import('./storage-admin-compatibility.mjs');

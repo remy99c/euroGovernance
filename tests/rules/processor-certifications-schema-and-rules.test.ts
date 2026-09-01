@@ -1867,8 +1867,7 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       expect(controlsForAwsCert.map((c) => c.id)).toContain('ctl_encryption_transit');
     });
 
-    it('evaluates control third-party assurance support with attached evidence details and coverage scoring', () => {
-      // Test control with single 100% valid supporting certification
+    it('fails closed for legacy processor assurance without governed certification and evidence artifacts', () => {
       const support = evaluateControlProcessorAssuranceSupport(
         mockControls[1]!, // ctl_encryption_transit
         mockCerts,
@@ -1880,10 +1879,10 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       expect(support.controlId).toBe('ctl_encryption_transit');
       expect(support.controlCode).toBe('SEC-CRY-02');
       expect(support.totalLinkedCertifications).toBe(1);
-      expect(support.validAssuranceCount).toBe(1);
-      expect(support.expiredAssuranceCount).toBe(0);
-      expect(support.hasSufficientAssurance).toBe(true);
-      expect(support.assuranceCoverageScore).toBe(100);
+      expect(support.validAssuranceCount).toBe(0);
+      expect(support.expiredAssuranceCount).toBe(1);
+      expect(support.hasSufficientAssurance).toBe(false);
+      expect(support.assuranceCoverageScore).toBe(0);
 
       // Verify item details and attached evidence traceability
       expect(support.items.length).toBe(1);
@@ -1892,12 +1891,9 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       expect(awsItem.standardDisplayName).toBe('ISO/IEC 27001:2022 (ISMS)');
       expect(awsItem.certificateOrReportNumber).toBe('EY-AWS-ISO27001-2025');
       expect(awsItem.isCurrent).toBe(true);
-      expect(awsItem.isSufficient).toBe(true);
-      expect(awsItem.hasAttachedEvidence).toBe(true);
-      expect(awsItem.evidenceDocuments.length).toBe(1);
-      expect(awsItem.evidenceDocuments[0]!.fileHashSha256).toBe(
-        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
-      );
+      expect(awsItem.isSufficient).toBe(false);
+      expect(awsItem.hasAttachedEvidence).toBe(false);
+      expect(awsItem.evidenceDocuments).toEqual([]);
     });
 
     it('evaluates mixed valid and expired processor certifications supporting a vendor management control', () => {
@@ -1911,14 +1907,14 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       );
 
       expect(support.totalLinkedCertifications).toBe(2);
-      expect(support.validAssuranceCount).toBe(1);
-      expect(support.expiredAssuranceCount).toBe(1);
+      expect(support.validAssuranceCount).toBe(0);
+      expect(support.expiredAssuranceCount).toBe(2);
       expect(support.hasSufficientAssurance).toBe(false); // Mixed assurance -> not 100% sufficient
-      expect(support.assuranceCoverageScore).toBe(50); // 1 out of 2 valid = 50%
+      expect(support.assuranceCoverageScore).toBe(0);
       expect(support.supportingProcessorsCount).toBe(2);
 
       const awsGroup = support.supportingProcessors.find((p) => p.processorProfileId === 'prof_aws_infra');
-      expect(awsGroup?.hasCurrentAssurance).toBe(true);
+      expect(awsGroup?.hasCurrentAssurance).toBe(false);
       expect(awsGroup?.criticality).toBe('critical');
 
       const snowflakeGroup = support.supportingProcessors.find((p) => p.processorProfileId === 'prof_snowflake_dw');
@@ -1941,10 +1937,10 @@ describe('ProcessorCertifications Schema, Validation, Security Rules & Integrity
       expect(awsEntry).toBeDefined();
       expect(awsEntry?.criticality).toBe('critical');
       expect(awsEntry?.supportedControlsCount).toBe(2);
-      expect(awsEntry?.validControlsCount).toBe(2);
-      expect(awsEntry?.gapsCount).toBe(0);
-      expect(awsEntry?.controlSupportMap['ctl_vendor_mgmt_01']?.hasCurrentAssurance).toBe(true);
-      expect(awsEntry?.controlSupportMap['ctl_encryption_transit']?.hasCurrentAssurance).toBe(true);
+      expect(awsEntry?.validControlsCount).toBe(0);
+      expect(awsEntry?.gapsCount).toBe(2);
+      expect(awsEntry?.controlSupportMap['ctl_vendor_mgmt_01']?.hasCurrentAssurance).toBe(false);
+      expect(awsEntry?.controlSupportMap['ctl_encryption_transit']?.hasCurrentAssurance).toBe(false);
 
       // 2. Snowflake Matrix Entry
       const snowflakeEntry = matrix.find((m) => m.processorProfileId === 'prof_snowflake_dw');

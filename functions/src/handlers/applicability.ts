@@ -1,7 +1,16 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { appendAuditLogInBatch, recordAuditLog } from '../lib/audit.js';
+import {
+  appendAuditLogInBatch,
+  appendAuditLogInTransaction,
+} from '../lib/audit.js';
+import { AUTHORITATIVE_CALLABLE_OPTIONS } from '../lib/command-boundary.js';
+import {
+  ControlTrustResult,
+  verifyControlCurrentArtifact,
+} from './controls.js';
 import {
   ApplicabilityRule,
   TenantScopeFact,
@@ -20,6 +29,11 @@ import {
   ApplicabilityStatus,
   CANONICAL_APPLICABILITY_RULES,
   CANONICAL_MASTER_DATA,
+  Control,
+  ControlImplementationStatus,
+  Framework,
+  Requirement,
+  CanonicalControlMapping,
 } from '@eurogovernance/shared-types';
 
 const COMPLIANCE_WRITE_ROLES = [
@@ -39,6 +53,214 @@ export interface EvaluateTenantApplicabilityInput {
 export interface TestRuleEvaluationInput {
   tenantId: string;
   rule: ApplicabilityRule;
+}
+
+const COVERAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CONTROL_LIST_PAGE_SIZE_DEFAULT = 50;
+const CONTROL_LIST_PAGE_SIZE_MAX = 100;
+const COVERAGE_LIBRARY_QUERY_LIMIT = 200;
+const CONTROL_IMPLEMENTATION_STATUSES = new Set<ControlImplementationStatus>([
+  'not_started',
+  'in_progress',
+  'partially_implemented',
+  'implemented',
+  'not_applicable',
+]);
+
+function requireCoverageId(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || !COVERAGE_ID_PATTERN.test(value)) {
+    throw new HttpsError('invalid-argument', `${fieldName} is invalid.`);
+  }
+  return value;
+}
+
+function optionalCoverageId(value: unknown, fieldName: string): string | undefined {
+  return value === undefined || value === null || value === ''
+    ? undefined
+    : requireCoverageId(value, fieldName);
+}
+
+function boundedText(value: unknown, fallback: string, maximumLength: number): string {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= maximumLength
+    ? normalized
+    : fallback;
+}
+
+function boundedIds(value: unknown, maximumItems: number): string[] {
+  if (!Array.isArray(value) || value.length > maximumItems) return [];
+  const result: string[] = [];
+  for (const candidate of value) {
+    if (typeof candidate !== 'string' || !COVERAGE_ID_PATTERN.test(candidate)) return [];
+    if (!result.includes(candidate)) result.push(candidate);
+  }
+  return result.sort();
+}
+
+function truthfulControlProjection(
+  document: FirebaseFirestore.DocumentSnapshot,
+  trust: ControlTrustResult
+): Record<string, unknown> {
+  const raw = document.data() as Partial<Control> | undefined;
+  const recordedStatus = CONTROL_IMPLEMENTATION_STATUSES.has(raw?.status as ControlImplementationStatus)
+    ? (raw?.status as ControlImplementationStatus)
+    : 'not_started';
+  const status =
+    trust.assuranceTrusted ||
+    (recordedStatus !== 'implemented' && recordedStatus !== 'partially_implemented')
+      ? recordedStatus
+      : 'in_progress';
+  const frameworkIds = trust.workflowTrusted ? boundedIds(raw?.frameworkIds, 10) : [];
+  const requirementIds = trust.workflowTrusted ? boundedIds(raw?.requirementIds, 20) : [];
+  const workflowTrust = trust.workflowTrusted
+    ? raw?.workflowTrust ?? 'governed_unassured'
+    : 'legacy_unverified';
+  const assuranceStatus = trust.assuranceTrusted
+    ? raw?.assuranceStatus ?? 'effective'
+    : trust.assuranceReason === 'expired'
+      ? 'expired'
+      : raw?.assuranceStatus === 'not_applicable' && trust.workflowTrusted
+        ? 'not_applicable'
+        : raw?.assuranceStatus === 'pending_review' && trust.workflowTrusted
+          ? 'pending_review'
+          : 'untested';
+
+  return {
+    id: document.id,
+    code: boundedText(raw?.code, 'UNVERIFIED', 64),
+    title: boundedText(raw?.title, 'Unverified control record', 240),
+    domain: boundedText(raw?.domain, 'unverified', 80),
+    frameworkIds,
+    requirementIds,
+    status,
+    recordedStatus,
+    healthScore:
+      trust.assuranceTrusted && typeof raw?.healthScore === 'number'
+        ? Math.min(100, Math.max(0, raw.healthScore))
+        : 0,
+    workflowTrust,
+    assuranceStatus,
+    assuranceReason: trust.assuranceReason,
+    currentArtifactVerified: trust.workflowTrusted,
+    assuranceTrusted: trust.assuranceTrusted,
+    isHarmonized: frameworkIds.length > 1,
+    lastReviewDate: trust.assuranceTrusted ? raw?.lastReviewDate ?? null : null,
+    nextReviewDate: trust.workflowTrusted ? raw?.nextReviewDate ?? null : null,
+    retiredAt: trust.workflowTrusted ? raw?.retiredAt ?? null : null,
+  };
+}
+
+async function loadCoverageLibrary(
+  frameworkIds: string[],
+  requirementIds: string[]
+): Promise<{
+  frameworks: Framework[];
+  requirements: Requirement[];
+  canonicalMappings: CanonicalControlMapping[];
+}> {
+  if (frameworkIds.length > 10 || requirementIds.length > 20) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'The control mapping exceeds the bounded coverage-report limit.'
+    );
+  }
+
+  const canonicalFrameworks = new Map(
+    CANONICAL_MASTER_DATA.frameworks.map((framework) => [framework.id, framework])
+  );
+  const canonicalRequirements = new Map(
+    CANONICAL_MASTER_DATA.requirements.map((requirement) => [requirement.id, requirement])
+  );
+  const frameworkRefs = frameworkIds.map((frameworkId) =>
+    db.doc(`frameworks/${frameworkId}`)
+  );
+  const requirementRefs = requirementIds.flatMap((requirementId) =>
+    frameworkIds.map((frameworkId) =>
+      db.doc(`frameworks/${frameworkId}/requirements/${requirementId}`)
+    )
+  );
+  const snapshots =
+    frameworkRefs.length + requirementRefs.length > 0
+      ? await db.getAll(...frameworkRefs, ...requirementRefs)
+      : [];
+  const frameworks = frameworkIds.flatMap((frameworkId, index) => {
+    const snapshot = snapshots[index];
+    const data = snapshot?.data() as Framework | undefined;
+    if (
+      snapshot?.exists &&
+      (data?.id === undefined || data.id === frameworkId)
+    ) {
+      return [{ ...data, id: frameworkId } as Framework];
+    }
+    const canonical = canonicalFrameworks.get(frameworkId);
+    return canonical ? [canonical] : [];
+  });
+  const requirementOffset = frameworkRefs.length;
+  const requirements = requirementIds.flatMap((requirementId, requirementIndex) => {
+    for (let frameworkIndex = 0; frameworkIndex < frameworkIds.length; frameworkIndex++) {
+      const snapshot = snapshots[
+        requirementOffset + requirementIndex * frameworkIds.length + frameworkIndex
+      ];
+      const data = snapshot?.data() as Requirement | undefined;
+      const frameworkId = frameworkIds[frameworkIndex]!;
+      if (
+        snapshot?.exists &&
+        (data?.id === undefined || data.id === requirementId) &&
+        (data?.frameworkId === undefined || data.frameworkId === frameworkId)
+      ) {
+        return [{ ...data, id: requirementId, frameworkId } as Requirement];
+      }
+    }
+    const canonical = canonicalRequirements.get(requirementId);
+    return canonical && frameworkIds.includes(canonical.frameworkId) ? [canonical] : [];
+  });
+
+  const canonicalMappings = CANONICAL_MASTER_DATA.canonicalControlMappings.filter(
+    (mapping) =>
+      requirementIds.includes(mapping.sourceRequirementId) ||
+      requirementIds.includes(mapping.targetRequirementId)
+  );
+  if (requirementIds.length === 0) {
+    return { frameworks, requirements, canonicalMappings };
+  }
+  const [sourceMappings, targetMappings] = await Promise.all([
+    db
+      .collection('control_mappings')
+      .where('sourceRequirementId', 'in', requirementIds)
+      .limit(COVERAGE_LIBRARY_QUERY_LIMIT + 1)
+      .get(),
+    db
+      .collection('control_mappings')
+      .where('targetRequirementId', 'in', requirementIds)
+      .limit(COVERAGE_LIBRARY_QUERY_LIMIT + 1)
+      .get(),
+  ]);
+  if (
+    sourceMappings.size > COVERAGE_LIBRARY_QUERY_LIMIT ||
+    targetMappings.size > COVERAGE_LIBRARY_QUERY_LIMIT
+  ) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'The canonical mapping set exceeds the bounded coverage-report limit.'
+    );
+  }
+  const mappingsById = new Map(canonicalMappings.map((mapping) => [mapping.id, mapping]));
+  for (const document of [...sourceMappings.docs, ...targetMappings.docs]) {
+    const data = document.data() as CanonicalControlMapping;
+    if (
+      (data.id === undefined || data.id === document.id) &&
+      (requirementIds.includes(data.sourceRequirementId) ||
+        requirementIds.includes(data.targetRequirementId))
+    ) {
+      mappingsById.set(document.id, { ...data, id: document.id });
+    }
+  }
+  return {
+    frameworks,
+    requirements,
+    canonicalMappings: [...mappingsById.values()],
+  };
 }
 
 /**
@@ -310,30 +532,130 @@ export interface InstantiateTenantControlsInput {
 /**
  * 4. Tenant GRC Instantiation from Applicability Decisions
  */
-export const instantiateTenantFrameworkControls = onCall<InstantiateTenantControlsInput>(async (request) => {
-  const { tenantId, frameworkId, defaultOwnerId } = request.data || {};
-  if (!tenantId || typeof tenantId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Missing or invalid tenantId.');
+export const instantiateTenantFrameworkControls = onCall<InstantiateTenantControlsInput>(
+  AUTHORITATIVE_CALLABLE_OPTIONS,
+  async (request) => {
+  const input = request.data;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new HttpsError('invalid-argument', 'Instantiation input must be an object.');
   }
+  const unknown = Object.keys(input).filter(
+    (key) => !['tenantId', 'frameworkId', 'defaultOwnerId'].includes(key)
+  );
+  if (unknown.length > 0) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Instantiation input contains unsupported field(s): ${unknown.join(', ')}.`
+    );
+  }
+  const tenantId = requireCoverageId(input.tenantId, 'tenantId');
+  const frameworkId = optionalCoverageId(input.frameworkId, 'frameworkId');
+  const defaultOwnerId = optionalCoverageId(input.defaultOwnerId, 'defaultOwnerId');
 
   const authCtx = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
   const ownerId = defaultOwnerId || authCtx.userId;
+  const ownerSnapshot = await db
+    .doc(`tenants/${tenantId}/memberships/${ownerId}`)
+    .get();
+  const owner = ownerSnapshot.data();
+  if (
+    !ownerSnapshot.exists ||
+    owner?.tenantId !== tenantId ||
+    (owner?.userId !== undefined && owner.userId !== ownerId) ||
+    owner?.status !== 'active' ||
+    ![
+      'tenant_admin',
+      'compliance_manager',
+      'security_manager',
+      'privacy_manager',
+      'ai_governance_manager',
+      'contributor',
+    ].includes(String(owner?.role))
+  ) {
+    throw new HttpsError(
+      'failed-precondition',
+      'The default control owner must be an active tenant implementation role.'
+    );
+  }
 
   // 1. Fetch adopted frameworks for tenant
-  const adoptedSnap = await db.collection('tenants').doc(tenantId).collection('adopted_frameworks').get();
-  const adoptedFrameworkIds = adoptedSnap.docs
-    .map((d) => d.id)
-    .filter((id) => !frameworkId || id === frameworkId);
+  const adoptedSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('adopted_frameworks')
+    .limit(21)
+    .get();
+  if (adoptedSnap.size > 20) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'Adopted framework scope exceeds the synchronous instantiation limit.'
+    );
+  }
+  const eligibleAdoptions = adoptedSnap.docs.filter((document) => {
+    const adoption = document.data();
+    return (
+      adoption.tenantId === tenantId &&
+      adoption.frameworkId === document.id &&
+      ['in_scoping', 'adopted', 'active'].includes(String(adoption.status)) &&
+      (!frameworkId || document.id === frameworkId)
+    );
+  });
+  const adoptedFrameworkIds = eligibleAdoptions.map((document) => document.id);
+  if (frameworkId && !adoptedFrameworkIds.includes(frameworkId)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'The requested framework is not in an active adopted lifecycle state.'
+    );
+  }
+  if (adoptedFrameworkIds.length === 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      'No active adopted frameworks are available for control instantiation.'
+    );
+  }
 
   // 2. Fetch applicability decisions
-  const decisionsSnap = await db.collection('tenants').doc(tenantId).collection('applicability_decisions').get();
+  const decisionsSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('applicability_decisions')
+    .limit(1_001)
+    .get();
+  if (decisionsSnap.size > 1_000) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'Applicability decisions exceed the synchronous instantiation limit.'
+    );
+  }
   const decisions: TenantApplicabilityDecision[] = decisionsSnap.docs.map((d) => d.data() as TenantApplicabilityDecision);
 
   // 3. Fetch existing requirement instances and control instances
-  const reqInstSnap = await db.collection('tenants').doc(tenantId).collection('requirement_instances').get();
+  const reqInstSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('requirement_instances')
+    .limit(1_001)
+    .get();
+  if (reqInstSnap.size > 1_000) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'Requirement instances exceed the synchronous instantiation limit.'
+    );
+  }
   const existingReqInstances: TenantRequirementInstance[] = reqInstSnap.docs.map((d) => d.data() as TenantRequirementInstance);
 
-  const ctrlInstSnap = await db.collection('tenants').doc(tenantId).collection('controls').get();
+  const ctrlInstSnap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('controls')
+    .limit(1_001)
+    .get();
+  if (ctrlInstSnap.size > 1_000) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'Control instances exceed the synchronous instantiation limit.'
+    );
+  }
   const existingControlInstances: TenantControlInstance[] = ctrlInstSnap.docs.map((d) => d.data() as TenantControlInstance);
 
   // 4. Fetch Master Catalog
@@ -357,50 +679,120 @@ export const instantiateTenantFrameworkControls = onCall<InstantiateTenantContro
     existingControlInstances: existingControlInstances,
   });
 
-  // 6. Batch commit requirement instances & control instances
-  const batch = db.batch();
+  // 6. Commit against a transactionally revalidated adoption snapshot. This
+  // compatibility generator remains create-only for controls, but it must not
+  // resurrect or generate from a framework retired after the initial read.
+  let safeControlInstances: Array<TenantControlInstance & {
+    workflowTrust: 'legacy_unverified';
+    assuranceStatus: 'untested';
+  }> = [];
+
+  if (
+    result.requirementInstances.length +
+      result.controlInstances.length +
+      result.controlMappings.length +
+      2 >
+    450
+  ) {
+    throw new HttpsError(
+      'resource-exhausted',
+      'Instantiation exceeds the bounded atomic write limit; split the framework scope.'
+    );
+  }
+
+  await db.runTransaction(async (transaction) => {
+    const adoptionRefs = eligibleAdoptions.map((document) => document.ref);
+    const controlRefs = result.controlInstances.map((control) =>
+      db.doc(`tenants/${tenantId}/controls/${control.id}`)
+    );
+    const [adoptionSnapshots, controlSnapshots] = await Promise.all([
+      transaction.getAll(...adoptionRefs),
+      controlRefs.length > 0 ? transaction.getAll(...controlRefs) : Promise.resolve([]),
+    ]);
+    for (const adoptionSnapshot of adoptionSnapshots) {
+      const adoption = adoptionSnapshot.data();
+      if (
+        !adoptionSnapshot.exists ||
+        adoption?.tenantId !== tenantId ||
+        adoption?.frameworkId !== adoptionSnapshot.id ||
+        !['in_scoping', 'adopted', 'active'].includes(String(adoption?.status))
+      ) {
+        throw new HttpsError(
+          'failed-precondition',
+          'An adopted framework was retired or changed while controls were being generated.'
+        );
+      }
+    }
 
     for (const reqInst of result.requirementInstances) {
-    const docRef = db.collection('tenants').doc(tenantId).collection('requirement_instances').doc(reqInst.id);
-    batch.set(docRef, reqInst, { merge: true });
-  }
+      transaction.set(
+        db.doc(`tenants/${tenantId}/requirement_instances/${reqInst.id}`),
+        reqInst,
+        { merge: true }
+      );
+    }
 
-  for (const ctrlInst of result.controlInstances) {
-    const docRef = db.collection('tenants').doc(tenantId).collection('controls').doc(ctrlInst.id);
-    batch.set(docRef, ctrlInst, { merge: true });
-  }
+    const nextSafeControls: typeof safeControlInstances = [];
+    for (let index = 0; index < result.controlInstances.length; index += 1) {
+      if (controlSnapshots[index]?.exists) continue;
+      const ctrlInst = result.controlInstances[index]!;
+      const safeControl = {
+        ...ctrlInst,
+        status: 'not_started' as const,
+        healthScore: 0,
+        lastReviewDate: null,
+        nextReviewDate: null,
+        workflowTrust: 'legacy_unverified' as const,
+        assuranceStatus: 'untested' as const,
+        implementationNotes: ctrlInst.implementationNotes
+          ? `${ctrlInst.implementationNotes} This framework-derived draft is not assurance until governed and independently reviewed.`
+          : 'Framework-derived draft. Rebaseline and independently review before relying on it as assurance.',
+      };
+      nextSafeControls.push(safeControl);
+      transaction.create(controlRefs[index]!, safeControl);
+    }
 
-  for (const mapping of result.controlMappings) {
-    const docRef = db.collection('tenants').doc(tenantId).collection('control_mappings').doc(mapping.id);
-    batch.set(docRef, mapping, { merge: true });
-  }
+    for (const mapping of result.controlMappings) {
+      transaction.set(
+        db.doc(`tenants/${tenantId}/control_mappings/${mapping.id}`),
+        mapping,
+        { merge: true }
+      );
+    }
 
-  await batch.commit();
-
-  await recordAuditLog({
-    tenantId,
-    actorId: authCtx.userId,
-    actorEmail: authCtx.email,
-    actorRole: authCtx.role,
-    entityType: 'control',
-    entityId: frameworkId || 'harmonized_catalog',
-    action: 'create',
-    afterSummary: {
-      createdRequirementsCount: result.createdRequirementsCount,
-      updatedRequirementsCount: result.updatedRequirementsCount,
-      createdControlsCount: result.createdControlsCount,
-      updatedControlsCount: result.updatedControlsCount,
-      harmonizedControlsCount: result.harmonizedControlsCount,
-    },
-    source: 'cloud_function',
-    workflowContext: `Instantiated ${result.createdControlsCount} controls and synchronized ${result.requirementInstances.length} requirements`,
+    safeControlInstances = nextSafeControls;
+    appendAuditLogInTransaction(transaction, {
+      tenantId,
+      actorId: authCtx.userId,
+      actorEmail: authCtx.email,
+      actorRole: authCtx.role,
+      entityType: 'control',
+      entityId: frameworkId || 'harmonized_catalog',
+      action: 'create',
+      afterSummary: {
+        createdRequirementsCount: result.createdRequirementsCount,
+        updatedRequirementsCount: result.updatedRequirementsCount,
+        createdControlsCount: nextSafeControls.length,
+        updatedControlsCount: 0,
+        governedControlsSkipped:
+          result.controlInstances.length - nextSafeControls.length,
+        harmonizedControlsCount: result.harmonizedControlsCount,
+      },
+      source: 'cloud_function',
+      workflowContext: `Instantiated ${nextSafeControls.length} unassured control drafts and synchronized ${result.requirementInstances.length} requirements from active adopted frameworks`,
+    });
+    transaction.delete(db.doc(`tenants/${tenantId}/summary_metrics/current`));
   });
 
   return {
     success: true,
     ...result,
+    createdControlsCount: safeControlInstances.length,
+    updatedControlsCount: 0,
+    controlInstances: safeControlInstances,
   };
-});
+  }
+);
 
 /**
  * 5. List Tenant Requirement Instances
@@ -430,100 +822,204 @@ export const listTenantRequirementInstances = onCall(async (request) => {
 /**
  * 6. List Tenant Control Instances
  */
-export const listTenantControlInstances = onCall(async (request) => {
-  const { tenantId, frameworkId, domain, isHarmonized } = request.data || {};
-  if (!tenantId || typeof tenantId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Missing tenantId.');
-  }
+export const listTenantControlInstances = onCall(
+  AUTHORITATIVE_CALLABLE_OPTIONS,
+  async (request) => {
+    const input = request.data || {};
+    const tenantId = requireCoverageId(input.tenantId, 'tenantId');
+    const frameworkId = optionalCoverageId(input.frameworkId, 'frameworkId');
+    const domain = optionalCoverageId(input.domain, 'domain');
+    const cursor = optionalCoverageId(input.cursor, 'cursor');
+    const isHarmonized =
+      typeof input.isHarmonized === 'boolean' ? input.isHarmonized : undefined;
+    const pageSize =
+      input.pageSize === undefined
+        ? CONTROL_LIST_PAGE_SIZE_DEFAULT
+        : input.pageSize;
+    if (
+      !Number.isSafeInteger(pageSize) ||
+      pageSize < 1 ||
+      pageSize > CONTROL_LIST_PAGE_SIZE_MAX
+    ) {
+      throw new HttpsError(
+        'invalid-argument',
+        `pageSize must be an integer from 1 to ${CONTROL_LIST_PAGE_SIZE_MAX}.`
+      );
+    }
 
-  await requireTenantMember(request, tenantId);
+    await requireTenantMember(request, tenantId);
 
-  let q = db.collection('tenants').doc(tenantId).collection('controls') as FirebaseFirestore.Query;
-  if (frameworkId) {
-    q = q.where('frameworkIds', 'array-contains', frameworkId);
-  }
-  if (domain) {
-    q = q.where('domain', '==', domain);
-  }
-  if (typeof isHarmonized === 'boolean') {
-    q = q.where('isHarmonized', '==', isHarmonized);
-  }
+    let query: FirebaseFirestore.Query = db
+      .collection(`tenants/${tenantId}/controls`)
+      .orderBy(FieldPath.documentId());
+    if (frameworkId) query = query.where('frameworkIds', 'array-contains', frameworkId);
+    if (domain) query = query.where('domain', '==', domain);
+    if (cursor) query = query.startAfter(cursor);
 
-  const snap = await q.get();
-  const controls = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // This compatibility endpoint intentionally returns the same kind of
+    // bounded, verified projection as the governed controls API. It never
+    // spreads raw Firestore records into the response.
+    const snapshot = await query.limit(pageSize + 1).get();
+    const pageDocuments = snapshot.docs.slice(0, pageSize);
+    const trust = await Promise.all(
+      pageDocuments.map((document) =>
+        verifyControlCurrentArtifact(tenantId, document)
+      )
+    );
+    const projected = pageDocuments.map((document, index) =>
+      truthfulControlProjection(document, trust[index]!)
+    );
+    const controls =
+      isHarmonized === undefined
+        ? projected
+        : projected.filter((control) => control.isHarmonized === isHarmonized);
+    const truncated = snapshot.size > pageSize;
 
-  return { controls };
-});
+    return {
+      controls,
+      count: controls.length,
+      truncated,
+      nextCursor: truncated ? pageDocuments.at(-1)?.id ?? null : null,
+      projectionTrust: 'server_verified_fail_closed',
+    };
+  }
+);
 
 /**
  * 7. Get Tenant Control Harmonized Coverage Report ("One Control, Many Obligations")
  */
-export const getTenantControlCoverageReport = onCall(async (request) => {
-  const { tenantId, controlId } = request.data || {};
-  if (!tenantId || typeof tenantId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Missing tenantId.');
+export const getTenantControlCoverageReport = onCall(
+  AUTHORITATIVE_CALLABLE_OPTIONS,
+  async (request) => {
+    const input = request.data || {};
+    const tenantId = requireCoverageId(input.tenantId, 'tenantId');
+    const controlId = requireCoverageId(input.controlId, 'controlId');
+
+    await requireTenantMember(request, tenantId);
+
+    const controlSnapshot = await db.doc(`tenants/${tenantId}/controls/${controlId}`).get();
+    if (!controlSnapshot.exists) {
+      throw new HttpsError('not-found', `Control '${controlId}' not found.`);
+    }
+    const trust = await verifyControlCurrentArtifact(tenantId, controlSnapshot);
+    const projection = truthfulControlProjection(controlSnapshot, trust);
+    const frameworkIds = projection.frameworkIds as string[];
+    const requirementIds = projection.requirementIds as string[];
+    const library = await loadCoverageLibrary(frameworkIds, requirementIds);
+    const raw = controlSnapshot.data() as Partial<Control>;
+    const control: TenantControlInstance = {
+      id: controlId,
+      tenantId,
+      ownerId: trust.workflowTrusted
+        ? boundedText(raw.ownerId, 'unassigned', 128)
+        : 'unverified',
+      masterControlId:
+        trust.workflowTrusted && typeof raw.masterControlId === 'string'
+          ? raw.masterControlId
+          : null,
+      code: projection.code as string,
+      title: projection.title as string,
+      description: '',
+      domain: projection.domain as string,
+      frameworkIds,
+      requirementIds,
+      status: projection.status as ControlImplementationStatus,
+      healthScore: projection.healthScore as number,
+      enforcementMechanism: 'manual',
+      reviewFrequencyDays: 0,
+      lastReviewDate: projection.lastReviewDate as string | null,
+      nextReviewDate: projection.nextReviewDate as string | null,
+      implementationNotes: '',
+      isHarmonized: projection.isHarmonized as boolean,
+      canonicalMappingIds: [],
+      createdAt: '',
+      updatedAt: '',
+      createdBy: 'server_projection',
+      updatedBy: 'server_projection',
+    };
+    const coverage = buildControlCoverageSummary(
+      control,
+      library.requirements,
+      library.canonicalMappings,
+      library.frameworks,
+      {
+        currentArtifactVerified: trust.workflowTrusted,
+        assuranceTrusted: trust.assuranceTrusted,
+        assuranceReason: trust.assuranceReason,
+      }
+    );
+
+    return {
+      coverage,
+      projectionTrust: 'server_verified_fail_closed',
+    };
   }
-  if (!controlId || typeof controlId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Missing controlId.');
-  }
-
-  await requireTenantMember(request, tenantId);
-
-  const ctrlSnap = await db.collection('tenants').doc(tenantId).collection('controls').doc(controlId).get();
-  if (!ctrlSnap.exists) {
-    throw new HttpsError('not-found', `Control '${controlId}' not found.`);
-  }
-
-  const control = { id: ctrlSnap.id, ...ctrlSnap.data() } as TenantControlInstance;
-
-  // Load requirements & canonical mappings
-  const reqSnap = await db.collection('requirements').get();
-  const requirements = reqSnap.empty
-    ? CANONICAL_MASTER_DATA.requirements
-    : reqSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
-
-  const mappingSnap = await db.collection('control_mappings').get();
-  const canonicalMappings = mappingSnap.empty
-    ? CANONICAL_MASTER_DATA.canonicalControlMappings
-    : mappingSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
-
-  const fwSnap = await db.collection('frameworks').get();
-  const frameworks = fwSnap.empty
-    ? CANONICAL_MASTER_DATA.frameworks
-    : fwSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
-
-  const coverage = buildControlCoverageSummary(control, requirements, canonicalMappings, frameworks);
-
-  return { coverage };
-});
+);
 
 /**
  * 8. List Tenant Control Mappings
  */
-export const listTenantControlMappings = onCall(async (request) => {
-  const { tenantId, controlId, frameworkId, requirementId } = request.data || {};
-  if (!tenantId || typeof tenantId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Missing tenantId.');
-  }
+export const listTenantControlMappings = onCall(
+  AUTHORITATIVE_CALLABLE_OPTIONS,
+  async (request) => {
+    const input = request.data || {};
+    const tenantId = requireCoverageId(input.tenantId, 'tenantId');
+    const controlId = optionalCoverageId(input.controlId, 'controlId');
+    const frameworkId = optionalCoverageId(input.frameworkId, 'frameworkId');
+    const requirementId = optionalCoverageId(input.requirementId, 'requirementId');
+    const cursor = optionalCoverageId(input.cursor, 'cursor');
+    const pageSize = input.pageSize === undefined ? 50 : input.pageSize;
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new HttpsError('invalid-argument', 'pageSize must be an integer from 1 to 100.');
+    }
 
-  await requireTenantMember(request, tenantId);
+    await requireTenantMember(request, tenantId);
 
-  let q = db.collection('tenants').doc(tenantId).collection('control_mappings') as FirebaseFirestore.Query;
-  if (controlId) {
-    q = q.where('controlId', '==', controlId);
+    let query: FirebaseFirestore.Query = db
+      .collection(`tenants/${tenantId}/control_mappings`)
+      .orderBy(FieldPath.documentId());
+    if (controlId) query = query.where('controlId', '==', controlId);
+    if (frameworkId) query = query.where('frameworkId', '==', frameworkId);
+    if (requirementId) query = query.where('requirementId', '==', requirementId);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.limit(pageSize + 1).get();
+    const documents = snapshot.docs.slice(0, pageSize);
+    const mappings = documents.map((document) => {
+      const raw = document.data();
+      const mappingCoverageRatio =
+        typeof raw.coverageRatio === 'number' &&
+        Number.isFinite(raw.coverageRatio) &&
+        raw.coverageRatio >= 0 &&
+        raw.coverageRatio <= 1
+          ? raw.coverageRatio
+          : 0;
+      return {
+        id: document.id,
+        controlId: boundedText(raw.controlId, 'unverified', 128),
+        frameworkId: boundedText(raw.frameworkId, 'unverified', 128),
+        requirementId: boundedText(raw.requirementId, 'unverified', 128),
+        mappingType: boundedText(raw.mappingType, 'unverified', 40),
+        mappingCoverageRatio,
+        coverageRatio: 0,
+        countsAsCovered: false,
+        verificationStatus: 'legacy_unverified',
+        mappingRationale: boundedText(
+          raw.mappingRationale,
+          'Legacy mapping has not been verified by the governed control workflow.',
+          1_000
+        ),
+      };
+    });
+    const truncated = snapshot.size > pageSize;
+    return {
+      mappings,
+      count: mappings.length,
+      truncated,
+      nextCursor: truncated ? documents.at(-1)?.id ?? null : null,
+      warning: 'Legacy mapping records do not establish control effectiveness or requirement coverage.',
+    };
   }
-  if (frameworkId) {
-    q = q.where('frameworkId', '==', frameworkId);
-  }
-  if (requirementId) {
-    q = q.where('requirementId', '==', requirementId);
-  }
-
-  const snap = await q.get();
-  const mappings = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-  return { mappings };
-});
+);
 
 /**
  * 9. Evaluate Statutory Obligations (GDPR, EU AI Act, EU Data Act)

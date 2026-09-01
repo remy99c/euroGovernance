@@ -111,7 +111,7 @@ export function UIExecutivePostureHero({
             {score === null ? '—' : `${score}%`}
           </span>
           <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', marginTop: '2px' }}>
-            POSTURE
+            COVERAGE
           </span>
         </div>
 
@@ -119,7 +119,7 @@ export function UIExecutivePostureHero({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
             <span className="text-overline" style={{ color: 'var(--text-muted)' }}>
-              RECORDED COMPLIANCE INDEX
+              VERIFIED OBLIGATION COVERAGE
             </span>
             <UIBadge variant={badgeVariant} size="sm">
               {statusText || defaultStatus}
@@ -134,10 +134,10 @@ export function UIExecutivePostureHero({
               letterSpacing: '-0.02em',
             }}
           >
-            Compliance Posture
+            Compliance Readiness
           </h1>
           <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-            Calculated from current tenant records. This indicator is not an audit opinion.
+            Applicable and inherited requirements backed by current, independently reviewed controls. This materialized indicator is not an audit opinion.
           </p>
         </div>
       </div>
@@ -153,13 +153,13 @@ export function UIExecutivePostureHero({
         }}
       >
         <div>
-          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>IMPLEMENTED CONTROLS</div>
+          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>ASSURED EFFECTIVE CONTROLS</div>
           <div className="font-tabular" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', marginTop: '2px' }}>
             {implementedControlsCount} <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>/ {totalControlsCount}</span>
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, marginTop: '1px' }}>
             {totalControlsCount > 0
-              ? `${Math.round((implementedControlsCount / totalControlsCount) * 100)}% recorded implemented`
+              ? `${Math.round((implementedControlsCount / totalControlsCount) * 100)}% independently verified effective`
               : 'No controls recorded'}
           </div>
         </div>
@@ -167,12 +167,12 @@ export function UIExecutivePostureHero({
         <div style={{ width: '1px', height: '36px', backgroundColor: 'var(--border-subtle)' }} />
 
         <div>
-          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>APPROVED EVIDENCE</div>
+          <div className="text-overline" style={{ color: 'var(--text-muted)' }}>CURRENT VERIFIED EVIDENCE</div>
           <div className="font-tabular" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--accent-primary)', marginTop: '2px' }}>
             {approvedEvidenceCount}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '1px' }}>
-            Approval status recorded
+            Storage object and independent review verified
           </div>
         </div>
 

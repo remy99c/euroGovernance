@@ -622,12 +622,14 @@ export interface ProcessorInventoryResponse {
 }
 /**
  * Finds all processor certifications linked to a specific Control.
- * Checks both `cert.linkedControlIds` and `control.processorCertificationIds`.
+ * ProcessorCertification.linkedControlIds is the single relationship authority.
+ * Legacy inverse arrays on Control are deliberately ignored because they can be
+ * stale and are no longer mutated by governed control commands.
  */
 export declare function findProcessorCertificationsForControl(controlOrId: Control | string, certs: ProcessorCertification[]): ProcessorCertification[];
 /**
  * Finds all Controls linked to a specific ProcessorCertification.
- * Checks both `cert.linkedControlIds` and `control.processorCertificationIds`.
+ * ProcessorCertification.linkedControlIds is the single relationship authority.
  */
 export declare function findControlsForProcessorCertification(certOrId: ProcessorCertification | string, controls: Control[]): Control[];
 export interface ControlProcessorAssuranceItem {

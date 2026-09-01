@@ -309,7 +309,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
     }
   };
 
-  // Fetch One Control, Many Obligations coverage report
+  // Fetch a fail-closed mapping and current-assurance report.
   const handleInspectControlCoverage = async (controlId: string) => {
     try {
       const covFn = httpsCallable(functions, 'getTenantControlCoverageReport');
@@ -1004,13 +1004,13 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
               }}
             >
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                Active Tenant Controls
+                Generated Control Drafts
               </div>
               <div style={{ fontSize: '24px', fontWeight: 700, color: 'var(--accent-blue)', marginTop: '4px' }}>
                 {coverageData ? coverageData.totalControls : '—'}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--status-success)', marginTop: '4px' }}>
-                {coverageData ? `${coverageData.harmonizedControlsCount} harmonized multi-framework` : 'Not calculated'}
+                {coverageData ? `${coverageData.harmonizedControlsCount} multi-framework mappings (unassured)` : 'Not calculated'}
               </div>
             </div>
 
@@ -1064,8 +1064,13 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
             }}
           >
             <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '14px' }}>
-              🛡️ Active Controls & Multi-Obligation Coverage Matrix
+              🛡️ Generated Control Drafts & Requirement Mapping Matrix
             </h3>
+
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+              These records are starting points for implementation work. A mapping is not coverage until the
+              control has a verified current artifact and an independently approved effective review.
+            </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {(coverageData?.controls || []).map((c: any) => (
@@ -1096,13 +1101,13 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                             fontWeight: 600,
                           }}
                         >
-                          Harmonized ({c.requirementIds?.length || 0} mapped requirements)
+                          Multi-framework ({c.requirementIds?.length || 0} declared mappings)
                         </span>
                       )}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
                       Mapped Frameworks: {(c.frameworkIds || []).join(', ').toUpperCase()} • Recorded Status:{' '}
-                      <span>{c.status}</span>
+                      <span>{c.status}</span> • Assurance: <span>{c.assuranceStatus || 'untested'}</span>
                     </div>
                   </div>
 
@@ -1118,7 +1123,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                       fontWeight: 600,
                     }}
                   >
-                    Inspect Coverage 🔍
+                    Inspect Mapping & Assurance 🔍
                   </button>
                 </div>
               ))}
@@ -1143,7 +1148,7 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--accent-blue)' }}>
-                  Coverage Explanation: {selectedControlCoverage.controlCode} ({selectedControlCoverage.controlTitle})
+                  Mapping & Assurance Explanation: {selectedControlCoverage.controlCode} ({selectedControlCoverage.controlTitle})
                 </h4>
                 <button
                   onClick={() => setSelectedControlCoverage(null)}
@@ -1155,6 +1160,11 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
                 {selectedControlCoverage.coverageSummaryExplanation}
               </p>
+              <div style={{ fontSize: '11px', color: selectedControlCoverage.assuranceTrusted ? 'var(--status-success)' : 'var(--status-warning)', marginBottom: '12px' }}>
+                {selectedControlCoverage.totalObligationsMapped || 0} mapped •{' '}
+                {selectedControlCoverage.totalObligationsSatisfied || 0} currently assured • Artifact:{' '}
+                {selectedControlCoverage.currentArtifactVerified ? 'verified' : 'unverified'}
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {selectedControlCoverage.obligations?.map((o: any, idx: number) => (
                   <div
@@ -1170,7 +1180,9 @@ export default function FrameworkAdoptionWizard({ tenantId, onComplete }: Wizard
                     <span style={{ fontWeight: 600, color: 'var(--accent-blue)' }}>
                       [{o.frameworkTitle} - {o.sectionCode}]
                     </span>{' '}
-                    {o.requirementTitle} — Coverage: {(o.coverageRatio * 100).toFixed(0)}% ({o.mappingType})
+                    {o.requirementTitle} — Mapping strength:{' '}
+                    {((o.mappingCoverageRatio ?? 0) * 100).toFixed(0)}% • Current assured coverage:{' '}
+                    {(o.coverageRatio * 100).toFixed(0)}% ({o.mappingType})
                     <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>{o.statutoryRationale}</div>
                   </div>
                 ))}

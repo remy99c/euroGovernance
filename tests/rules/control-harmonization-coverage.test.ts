@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 import {
@@ -330,7 +329,8 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
       );
 
       expect(coverageReport.isHarmonized).toBe(true);
-      expect(coverageReport.totalObligationsSatisfied).toBe(2);
+      expect(coverageReport.totalObligationsMapped).toBe(2);
+      expect(coverageReport.totalObligationsSatisfied).toBe(0);
       expect(coverageReport.frameworksCovered).toEqual(expect.arrayContaining(['gdpr', 'iso_27001']));
       expect(coverageReport.obligations.length).toBe(2);
 
@@ -338,13 +338,17 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
       const gdprObligation = coverageReport.obligations.find((o) => o.frameworkId === 'gdpr')!;
       expect(gdprObligation.sectionCode).toBe('Art. 33');
       expect(gdprObligation.mappingType).toBe('superset');
-      expect(gdprObligation.auditExplanation).toContain('Coverage: 100%');
+      expect(gdprObligation.mappingCoverageRatio).toBe(1);
+      expect(gdprObligation.coverageRatio).toBe(0);
+      expect(gdprObligation.auditExplanation).toContain('current assured coverage: 0%');
 
       const isoObligation = coverageReport.obligations.find((o) => o.frameworkId === 'iso_27001')!;
       expect(isoObligation.sectionCode).toBe('Annex A.5.24');
-      expect(isoObligation.auditExplanation).toContain('Coverage: 100%');
+      expect(isoObligation.mappingCoverageRatio).toBe(1);
+      expect(isoObligation.coverageRatio).toBe(0);
+      expect(isoObligation.auditExplanation).toContain('current assured coverage: 0%');
 
-      expect(coverageReport.coverageSummaryExplanation).toContain('simultaneously satisfies 2 statutory obligations');
+      expect(coverageReport.coverageSummaryExplanation).toContain('none count as covered');
     });
   });
 
@@ -400,7 +404,7 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
       );
     });
 
-    test('auditor in Tenant A can read but cannot create or mutate control mappings', async () => {
+    test('auditor must use the verified mapping projection and cannot access raw records', async () => {
       const now = new Date().toISOString();
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await context.firestore().doc(`tenants/${tenantA}/control_mappings/tcm_audit_read_test`).set({
@@ -435,8 +439,7 @@ describe('Control Harmonization & Coverage Tracking Engine Suite', () => {
         .collection('control_mappings')
         .doc('tcm_audit_read_test');
 
-      // Auditor can read
-      await assertSucceeds(mappingRefAuditor.get());
+      await assertFails(mappingRefAuditor.get());
 
       // Auditor cannot mutate
       await assertFails(

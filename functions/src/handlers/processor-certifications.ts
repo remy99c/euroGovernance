@@ -1,8 +1,10 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireTenantMember } from '../lib/auth-helpers.js';
-import { recordAuditLog } from '../lib/audit.js';
+import { appendAuditLogInTransaction, recordAuditLog } from '../lib/audit.js';
+import { AUTHORITATIVE_CALLABLE_OPTIONS } from '../lib/command-boundary.js';
 import { createNotification } from '../lib/notifications.js';
+import { verifyControlCurrentArtifact } from './controls.js';
 import {
   ProcessorCertification,
   ProcessorCertificationReviewStatus,
@@ -23,6 +25,23 @@ import {
   evaluateControlProcessorAssuranceSupport,
   mapProcessorsToControlsAssuranceMatrix,
 } from '@eurogovernance/shared-types';
+
+const PROCESSOR_ASSURANCE_READ_LIMIT = 250;
+const PROCESSOR_ASSURANCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+
+async function boundedProcessorAssuranceSnapshot(
+  query: FirebaseFirestore.Query,
+  label: string
+): Promise<FirebaseFirestore.QuerySnapshot> {
+  const snapshot = await query.limit(PROCESSOR_ASSURANCE_READ_LIMIT + 1).get();
+  if (snapshot.size > PROCESSOR_ASSURANCE_READ_LIMIT) {
+    throw new HttpsError(
+      'resource-exhausted',
+      `${label} exceeds the bounded synchronous assurance-report limit.`
+    );
+  }
+  return snapshot;
+}
 
 export interface CreateProcessorCertificationInput {
   tenantId: string;
@@ -85,6 +104,21 @@ export const createTenantProcessorCertification = onCall<CreateProcessorCertific
   if (!tenantId) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
+  if (data.linkedControlIds !== undefined) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Control links must be changed through linkProcessorCertificationToControls.'
+    );
+  }
+  if (
+    data.reviewStatus !== undefined &&
+    data.reviewStatus !== 'pending'
+  ) {
+    throw new HttpsError(
+      'invalid-argument',
+      'New processor assurance records must begin in pending review.'
+    );
+  }
 
   const authContext = await requireTenantMember(request, tenantId, [
     'tenant_admin',
@@ -117,7 +151,7 @@ export const createTenantProcessorCertification = onCall<CreateProcessorCertific
     systemsOrServicesCovered: data.systemsOrServicesCovered || [],
     notes: data.notes || null,
     reviewOwnerUserId: data.reviewOwnerUserId,
-    reviewStatus: data.reviewStatus || 'pending',
+    reviewStatus: 'pending',
     reviewNotes: null,
     rejectionReason: null,
     reviewedBy: null,
@@ -133,7 +167,7 @@ export const createTenantProcessorCertification = onCall<CreateProcessorCertific
     lastReviewedAt: null,
     lastReviewedBy: null,
     linkedEvidenceIds: data.linkedEvidenceIds || [],
-    linkedControlIds: data.linkedControlIds || [],
+    linkedControlIds: [],
     linkedTransferArrangementIds: data.linkedTransferArrangementIds || [],
     unresolvedFindingsCount: data.unresolvedFindingsCount ?? 0,
     hasMajorDeficiencies: data.hasMajorDeficiencies ?? false,
@@ -209,6 +243,12 @@ export const updateTenantProcessorCertification = onCall<UpdateProcessorCertific
   if (!tenantId || !certificationId) {
     throw new HttpsError('invalid-argument', 'tenantId and certificationId are required.');
   }
+  if (data.linkedControlIds !== undefined) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Control links must be changed through linkProcessorCertificationToControls.'
+    );
+  }
 
   const authContext = await requireTenantMember(request, tenantId, [
     'tenant_admin',
@@ -250,7 +290,6 @@ export const updateTenantProcessorCertification = onCall<UpdateProcessorCertific
     ...(data.reviewOwnerUserId !== undefined && { reviewOwnerUserId: data.reviewOwnerUserId }),
     ...(data.reviewDueDate !== undefined && { reviewDueDate: data.reviewDueDate }),
     ...(data.linkedEvidenceIds !== undefined && { linkedEvidenceIds: data.linkedEvidenceIds }),
-    ...(data.linkedControlIds !== undefined && { linkedControlIds: data.linkedControlIds }),
     ...(data.linkedTransferArrangementIds !== undefined && { linkedTransferArrangementIds: data.linkedTransferArrangementIds }),
     ...(data.unresolvedFindingsCount !== undefined && { unresolvedFindingsCount: data.unresolvedFindingsCount }),
     ...(data.hasMajorDeficiencies !== undefined && { hasMajorDeficiencies: data.hasMajorDeficiencies }),
@@ -486,6 +525,21 @@ export const replaceProcessorCertification = onCall<ReplaceProcessorCertificatio
       'tenantId, previousCertificationId, and newCertification payload are required.'
     );
   }
+  if (newCertification.linkedControlIds !== undefined) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Control links must be changed through linkProcessorCertificationToControls.'
+    );
+  }
+  if (
+    newCertification.reviewStatus !== undefined &&
+    newCertification.reviewStatus !== 'pending'
+  ) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Replacement processor assurance records must begin in pending review.'
+    );
+  }
 
   const authContext = await requireTenantMember(request, tenantId, [
     'tenant_admin',
@@ -535,7 +589,7 @@ export const replaceProcessorCertification = onCall<ReplaceProcessorCertificatio
     systemsOrServicesCovered: newCertification.systemsOrServicesCovered || [],
     notes: newCertification.notes || null,
     reviewOwnerUserId: newCertification.reviewOwnerUserId || oldCert.reviewOwnerUserId,
-    reviewStatus: newCertification.reviewStatus || 'pending',
+    reviewStatus: 'pending',
     reviewNotes: replacementRationale ? `Superseded previous version (${oldCert.certificateOrReportNumber}): ${replacementRationale}` : null,
     rejectionReason: null,
     reviewedBy: null,
@@ -551,7 +605,7 @@ export const replaceProcessorCertification = onCall<ReplaceProcessorCertificatio
     lastReviewedAt: null,
     lastReviewedBy: null,
     linkedEvidenceIds: newCertification.linkedEvidenceIds || [],
-    linkedControlIds: newCertification.linkedControlIds || [],
+    linkedControlIds: [],
     linkedTransferArrangementIds: newCertification.linkedTransferArrangementIds || [],
     unresolvedFindingsCount: newCertification.unresolvedFindingsCount ?? 0,
     hasMajorDeficiencies: newCertification.hasMajorDeficiencies ?? false,
@@ -1063,9 +1117,12 @@ export interface GetControlProcessorAssuranceSupportInput {
  * Callable Function: getControlProcessorAssuranceSupport
  * Returns third-party processor assurance and supporting evidence context for a specific Control.
  */
-export const getControlProcessorAssuranceSupport = onCall<GetControlProcessorAssuranceSupportInput>(async (request) => {
+export const getControlProcessorAssuranceSupport = onCall<GetControlProcessorAssuranceSupportInput>(AUTHORITATIVE_CALLABLE_OPTIONS, async (request) => {
   const { tenantId, controlId } = request.data;
-  if (!tenantId || !controlId) {
+  if (
+    !PROCESSOR_ASSURANCE_ID_PATTERN.test(tenantId || '') ||
+    !PROCESSOR_ASSURANCE_ID_PATTERN.test(controlId || '')
+  ) {
     throw new HttpsError('invalid-argument', 'tenantId and controlId are required.');
   }
 
@@ -1079,11 +1136,21 @@ export const getControlProcessorAssuranceSupport = onCall<GetControlProcessorAss
   }
 
   const control = controlSnap.data() as Control;
+  const controlTrust = await verifyControlCurrentArtifact(tenantId, controlSnap);
 
   const [certsSnap, evSnap, profilesSnap] = await Promise.all([
-    db.collection('tenants').doc(tenantId).collection('processor_certifications').get(),
-    db.collection('tenants').doc(tenantId).collection('evidence').get(),
-    db.collection('tenants').doc(tenantId).collection('processor_profiles').get(),
+    boundedProcessorAssuranceSnapshot(
+      db.collection(`tenants/${tenantId}/processor_certifications`),
+      'Processor certifications'
+    ),
+    boundedProcessorAssuranceSnapshot(
+      db.collection(`tenants/${tenantId}/evidence`),
+      'Evidence records'
+    ),
+    boundedProcessorAssuranceSnapshot(
+      db.collection(`tenants/${tenantId}/processor_profiles`),
+      'Processor profiles'
+    ),
   ]);
 
   const certs = certsSnap.docs.map((d) => d.data() as ProcessorCertification);
@@ -1095,6 +1162,9 @@ export const getControlProcessorAssuranceSupport = onCall<GetControlProcessorAss
   return {
     success: true,
     support,
+    controlWorkflowVerified: controlTrust.workflowTrusted,
+    warning:
+      'Processor assurance remains unverified until the certification, evidence, and review artifact chains are governed.',
   };
 });
 
@@ -1106,19 +1176,31 @@ export interface GetProcessorsToControlsAssuranceMatrixInput {
  * Callable Function: getProcessorsToControlsAssuranceMatrix
  * Generates an end-to-end matrix showing which third-party processors support which tenant controls.
  */
-export const getProcessorsToControlsAssuranceMatrix = onCall<GetProcessorsToControlsAssuranceMatrixInput>(async (request) => {
+export const getProcessorsToControlsAssuranceMatrix = onCall<GetProcessorsToControlsAssuranceMatrixInput>(AUTHORITATIVE_CALLABLE_OPTIONS, async (request) => {
   const { tenantId } = request.data;
-  if (!tenantId) {
+  if (!PROCESSOR_ASSURANCE_ID_PATTERN.test(tenantId || '')) {
     throw new HttpsError('invalid-argument', 'tenantId is required.');
   }
 
   await requireTenantMember(request, tenantId);
 
   const [profilesSnap, certsSnap, controlsSnap, evSnap] = await Promise.all([
-    db.collection('tenants').doc(tenantId).collection('processor_profiles').get(),
-    db.collection('tenants').doc(tenantId).collection('processor_certifications').get(),
-    db.collection('tenants').doc(tenantId).collection('controls').get(),
-    db.collection('tenants').doc(tenantId).collection('evidence').get(),
+    boundedProcessorAssuranceSnapshot(
+      db.collection(`tenants/${tenantId}/processor_profiles`),
+      'Processor profiles'
+    ),
+    boundedProcessorAssuranceSnapshot(
+      db.collection(`tenants/${tenantId}/processor_certifications`),
+      'Processor certifications'
+    ),
+    boundedProcessorAssuranceSnapshot(
+      db.collection(`tenants/${tenantId}/controls`),
+      'Controls'
+    ),
+    boundedProcessorAssuranceSnapshot(
+      db.collection(`tenants/${tenantId}/evidence`),
+      'Evidence records'
+    ),
   ]);
 
   const profiles = profilesSnap.docs.map((d) => d.data() as ProcessorProfile);
@@ -1133,6 +1215,8 @@ export const getProcessorsToControlsAssuranceMatrix = onCall<GetProcessorsToCont
     totalProcessors: profiles.length,
     totalControls: controls.length,
     matrix,
+    warning:
+      'Matrix links are inventory context only; processor assurance is not counted until governed artifact chains verify.',
   };
 });
 
@@ -1147,12 +1231,33 @@ export interface LinkProcessorCertificationToControlsInput {
  * Callable Function: linkProcessorCertificationToControls
  * Updates bi-directional links between a ProcessorCertification and tenant Controls.
  */
-export const linkProcessorCertificationToControls = onCall<LinkProcessorCertificationToControlsInput>(async (request) => {
-  const { tenantId, certificationId, controlIds, operation } = request.data;
-  if (!tenantId || !certificationId || !Array.isArray(controlIds) || !operation) {
+export const linkProcessorCertificationToControls = onCall<LinkProcessorCertificationToControlsInput>(AUTHORITATIVE_CALLABLE_OPTIONS, async (request) => {
+  const input = request.data as unknown;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new HttpsError('invalid-argument', 'Request data must be an object.');
+  }
+  const value = input as Record<string, unknown>;
+  const allowedKeys = new Set(['tenantId', 'certificationId', 'controlIds', 'operation']);
+  const unknownKeys = Object.keys(value).filter((key) => !allowedKeys.has(key));
+  if (unknownKeys.length > 0) {
+    throw new HttpsError('invalid-argument', `Unsupported field(s): ${unknownKeys.join(', ')}.`);
+  }
+  const { tenantId, certificationId, controlIds, operation } = value;
+  const safeId = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+  if (
+    typeof tenantId !== 'string' ||
+    !safeId.test(tenantId) ||
+    typeof certificationId !== 'string' ||
+    !safeId.test(certificationId) ||
+    !Array.isArray(controlIds) ||
+    controlIds.length > 50 ||
+    controlIds.some((id) => typeof id !== 'string' || !safeId.test(id)) ||
+    new Set(controlIds).size !== controlIds.length ||
+    (operation !== 'add' && operation !== 'remove' && operation !== 'set')
+  ) {
     throw new HttpsError(
       'invalid-argument',
-      'tenantId, certificationId, controlIds array, and operation (add|remove|set) are required.'
+      'tenantId, certificationId, up to 50 unique controlIds, and operation (add|remove|set) are required.'
     );
   }
 
@@ -1164,70 +1269,60 @@ export const linkProcessorCertificationToControls = onCall<LinkProcessorCertific
   ]);
 
   const certRef = db.collection('tenants').doc(tenantId).collection('processor_certifications').doc(certificationId);
-  const certSnap = await certRef.get();
-
-  if (!certSnap.exists) {
-    throw new HttpsError('not-found', `Processor certification "${certificationId}" not found.`);
-  }
-
-  const cert = certSnap.data() as ProcessorCertification;
-  const currentLinkedControls = new Set<string>(cert.linkedControlIds || []);
-
-  if (operation === 'add') {
-    for (const cId of controlIds) currentLinkedControls.add(cId);
-  } else if (operation === 'remove') {
-    for (const cId of controlIds) currentLinkedControls.delete(cId);
-  } else if (operation === 'set') {
-    currentLinkedControls.clear();
-    for (const cId of controlIds) currentLinkedControls.add(cId);
-  }
-
-  const updatedControlIds = Array.from(currentLinkedControls);
-  const now = new Date().toISOString();
-
-  const batch = db.batch();
-
-  // 1. Update Certification record
-  batch.update(certRef, {
-    linkedControlIds: updatedControlIds,
-    updatedAt: now,
-    updatedBy: authContext.userId,
-  });
-
-  // 2. Update Control records bi-directionally
-  for (const ctlId of controlIds) {
-    const ctlRef = db.collection('tenants').doc(tenantId).collection('controls').doc(ctlId);
-    const ctlSnap = await ctlRef.get();
-    if (ctlSnap.exists) {
-      const ctl = ctlSnap.data() as Control;
-      const ctlCertIds = new Set<string>(ctl.processorCertificationIds || []);
-      if (operation === 'add' || operation === 'set') {
-        ctlCertIds.add(certificationId);
-      } else if (operation === 'remove') {
-        ctlCertIds.delete(certificationId);
-      }
-      batch.update(ctlRef, {
-        processorCertificationIds: Array.from(ctlCertIds),
-        updatedAt: now,
-        updatedBy: authContext.userId,
-      });
+  let updatedControlIds: string[] = [];
+  await db.runTransaction(async (transaction) => {
+    const certSnap = await transaction.get(certRef);
+    if (!certSnap.exists) {
+      throw new HttpsError('not-found', `Processor certification "${certificationId}" not found.`);
     }
-  }
+    const cert = certSnap.data() as ProcessorCertification;
+    if (cert.tenantId !== tenantId || cert.id !== certificationId) {
+      throw new HttpsError('failed-precondition', 'Processor certification identity is inconsistent.');
+    }
 
-  await batch.commit();
+    const controlRefs = (controlIds as string[]).map((controlId) =>
+      db.collection('tenants').doc(tenantId).collection('controls').doc(controlId)
+    );
+    const controlSnapshots = await Promise.all(
+      controlRefs.map((controlRef) => transaction.get(controlRef))
+    );
+    controlSnapshots.forEach((snapshot, index) => {
+      const controlId = (controlIds as string[])[index];
+      const control = snapshot.data() as Control | undefined;
+      if (!snapshot.exists || control?.tenantId !== tenantId || control?.id !== controlId || control?.retiredAt) {
+        throw new HttpsError('failed-precondition', `Control "${controlId}" is missing, retired, or inconsistent.`);
+      }
+    });
 
-  await recordAuditLog({
-    tenantId,
-    actorId: authContext.userId,
-    actorEmail: authContext.email,
-    actorRole: authContext.role,
-    entityType: 'processor_certification',
-    entityId: certificationId,
-    action: 'link',
-    beforeSummary: { linkedControlIds: cert.linkedControlIds || [] },
-    afterSummary: { linkedControlIds: updatedControlIds, operation, affectedControlIds: controlIds },
-    source: 'cloud_function',
-    workflowContext: 'processor_certification_control_linkage',
+    const currentLinkedControls = new Set<string>(cert.linkedControlIds || []);
+    if (operation === 'add') {
+      for (const controlId of controlIds as string[]) currentLinkedControls.add(controlId);
+    } else if (operation === 'remove') {
+      for (const controlId of controlIds as string[]) currentLinkedControls.delete(controlId);
+    } else {
+      currentLinkedControls.clear();
+      for (const controlId of controlIds as string[]) currentLinkedControls.add(controlId);
+    }
+    updatedControlIds = Array.from(currentLinkedControls).sort();
+    const now = new Date().toISOString();
+    transaction.update(certRef, {
+      linkedControlIds: updatedControlIds,
+      updatedAt: now,
+      updatedBy: authContext.userId,
+    });
+    appendAuditLogInTransaction(transaction, {
+      tenantId,
+      actorId: authContext.userId,
+      actorEmail: authContext.email,
+      actorRole: authContext.role,
+      entityType: 'processor_certification',
+      entityId: certificationId,
+      action: 'link',
+      beforeSummary: { linkedControlIds: cert.linkedControlIds || [] },
+      afterSummary: { linkedControlIds: updatedControlIds, operation, affectedControlIds: controlIds },
+      source: 'cloud_function',
+      workflowContext: 'processor_certification_control_linkage',
+    });
   });
 
   return {

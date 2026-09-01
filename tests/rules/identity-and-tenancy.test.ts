@@ -77,13 +77,13 @@ describe('Core Identity, Tenant Isolation & RBAC Security Rules', () => {
   });
 
   // 1. Founder Access Test
-  test('Founder admin can access tenant root and subcollections', async () => {
+  test('Founder admin can access the tenant root but must use governed control projections', async () => {
     const founderDb = testEnv.authenticatedContext(founderAdmin, { email: 'founder@eurocorp.de' }).firestore();
     const tenantDocRef = founderDb.doc(`tenants/${tenantOrg}`);
     const controlDocRef = founderDb.doc(`tenants/${tenantOrg}/controls/ctl_01`);
 
     await assertSucceeds(tenantDocRef.get());
-    await assertSucceeds(controlDocRef.get());
+    await assertFails(controlDocRef.get());
   });
 
   // 2. Outsider Access Rejection Test

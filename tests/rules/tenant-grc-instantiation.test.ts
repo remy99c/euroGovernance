@@ -258,11 +258,12 @@ describe('Tenant GRC Instantiation & Harmonization Engine Suite', () => {
       // Verify Inherited Outcome
       const reqInherited = result.requirementInstances.find((r) => r.requirementId === 'iso_clause_43')!;
       expect(reqInherited).toBeDefined();
-      expect(reqInherited.complianceStatus).toBe('compliant');
+      expect(reqInherited.complianceStatus).toBe('not_evaluated');
       const inheritedControl = result.controlInstances.find((c) => reqInherited.satisfyingControlIds.includes(c.id))!;
       expect(inheritedControl).toBeDefined();
-      expect(inheritedControl.status).toBe('implemented');
-      expect(inheritedControl.healthScore).toBe(100);
+      expect(inheritedControl.status).toBe('not_started');
+      expect(inheritedControl.healthScore).toBe(0);
+      expect(inheritedControl.implementationNotes).toContain('remains unverified');
 
       // Verify Deferred Outcome
       const reqDeferred = result.requirementInstances.find((r) => r.requirementId === 'da_art_03')!;

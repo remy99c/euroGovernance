@@ -376,11 +376,15 @@ describe('Third-Party Assessment Control Integration Test Pack', () => {
 
       const dbCompliance = testEnv.authenticatedContext(PERSONAS.complianceA.uid).firestore();
 
-      // 1. Verify Control
-      const ctrlSnap = await assertSucceeds(
-        dbCompliance.doc(`tenants/${tenantA}/controls/${vendorControl.id}`).get()
-      );
-      expect(ctrlSnap.exists).toBe(true);
+      // 1. Verify the control exists without reopening the raw browser read
+      // path that would bypass governed assurance verification.
+      await assertFails(dbCompliance.doc(`tenants/${tenantA}/controls/${vendorControl.id}`).get());
+      let controlExists = false;
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const ctrlSnap = await context.firestore().doc(`tenants/${tenantA}/controls/${vendorControl.id}`).get();
+        controlExists = ctrlSnap.exists;
+      });
+      expect(controlExists).toBe(true);
 
       // 2. Verify Schedule links to Control
       const schedSnap = await assertSucceeds(

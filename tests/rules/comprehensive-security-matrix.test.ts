@@ -208,8 +208,9 @@ describe('Comprehensive Security Matrix & Invariant Test Suite', () => {
       const viewerDb = testEnv.authenticatedContext(PERSONAS.viewerA.uid, { email: PERSONAS.viewerA.email }).firestore();
       const tA = FIXTURE_TENANT_A;
 
-      // Read succeeds
-      await assertSucceeds(viewerDb.doc(`tenants/${tA}/controls/ctl_01`).get());
+      // Raw governed records are not a browser read model. Viewers receive the
+      // verified/redacted callable projection instead.
+      await assertFails(viewerDb.doc(`tenants/${tA}/controls/ctl_01`).get());
       await assertFails(viewerDb.doc(`tenants/${tA}/risks/rsk_01`).get());
 
       // Write fails
@@ -229,11 +230,11 @@ describe('Comprehensive Security Matrix & Invariant Test Suite', () => {
       );
     });
 
-    test('Auditors read controls but use verified callables for policy access', async () => {
+    test('Auditors use verified callables for control and policy access', async () => {
       const auditorDb = testEnv.authenticatedContext(PERSONAS.auditorA.uid, { email: PERSONAS.auditorA.email }).firestore();
       const tA = FIXTURE_TENANT_A;
 
-      await assertSucceeds(auditorDb.doc(`tenants/${tA}/controls/ctl_01`).get());
+      await assertFails(auditorDb.doc(`tenants/${tA}/controls/ctl_01`).get());
       await assertFails(auditorDb.doc(`tenants/${tA}/policies/pol_01`).get());
 
       await assertFails(auditorDb.doc(`tenants/${tA}/controls/ctl_01`).delete());

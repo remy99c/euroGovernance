@@ -332,7 +332,10 @@ describe('Milestone 0 Firestore authorization containment', () => {
 
     await assertFails(db.doc(`tenants/${TENANT_A}/issues/existing_issue`).get());
     await assertFails(db.doc(`tenants/${TENANT_A}/tasks/existing_task`).get());
-    await assertSucceeds(db.doc(`tenants/${TENANT_A}/controls/existing_control`).get());
+    // Raw control documents are intentionally server-only. Every persona,
+    // including auditors, must use the callable projection that verifies the
+    // current version, command receipt, audit anchor, and review evidence.
+    await assertFails(db.doc(`tenants/${TENANT_A}/controls/existing_control`).get());
     await assertSucceeds(db.doc(`tenants/${TENANT_A}/iso_internal_audits/existing_audit`).get());
 
     await assertFails(

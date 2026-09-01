@@ -2,7 +2,6 @@ import {
   initializeTestEnvironment,
   RulesTestEnvironment,
   assertFails,
-  assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import { getFirestoreRules } from './fixtures/test-factories.js';
 
@@ -165,18 +164,18 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
     );
   });
 
-  // 2. Read Permissions
-  test('All active tenant members can read controls; outsiders cannot', async () => {
+  // 2. Authoritative read boundary
+  test('raw control assurance records are denied to every browser persona', async () => {
     const adminDb = testEnv.authenticatedContext(userAdmin, { email: 'admin@eurocorp.de' }).firestore();
     const auditorDb = testEnv.authenticatedContext(userAuditor, { email: 'auditor@kpmg.de' }).firestore();
     const viewerDb = testEnv.authenticatedContext(userViewer, { email: 'view@eurocorp.de' }).firestore();
     const outsiderDb = testEnv.authenticatedContext(userOutsider, { email: 'out@medtech.fr' }).firestore();
 
-    await assertSucceeds(adminDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).get());
-    await assertSucceeds(auditorDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).get());
-    await assertSucceeds(viewerDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).get());
-
+    await assertFails(adminDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).get());
+    await assertFails(auditorDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).get());
+    await assertFails(viewerDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).get());
     await assertFails(outsiderDb.doc(`tenants/${tenantOrg}/controls/${controlId}`).get());
+    await assertFails(adminDb.collection(`tenants/${tenantOrg}/controls`).get());
   });
 
   // 3. Update Permissions
@@ -268,6 +267,25 @@ describe('Controls Module Security Rules & RBAC Permissions', () => {
     // Review logs are append-only: Update and Delete are denied
     await assertFails(reviewRef.update({ notes: 'Tampered review' }));
     await assertFails(reviewRef.delete());
+
+    // Review conclusions and their immutable history are projected only after
+    // their command/audit/evidence anchors have been verified server-side.
+    await assertFails(reviewRef.get());
+    await assertFails(
+      complianceDb
+        .doc(`tenants/${tenantOrg}/controls/${controlId}/review_events/event_01`)
+        .get()
+    );
+    await assertFails(
+      complianceDb
+        .doc(`tenants/${tenantOrg}/controls/${controlId}/versions/r0000000001`)
+        .get()
+    );
+    await assertFails(
+      complianceDb
+        .doc(`tenants/${tenantOrg}/control_code_reservations/CTL-PRIV-01`)
+        .get()
+    );
   });
 
   // 6. Cross-Tenant Control Isolation

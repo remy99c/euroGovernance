@@ -11,14 +11,52 @@ function workspaceFile(path: string): string {
 
 describe('Production product-truth safeguards', () => {
   test('never converts absent or malformed posture metrics into a positive score', () => {
+    const now = new Date('2026-08-31T12:00:00.000Z');
+    const current = {
+      tenantId: 'tenant_truth',
+      lastMaterializedAt: now.toISOString(),
+      validUntil: '2026-08-31T12:05:00.000Z',
+      sourceFingerprint: 'a'.repeat(64),
+    };
     expect(getRecordedComplianceScore(null)).toBeNull();
     expect(getRecordedComplianceScore({})).toBeNull();
-    expect(getRecordedComplianceScore({ overallComplianceScore: '92' })).toBeNull();
-    expect(getRecordedComplianceScore({ overallComplianceScore: Number.NaN })).toBeNull();
-    expect(getRecordedComplianceScore({ overallComplianceScore: -1 })).toBeNull();
-    expect(getRecordedComplianceScore({ overallComplianceScore: 101 })).toBeNull();
-    expect(getRecordedComplianceScore({ overallComplianceScore: 0 })).toBe(0);
-    expect(getRecordedComplianceScore({ overallComplianceScore: 92 })).toBe(92);
+    expect(getRecordedComplianceScore({ ...current, overallComplianceScore: '92' }, now)).toBeNull();
+    expect(getRecordedComplianceScore({ ...current, overallComplianceScore: Number.NaN }, now)).toBeNull();
+    expect(getRecordedComplianceScore({ ...current, overallComplianceScore: -1 }, now)).toBeNull();
+    expect(getRecordedComplianceScore({ ...current, overallComplianceScore: 101 }, now)).toBeNull();
+    expect(getRecordedComplianceScore({ ...current, overallComplianceScore: 0 }, now, 'tenant_truth')).toBe(0);
+    expect(getRecordedComplianceScore({ ...current, overallComplianceScore: 92 }, now, 'tenant_truth')).toBe(92);
+    expect(
+      getRecordedComplianceScore(
+        { ...current, overallComplianceScore: 92, validUntil: now.toISOString() },
+        now
+      )
+    ).toBeNull();
+    expect(
+      getRecordedComplianceScore(
+        { ...current, overallComplianceScore: 92, sourceFingerprint: 'not-a-hash' },
+        now
+      )
+    ).toBeNull();
+    expect(
+      getRecordedComplianceScore(
+        { ...current, overallComplianceScore: 92 },
+        now,
+        'tenant_other'
+      )
+    ).toBeNull();
+    expect(
+      getRecordedComplianceScore(
+        {
+          ...current,
+          overallComplianceScore: 92,
+          lastMaterializedAt: '2026-08-31T12:01:00.000Z',
+          validUntil: '2026-08-31T12:06:00.000Z',
+        },
+        now,
+        'tenant_truth'
+      )
+    ).toBe(92);
   });
 
   test('derives the evidence schedule only from recorded dates and explicit status', () => {
@@ -54,6 +92,10 @@ describe('Production product-truth safeguards', () => {
     expect(overview).not.toContain('controlsList.length || 85');
     expect(overview).not.toContain('expiringIn90DaysCount={3}');
     expect(overview).not.toContain(" : 'Verified'");
+    expect(overview).toContain('getRecordedComplianceScore(metrics, metricsClock, tenantId)');
+    expect(overview).toContain('window.setTimeout');
+    expect(overview).toContain('validUntil - current.getTime() + 50');
+    expect(overview).not.toContain('Math.min(validUntil - current.getTime()');
     expect(applicability).not.toContain('sampleDecisions');
     expect(applicability).not.toContain('dec_gdpr_art30');
     expect(applicability).toContain('No applicability decisions recorded');
@@ -102,11 +144,13 @@ describe('Production product-truth safeguards', () => {
     const page = workspaceFile('apps/web/src/app/page.tsx');
     const modal = workspaceFile('apps/web/src/app/modals/create-control-modal.tsx');
 
-    expect(page).toContain('description: control.description');
+    expect(page).toContain("action: 'control.create'");
+    expect(page).toContain('payload: control');
+    expect(page).toContain('expectedRevision: null');
     expect(page).not.toContain("status: 'implemented'");
     expect(page).not.toContain('healthScore: 100');
     expect(page).not.toContain("requirementIds: ['A.9.1', 'Art. 32']");
     expect(modal).toContain("const [frameworkIds, setFrameworkIds] = useState<string[]>([])");
-    expect(modal).toContain('Control Description');
+    expect(modal).toContain('Control objective and operation');
   });
 });

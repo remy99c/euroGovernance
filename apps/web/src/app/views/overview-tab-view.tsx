@@ -18,6 +18,7 @@ import {
 } from '../../lib/product-truth';
 
 export interface OverviewTabViewProps {
+  tenantId: string;
   userRole: string;
   metrics: any;
   controlsList: any[];
@@ -31,6 +32,7 @@ export interface OverviewTabViewProps {
 }
 
 export function OverviewTabView({
+  tenantId,
   userRole,
   metrics,
   controlsList,
@@ -42,6 +44,27 @@ export function OverviewTabView({
   onRecalculateMetrics,
   loadingAction,
 }: OverviewTabViewProps) {
+  const [metricsClock, setMetricsClock] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const current = new Date();
+    setMetricsClock(current);
+    const validUntil =
+      typeof metrics?.validUntil === 'string'
+        ? Date.parse(metrics.validUntil)
+        : Number.NaN;
+    if (
+      !Number.isFinite(validUntil) ||
+      validUntil <= current.getTime() ||
+      getRecordedComplianceScore(metrics, current, tenantId) === null
+    ) {
+      return;
+    }
+    const timeout = window.setTimeout(
+      () => setMetricsClock(new Date()),
+      validUntil - current.getTime() + 50
+    );
+    return () => window.clearTimeout(timeout);
+  }, [metrics, tenantId]);
   const isAuditor = userRole === 'auditor';
   const canMaterializeMetrics = [
     'tenant_admin',
@@ -50,8 +73,31 @@ export function OverviewTabView({
     'privacy_manager',
     'ai_governance_manager',
   ].includes(userRole);
-  const recordedScore = getRecordedComplianceScore(metrics);
+  const recordedScore = getRecordedComplianceScore(metrics, metricsClock, tenantId);
   const evidenceReviewSchedule = calculateEvidenceReviewSchedule(evidenceList);
+  const verifiedEvidenceCount = evidenceList.filter((e) => {
+    const verification = e?.objectVerification;
+    const due = typeof e?.reviewDueDate === 'string' ? Date.parse(e.reviewDueDate) : Number.NaN;
+    return (
+      e?.status === 'valid' &&
+      typeof e?.createdBy === 'string' &&
+      typeof e?.reviewedBy === 'string' &&
+      e.reviewedBy.length > 0 &&
+      e.reviewedBy !== e.createdBy &&
+      typeof e?.reviewedAt === 'string' &&
+      Number.isFinite(Date.parse(e.reviewedAt)) &&
+      verification?.status === 'verified' &&
+      verification?.verifier === 'storage_finalize_function' &&
+      verification?.storagePath === e.storagePath &&
+      verification?.verifiedFileHashSha256 === e.fileHashSha256 &&
+      verification?.verifiedFileSizeBytes === e.fileSizeBytes &&
+      verification?.verifiedMimeType === e.mimeType &&
+      typeof verification?.storageGeneration === 'string' &&
+      verification.storageGeneration.length > 0 &&
+      Number.isFinite(due) &&
+      due > Date.now()
+    );
+  }).length;
 
   // Compute regulatory liabilities
   const liabilities: RegulatoryLiabilityItem[] = [];
@@ -123,7 +169,7 @@ export function OverviewTabView({
             ? 'Classify AI model risk tiers (Annex III), enforce prohibited practice guardrails, and compile Annex IV technical documentation.'
             : userRole === 'contributor'
             ? 'Review the compliance records and work currently available to your account.'
-            : 'Review recorded compliance metrics and their underlying registers.'
+            : 'Review verified obligation coverage and the underlying governed registers.'
         }
         badge={
           <UIBadge variant={isAuditor ? 'review' : 'compliant'}>
@@ -134,7 +180,7 @@ export function OverviewTabView({
           !canMaterializeMetrics
             ? undefined
             : {
-                label: 'Recalculate Posture Score',
+                label: 'Recalculate Coverage',
                 icon: '🔄',
                 onClick: onRecalculateMetrics,
                 loading: loadingAction === 'metrics',
@@ -162,12 +208,12 @@ export function OverviewTabView({
         }
       />
 
-      {/* 1. Decisive Executive Compliance Posture Hero */}
+      {/* 1. Verified obligation coverage hero */}
       <UIExecutivePostureHero
         score={recordedScore}
         implementedControlsCount={controlsList.filter((c) => c.status === 'implemented').length}
         totalControlsCount={controlsList.length}
-        approvedEvidenceCount={evidenceList.filter((e) => e.status === 'approved' || e.status === 'valid').length}
+        approvedEvidenceCount={verifiedEvidenceCount}
         openGapsCount={issuesList.filter((i) => i.status === 'open').length}
       />
 

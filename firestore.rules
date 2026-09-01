@@ -235,13 +235,30 @@ service cloud.firestore {
 
       // Controls
       match /controls/{controlId} {
-        allow read: if isTenantMember(tenantId);
-        allow create, update, delete: if false;
+        // Control state is an assurance record, not ordinary tenant content.
+        // Browser reads are projected through bounded callables which verify
+        // state -> immutable version -> command receipt -> audit anchors before
+        // disclosing either implementation status or review conclusions.
+        allow read, create, update, delete: if false;
 
         match /reviews/{reviewId} {
-          allow read: if isTenantMember(tenantId);
-          allow create, update, delete: if false;
+          allow read, create, update, delete: if false;
         }
+
+        match /review_events/{eventId} {
+          allow read, create, update, delete: if false;
+        }
+
+        match /versions/{versionId} {
+          allow read, create, update, delete: if false;
+        }
+      }
+
+      // A deterministic control-code reservation closes concurrent uniqueness
+      // races. It is a server-only command primitive and can disclose control
+      // existence, so it is never readable from an untrusted browser.
+      match /control_code_reservations/{reservationId} {
+        allow read, create, update, delete: if false;
       }
 
       // Evidence Repository
@@ -561,8 +578,7 @@ service cloud.firestore {
 
       // Tenant Control Mappings
       match /control_mappings/{mappingId} {
-        allow read: if isTenantMember(tenantId);
-        allow create, update, delete: if false;
+        allow read, create, update, delete: if false;
       }
 
       // Tenant Statutory Obligation Flags

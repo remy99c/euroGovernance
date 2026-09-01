@@ -1,8 +1,11 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib/firebase.js';
 import { requireAuth, requireTenantMember } from '../lib/auth-helpers.js';
-import { appendAuditLogInTransaction, recordAuditLog } from '../lib/audit.js';
-import { computeAndStoreTenantMetrics } from './metrics.js';
+import {
+  appendAuditLogInTransaction,
+  recordAuditLog,
+} from '../lib/audit.js';
+import { AUTHORITATIVE_CALLABLE_OPTIONS } from '../lib/command-boundary.js';
 import {
   AdoptedFramework,
   RequirementApplicability,
@@ -18,6 +21,14 @@ const COMPLIANCE_WRITE_ROLES = [
   'privacy_manager',
   'ai_governance_manager',
 ] as const;
+const FRAMEWORK_COMMAND_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function frameworkCommandId(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !FRAMEWORK_COMMAND_ID_PATTERN.test(value)) {
+    throw new HttpsError('invalid-argument', `${field} is invalid.`);
+  }
+  return value;
+}
 
 /**
  * 1. List Canonical Master Frameworks Library (/frameworks)
@@ -99,7 +110,7 @@ export const adoptFramework = onCall<AdoptFrameworkInput>(async (request) => {
   }
 
   // 3. Fetch master controls count and requirements
-  const masterControlsSnap = await fwRef.collection('master_controls').get();
+  const masterControlsSnap = await fwRef.collection('master_controls').limit(201).get();
 
   const now = new Date().toISOString();
   const effectiveVersion = pinnedVersion || fwData.version || '1.0';
@@ -185,23 +196,14 @@ export const unadoptFramework = onCall<UnadoptFrameworkInput>(async (request) =>
   const adoptedData = snap.data() as AdoptedFramework;
   const now = new Date().toISOString();
 
-  // If deleteInstantiatedControls is requested, unmap framework from controls
+  // Control records are authoritative, versioned operational history. Framework
+  // retirement must never hard-delete or mutate them outside the governed
+  // control command boundary.
   if (deleteInstantiatedControls) {
-    const controlsSnap = await db.collection('tenants').doc(tenantId).collection('controls')
-      .where('frameworkIds', 'array-contains', frameworkId)
-      .get();
-
-    const batch = db.batch();
-    for (const ctrlDoc of controlsSnap.docs) {
-      const ctrl = ctrlDoc.data();
-      const updatedFwIds = (ctrl.frameworkIds || []).filter((id: string) => id !== frameworkId);
-      if (updatedFwIds.length === 0) {
-        batch.delete(ctrlDoc.ref);
-      } else {
-        batch.update(ctrlDoc.ref, { frameworkIds: updatedFwIds, updatedAt: now, updatedBy: authCtx.userId });
-      }
-    }
-    await batch.commit();
+    throw new HttpsError(
+      'failed-precondition',
+      'Framework retirement cannot delete instantiated controls. Retire or remap affected controls individually through the governed control workflow.'
+    );
   }
 
   // Deactivate and transition to retired
@@ -404,148 +406,240 @@ export const setRequirementApplicability = onCall(async (request) => {
 /**
  * 5. Instantiate Tenant Controls from Master Framework Library
  */
-export const instantiateFrameworkControls = onCall(async (request) => {
-  const { tenantId, frameworkId } = request.data || {};
-
-  if (!tenantId || typeof tenantId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Missing or invalid tenantId.');
-  }
-  if (!frameworkId || typeof frameworkId !== 'string') {
-    throw new HttpsError('invalid-argument', 'Missing or invalid frameworkId.');
-  }
-
-  const authCtx = await requireTenantMember(request, tenantId, [...COMPLIANCE_WRITE_ROLES]);
-
-  // 1. Verify adopted framework
-  const adoptedRef = db.collection('tenants').doc(tenantId).collection('adopted_frameworks').doc(frameworkId);
-  const adoptedDoc = await adoptedRef.get();
-  if (!adoptedDoc.exists) {
-    throw new HttpsError('not-found', `Framework '${frameworkId}' has not been adopted by tenant '${tenantId}'. Adopt it first.`);
-  }
-
-  // 2. Fetch master controls
-  const fwRef = db.collection('frameworks').doc(frameworkId);
-  const masterControlsSnap = await fwRef.collection('master_controls').get();
-
-  if (masterControlsSnap.empty) {
-    throw new HttpsError('failed-precondition', `No master controls found for framework '${frameworkId}' in canonical library.`);
-  }
-
-  // 3. Fetch requirement applicability decisions
-  const applicabilitySnap = await db
-    .collection('tenants')
-    .doc(tenantId)
-    .collection('requirement_applicability')
-    .where('frameworkId', '==', frameworkId)
-    .get();
-
-  const nonApplicableReqIds = new Set<string>();
-  applicabilitySnap.docs.forEach((d) => {
-    if (!d.data().isApplicable) {
-      nonApplicableReqIds.add(d.id);
+export const instantiateFrameworkControls = onCall(
+  AUTHORITATIVE_CALLABLE_OPTIONS,
+  async (request) => {
+    const input = request.data;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new HttpsError(
+        'invalid-argument',
+        'Framework generation input must be an object.'
+      );
     }
-  });
+    const unknown = Object.keys(input).filter(
+      (key) => key !== 'tenantId' && key !== 'frameworkId'
+    );
+    if (unknown.length > 0) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Framework generation input contains unsupported field(s): ${unknown.join(', ')}.`
+      );
+    }
+    const tenantId = frameworkCommandId(
+      (input as Record<string, unknown>).tenantId,
+      'tenantId'
+    );
+    const frameworkId = frameworkCommandId(
+      (input as Record<string, unknown>).frameworkId,
+      'frameworkId'
+    );
 
-  const now = new Date().toISOString();
-  let createdCount = 0;
-  let updatedCount = 0;
+    const authCtx = await requireTenantMember(request, tenantId, [
+      ...COMPLIANCE_WRITE_ROLES,
+    ]);
+    const adoptedRef = db.doc(
+      `tenants/${tenantId}/adopted_frameworks/${frameworkId}`
+    );
 
-  const batch = db.batch();
-  const controlsRef = db.collection('tenants').doc(tenantId).collection('controls');
+    const masterControlsSnap = await db
+      .collection(`frameworks/${frameworkId}/master_controls`)
+      .limit(201)
+      .get();
+    if (masterControlsSnap.empty) {
+      throw new HttpsError(
+        'failed-precondition',
+        `No master controls found for framework '${frameworkId}' in canonical library.`
+      );
+    }
+    if (masterControlsSnap.size > 200) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'Framework control generation exceeds the bounded synchronous limit.'
+      );
+    }
 
-  for (const doc of masterControlsSnap.docs) {
-    const mc = doc.data() as MasterControl;
-    const cleanCode = (mc.code || doc.id).toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const controlId = `ctl_${frameworkId}_${cleanCode}`;
-    const targetDocRef = controlsRef.doc(controlId);
-    const existingSnap = await targetDocRef.get();
+    const applicabilitySnap = await db
+      .collection(`tenants/${tenantId}/requirement_applicability`)
+      .where('frameworkId', '==', frameworkId)
+      .limit(1_001)
+      .get();
+    if (applicabilitySnap.size > 1_000) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'Framework applicability exceeds the bounded synchronous generation limit.'
+      );
+    }
+    const nonApplicableRequirementIds = new Set<string>();
+    for (const document of applicabilitySnap.docs) {
+      const value = document.data();
+      if (value.isApplicable === false) {
+        nonApplicableRequirementIds.add(document.id);
+        if (typeof value.requirementId === 'string') {
+          nonApplicableRequirementIds.add(value.requirementId);
+        }
+      }
+    }
 
-    const isExcluded = nonApplicableReqIds.has(doc.id) || nonApplicableReqIds.has(mc.id);
-
-    if (!existingSnap.exists) {
-      const newControl: Control = {
-        id: controlId,
-        tenantId,
-        masterControlId: doc.id,
-        ownerId: authCtx.userId,
-        code: mc.code || `CTL-${frameworkId.toUpperCase()}-${createdCount + 1}`,
-        title: mc.title || 'Master Control Implementation',
-        description: mc.description || '',
-        domain: mc.domain || 'security',
-        frameworkIds: [frameworkId],
-        requirementIds: [doc.id],
-        status: isExcluded ? 'not_applicable' : 'not_started',
-        healthScore: isExcluded ? 100 : 0,
-        enforcementMechanism: 'hybrid',
-        reviewFrequencyDays: mc.recommendedFrequencyDays || 90,
-        lastReviewDate: null,
-        nextReviewDate: new Date(Date.now() + 90 * 86400000).toISOString(),
-        implementationNotes: isExcluded ? 'Excluded during framework scoping assessment' : '',
-        createdAt: now,
-        updatedAt: now,
-        createdBy: authCtx.userId,
-        updatedBy: authCtx.userId,
+    const templates = masterControlsSnap.docs.map((document, index) => {
+      const master = document.data() as MasterControl;
+      const rawRequirementIds = master.requirementIds ?? [];
+      if (
+        !Array.isArray(rawRequirementIds) ||
+        rawRequirementIds.length > 20 ||
+        rawRequirementIds.some(
+          (requirementId) =>
+            typeof requirementId !== 'string' ||
+            !FRAMEWORK_COMMAND_ID_PATTERN.test(requirementId)
+        )
+      ) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Master control '${document.id}' has invalid requirement mappings.`
+        );
+      }
+      const requirementIds = [...new Set(rawRequirementIds)].sort();
+      const cleanCode = (master.code || document.id)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '_');
+      const controlId = `ctl_${frameworkId}_${cleanCode}`;
+      if (!FRAMEWORK_COMMAND_ID_PATTERN.test(controlId)) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Master control '${document.id}' produces an invalid tenant control identifier.`
+        );
+      }
+      return {
+        document,
+        master,
+        requirementIds,
+        controlId,
+        defaultCode: `CTL-${frameworkId.toUpperCase()}-${index + 1}`,
       };
-      batch.set(targetDocRef, newControl);
-      createdCount++;
-    } else {
-      const existingData = existingSnap.data() as Control;
-      const currentFrameworks = new Set(existingData.frameworkIds || []);
-      currentFrameworks.add(frameworkId);
+    });
 
-      batch.update(targetDocRef, {
-        masterControlId: doc.id,
-        frameworkIds: Array.from(currentFrameworks),
-        domain: mc.domain || existingData.domain,
-        reviewFrequencyDays: mc.recommendedFrequencyDays || existingData.reviewFrequencyDays || 90,
+    let createdCount = 0;
+    let skippedExistingCount = 0;
+    const now = new Date().toISOString();
+    await db.runTransaction(async (transaction) => {
+      const adoptedSnapshot = await transaction.get(adoptedRef);
+      const adoption = adoptedSnapshot.data() as AdoptedFramework | undefined;
+      if (!adoptedSnapshot.exists) {
+        throw new HttpsError(
+          'not-found',
+          `Framework '${frameworkId}' has not been adopted by tenant '${tenantId}'.`
+        );
+      }
+      if (
+        adoption?.tenantId !== tenantId ||
+        adoption.frameworkId !== frameworkId ||
+        adoption.status === 'retired' ||
+        !['in_scoping', 'adopted', 'active'].includes(adoption.status)
+      ) {
+        throw new HttpsError(
+          'failed-precondition',
+          'The adopted framework is retired or has inconsistent lifecycle state.'
+        );
+      }
+
+      const controlsRef = db.collection(`tenants/${tenantId}/controls`);
+      const controlRefs = templates.map((template) =>
+        controlsRef.doc(template.controlId)
+      );
+      const existingSnapshots = await transaction.getAll(...controlRefs);
+      let nextCreatedCount = 0;
+      let nextSkippedCount = 0;
+      for (let index = 0; index < templates.length; index += 1) {
+        const template = templates[index]!;
+        const targetRef = controlRefs[index]!;
+        const existing = existingSnapshots[index]!;
+        if (existing.exists) {
+          nextSkippedCount += 1;
+          continue;
+        }
+        const isExcluded =
+          template.requirementIds.length > 0 &&
+          template.requirementIds.every((requirementId) =>
+            nonApplicableRequirementIds.has(requirementId)
+          );
+        const control: Control = {
+          id: template.controlId,
+          tenantId,
+          masterControlId: template.document.id,
+          ownerId: authCtx.userId,
+          code: template.master.code || template.defaultCode,
+          title: template.master.title || 'Master Control Implementation',
+          description: template.master.description || '',
+          domain: template.master.domain || 'security',
+          frameworkIds: [frameworkId],
+          requirementIds: template.requirementIds,
+          status: 'not_started',
+          healthScore: 0,
+          workflowTrust: 'legacy_unverified',
+          assuranceStatus: 'untested',
+          enforcementMechanism: 'hybrid',
+          reviewFrequencyDays:
+            template.master.recommendedFrequencyDays || 90,
+          lastReviewDate: null,
+          nextReviewDate: null,
+          implementationNotes: isExcluded
+            ? 'All mapped requirements are currently scoped out. This draft remains unassured until governed or retired.'
+            : 'Framework-derived draft. Rebaseline and independently review before relying on it as assurance.',
+          createdAt: now,
+          updatedAt: now,
+          createdBy: authCtx.userId,
+          updatedBy: authCtx.userId,
+        };
+        transaction.create(targetRef, control);
+        nextCreatedCount += 1;
+      }
+
+      createdCount = nextCreatedCount;
+      skippedExistingCount = nextSkippedCount;
+      transaction.update(adoptedRef, {
+        status: 'active',
+        instantiatedControlsCount: masterControlsSnap.size,
+        lastInstantiatedAt: now,
         updatedAt: now,
+        updatedBy: authCtx.userId,
       });
-      updatedCount++;
-    }
-  }
+      transaction.delete(
+        db.doc(`tenants/${tenantId}/summary_metrics/current`)
+      );
+      appendAuditLogInTransaction(transaction, {
+        tenantId,
+        actorId: authCtx.userId,
+        actorEmail: authCtx.email,
+        actorRole: authCtx.role,
+        entityType: 'adopted_framework',
+        entityId: frameworkId,
+        action: 'status_transition',
+        beforeSummary: adoption as any,
+        afterSummary: {
+          frameworkId,
+          createdControls: nextCreatedCount,
+          updatedControls: 0,
+          skippedExistingControls: nextSkippedCount,
+          totalControls: masterControlsSnap.size,
+          metricsInvalidated: true,
+        },
+        source: 'cloud_function',
+        workflowContext:
+          'Generated create-only unassured control drafts without overwriting existing controls.',
+      });
+    });
 
-  // 4. Update Adopted Framework status to active
-  batch.update(adoptedRef, {
-    status: 'active',
-    instantiatedControlsCount: masterControlsSnap.size,
-    lastInstantiatedAt: now,
-    updatedAt: now,
-  });
-
-  await batch.commit();
-
-  // 5. Recompute tenant metrics
-  await computeAndStoreTenantMetrics(tenantId, authCtx);
-
-  // 6. Audit Log
-  await recordAuditLog({
-    tenantId,
-    actorId: authCtx.userId,
-    actorEmail: authCtx.email,
-    actorRole: authCtx.role,
-    entityType: 'adopted_framework',
-    entityId: frameworkId,
-    action: 'status_transition',
-    beforeSummary: adoptedDoc.data(),
-    afterSummary: {
+    return {
+      success: true,
       frameworkId,
-      createdControls: createdCount,
-      updatedControls: updatedCount,
-      totalControls: masterControlsSnap.size,
-    },
-    source: 'cloud_function',
-    workflowContext: `Instantiated ${createdCount} new controls and updated ${updatedCount} controls for framework ${frameworkId}`,
-  });
-
-  return {
-    success: true,
-    frameworkId,
-    createdControlsCount: createdCount,
-    updatedControlsCount: updatedCount,
-    totalMasterControlsCount: masterControlsSnap.size,
-    status: 'active',
-  };
-});
+      createdControlsCount: createdCount,
+      updatedControlsCount: 0,
+      skippedGovernedControlsCount: skippedExistingCount,
+      totalMasterControlsCount: masterControlsSnap.size,
+      status: 'active',
+      metricsInvalidated: true,
+    };
+  }
+);
 
 /**
  * 6. Retire or Archive Adopted Framework

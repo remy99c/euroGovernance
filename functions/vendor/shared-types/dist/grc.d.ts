@@ -1,8 +1,10 @@
-import { BaseEntity } from './core.js';
+import { BaseEntity, UserRole } from './core.js';
 export type ControlImplementationStatus = 'not_started' | 'in_progress' | 'implemented' | 'partially_implemented' | 'not_applicable';
 export declare const VALID_CONTROL_STATUSES: readonly ControlImplementationStatus[];
 export declare function isValidControlStatus(status: unknown): status is ControlImplementationStatus;
 export type ControlReviewStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected';
+export type ControlWorkflowTrust = 'legacy_unverified' | 'governed_unassured' | 'review_pending' | 'authoritative' | 'retired';
+export type ControlAssuranceStatus = 'untested' | 'pending_review' | 'effective' | 'needs_improvement' | 'ineffective' | 'expired' | 'not_applicable';
 export type EvidenceStatus = 'valid' | 'expired' | 'under_review' | 'rejected' | 'archived';
 export type PolicyStatus = 'draft' | 'under_review' | 'approved' | 'active' | 'retired';
 export type PolicyWorkflowTrust = 'legacy_unverified' | 'governed_draft' | 'governed_under_review' | 'authoritative' | 'retired';
@@ -105,7 +107,7 @@ export interface MasterRequirementControlMapping {
 /**
  * Tenant Adopted Control (/tenants/{tenantId}/controls/{controlId})
  */
-export interface Control extends BaseEntity {
+export interface Control extends BaseEntity, GovernedOperationalMetadata {
     masterControlId: string | null;
     code: string;
     title: string;
@@ -120,8 +122,46 @@ export interface Control extends BaseEntity {
     lastReviewDate: string | null;
     nextReviewDate: string | null;
     implementationNotes: string;
+    /** Stored workflow projection; read APIs independently verify its artifact chain. */
+    workflowTrust?: ControlWorkflowTrust;
+    /** Server-derived assurance state. Browser callers cannot set this field. */
+    assuranceStatus?: ControlAssuranceStatus;
+    /** Server-maintained authors whose implementation changes require independent review. */
+    implementationContributorIds?: string[];
+    /** Server-derived not-applicable decision attribution. */
+    statusRationale?: string | null;
+    statusDecidedBy?: string | null;
+    statusDecidedAt?: string | null;
+    /** Current review anchor. Effectiveness assurance is invalid without its command artifacts. */
+    lastReviewId?: string | null;
+    lastReviewCommandId?: string | null;
+    lastReviewEffectiveness?: 'effective' | 'ineffective' | 'needs_improvement' | null;
+    lastReviewEvidenceIds?: string[];
+    lastReviewEvidenceAnchors?: ControlEvidenceAnchor[];
+    pendingReviewId?: string | null;
+    pendingReviewAssigneeId?: string | null;
+    pendingReviewSubmittedAt?: string | null;
+    pendingReviewSubmittedBy?: string | null;
+    lastReviewDecisionCommandId?: string | null;
+    assuranceInvalidatedAt?: string | null;
+    assuranceInvalidatedBy?: string | null;
     processorCertificationIds?: string[];
     processorProfileIds?: string[];
+}
+/** Immutable Storage/object facts captured when a control test is submitted. */
+export interface ControlEvidenceAnchor {
+    evidenceId: string;
+    evidenceVersion: number;
+    evidenceCreatedBy: string;
+    evidenceReviewedBy: string;
+    evidenceReviewedAt: string;
+    storagePath: string;
+    storageGeneration: string;
+    fileHashSha256: string;
+    fileSizeBytes: number;
+    mimeType: string;
+    objectVerifiedAt: string;
+    reviewDueDate: string | null;
 }
 /**
  * Tenant Control Review Log (/tenants/{tenantId}/controls/{controlId}/reviews/{reviewId})
@@ -131,10 +171,31 @@ export interface ControlReview {
     tenantId: string;
     controlId: string;
     status: ControlReviewStatus;
-    reviewerId: string;
+    assignedReviewerId: string;
+    submittedBy: string;
+    submittedAt: string;
+    submissionCommandId: string;
+    reviewerId: string | null;
+    reviewerRole?: UserRole | null;
     effectiveness: 'effective' | 'ineffective' | 'needs_improvement';
     notes: string;
-    reviewedAt: string;
+    testMethod: string;
+    testPeriodStart: string | null;
+    testPeriodEnd: string | null;
+    sampleSize: number | null;
+    exceptions: string;
+    evidenceIds: string[];
+    evidenceAnchors: ControlEvidenceAnchor[];
+    implementationContributorIds: string[];
+    reviewedControlRevision: number;
+    reviewedStateHash: string;
+    reviewedVersionArtifactHash: string;
+    resultingControlRevision: number;
+    decision?: 'approved' | 'rejected' | null;
+    decisionNotes?: string | null;
+    decisionCommandId?: string | null;
+    commandId?: string;
+    reviewedAt: string | null;
 }
 export type EvidenceCategory = 'audit_log' | 'screenshot' | 'policy_doc' | 'export_report' | 'assessment_doc' | 'configuration' | 'dpa' | 'scc' | 'addendum' | 'adequacy_support' | 'toms' | 'security_report' | 'iso_certificate' | 'soc_report' | 'subprocessor_list' | 'transfer_assessment_support' | 'incident_notice' | 'bridge_letter' | 'management_assertion' | 'penetration_test_report' | 'code_of_conduct_doc' | 'industry_label_evidence' | 'custom_assurance_doc';
 export declare const VALID_EVIDENCE_CATEGORIES: readonly EvidenceCategory[];

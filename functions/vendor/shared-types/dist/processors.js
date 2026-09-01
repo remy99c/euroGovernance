@@ -2181,27 +2181,23 @@ function evaluateProcessorReminders(profile, transfers = [], evidenceDocs = [], 
 // -----------------------------------------------------------------------------
 /**
  * Finds all processor certifications linked to a specific Control.
- * Checks both `cert.linkedControlIds` and `control.processorCertificationIds`.
+ * ProcessorCertification.linkedControlIds is the single relationship authority.
+ * Legacy inverse arrays on Control are deliberately ignored because they can be
+ * stale and are no longer mutated by governed control commands.
  */
 function findProcessorCertificationsForControl(controlOrId, certs) {
     const controlId = typeof controlOrId === 'string' ? controlOrId : controlOrId.id;
-    const directLinkedCertIds = typeof controlOrId === 'object' && Array.isArray(controlOrId.processorCertificationIds)
-        ? controlOrId.processorCertificationIds
-        : [];
-    return certs.filter((c) => Boolean(c.linkedControlIds?.includes(controlId)) ||
-        directLinkedCertIds.includes(c.id));
+    return certs.filter((certification) => Boolean(certification.linkedControlIds?.includes(controlId)));
 }
 /**
  * Finds all Controls linked to a specific ProcessorCertification.
- * Checks both `cert.linkedControlIds` and `control.processorCertificationIds`.
+ * ProcessorCertification.linkedControlIds is the single relationship authority.
  */
 function findControlsForProcessorCertification(certOrId, controls) {
-    const certId = typeof certOrId === 'string' ? certOrId : certOrId.id;
     const directLinkedControlIds = typeof certOrId === 'object' && Array.isArray(certOrId.linkedControlIds)
         ? certOrId.linkedControlIds
         : [];
-    return controls.filter((ctl) => directLinkedControlIds.includes(ctl.id) ||
-        Boolean(ctl.processorCertificationIds?.includes(certId)));
+    return controls.filter((control) => directLinkedControlIds.includes(control.id));
 }
 /**
  * Evaluates the third-party assurance and evidence support context for a specific Control.
@@ -2224,24 +2220,73 @@ function evaluateControlProcessorAssuranceSupport(control, certs, evidenceDocs =
         const taxonomy = getAssuranceTaxonomy(cert.standardFamily);
         const profile = profileMap.get(cert.processorProfileId);
         const processorName = profile?.engagementName || cert.processorProfileId;
-        const expiryMillis = new Date(cert.validUntil).getTime();
-        const isCurrent = cert.status === 'active_valid' && expiryMillis > nowMillis;
-        const isSufficient = !cert.isInsufficient && cert.reviewStatus === 'accepted' && !cert.hasMajorDeficiencies;
-        if (isCurrent && isSufficient) {
-            validAssuranceCount++;
-        }
-        else {
-            expiredAssuranceCount++;
-        }
         const attachedEvidences = (cert.linkedEvidenceIds || [])
             .map((evId) => evidenceDocs.find((e) => e.id === evId))
-            .filter((e) => e !== undefined && e !== null && e.status === 'valid')
+            .filter((e) => {
+            if (!e || e.status !== 'valid')
+                return false;
+            const verification = e.objectVerification;
+            const reviewDueMillis = e.reviewDueDate
+                ? Date.parse(e.reviewDueDate)
+                : Number.NaN;
+            return (Array.isArray(e.processorCertificationIds) &&
+                e.processorCertificationIds.includes(cert.id) &&
+                typeof e.createdBy === 'string' &&
+                typeof e.reviewedBy === 'string' &&
+                e.reviewedBy.length > 0 &&
+                e.reviewedBy !== e.createdBy &&
+                typeof e.reviewedAt === 'string' &&
+                Number.isFinite(Date.parse(e.reviewedAt)) &&
+                Number.isFinite(reviewDueMillis) &&
+                reviewDueMillis >= nowMillis &&
+                verification?.status === 'verified' &&
+                verification.verifier === 'storage_finalize_function' &&
+                typeof verification.storageGeneration === 'string' &&
+                verification.storageGeneration.length > 0 &&
+                verification.storagePath === e.storagePath &&
+                verification.verifiedFileHashSha256 === e.fileHashSha256 &&
+                verification.verifiedFileSizeBytes === e.fileSizeBytes &&
+                verification.verifiedMimeType === e.mimeType &&
+                Number.isFinite(Date.parse(verification.verifiedAt)) &&
+                Date.parse(verification.verifiedAt) <= Date.parse(e.reviewedAt));
+        })
             .map((e) => ({
             id: e.id,
             title: e.title,
             category: e.category,
             fileHashSha256: e.fileHashSha256 || null,
         }));
+        const validFromMillis = Date.parse(cert.validFrom);
+        const expiryMillis = Date.parse(cert.validUntil);
+        const isCurrent = cert.status === 'active_valid' &&
+            Number.isFinite(validFromMillis) &&
+            validFromMillis <= nowMillis &&
+            Number.isFinite(expiryMillis) &&
+            expiryMillis > nowMillis;
+        // Processor-certification records have not yet been migrated to the
+        // immutable command/version/audit chain. Their mutable lifecycle fields
+        // therefore cannot establish assurance, even when they look accepted.
+        // This must remain fail-closed until a server verifier supplies a separate
+        // trusted projection rather than trusting fields on this record.
+        const workflowVerified = false;
+        const independentReview = typeof cert.reviewedBy === 'string' &&
+            cert.reviewedBy.length > 0 &&
+            cert.reviewedBy !== cert.createdBy &&
+            cert.reviewedBy !== cert.ownerId &&
+            typeof cert.reviewedAt === 'string' &&
+            Number.isFinite(Date.parse(cert.reviewedAt));
+        const isSufficient = workflowVerified &&
+            independentReview &&
+            attachedEvidences.length > 0 &&
+            !cert.isInsufficient &&
+            cert.reviewStatus === 'accepted' &&
+            !cert.hasMajorDeficiencies;
+        if (isCurrent && isSufficient) {
+            validAssuranceCount++;
+        }
+        else {
+            expiredAssuranceCount++;
+        }
         items.push({
             certificationId: cert.id,
             processorProfileId: cert.processorProfileId,

@@ -106,13 +106,13 @@
     },
     {
       "path": "dist/core.d.ts",
-      "bytes": 2353,
-      "sha256": "1f9a64abe9340e3047e445fa2fb520c5483b83bde62c423dd2a80d21bec8ab8c"
+      "bytes": 2555,
+      "sha256": "2f1d67b0ca73a4b1d3eae85bc199517db86b4993919c22f2fc6960ae3c2a129e"
     },
     {
       "path": "dist/core.d.ts.map",
-      "bytes": 1549,
-      "sha256": "9b9d15cbbe5da6375e2258431121232256f06111c9fa16cd4458a688216d56cd"
+      "bytes": 1629,
+      "sha256": "ff6c20c77f809f1493b0d8592f0e3dc394e755ba565072a8042e3627bb8b1050"
     },
     {
       "path": "dist/core.js",
@@ -166,13 +166,13 @@
     },
     {
       "path": "dist/grc.d.ts",
-      "bytes": 14985,
-      "sha256": "a1ac66bbc08a469a16942d3aea390b63b94a01091265017c6e7951e52d30de52"
+      "bytes": 17737,
+      "sha256": "fb7c6ca11c33a56e1458716f8343cf0bf45e27f73b45a74dee6992d1ff0a139a"
     },
     {
       "path": "dist/grc.d.ts.map",
-      "bytes": 11833,
-      "sha256": "3dc63062da5216a285dcecf06a6fa343b809b7fcf85b0f8ecde0f1c8ddb10671"
+      "bytes": 13944,
+      "sha256": "8d406d0735188b55f96a29e6a037dc3c739a7a773051bb144debc351a54f5a77"
     },
     {
       "path": "dist/grc.js",
@@ -182,7 +182,7 @@
     {
       "path": "dist/grc.js.map",
       "bytes": 614,
-      "sha256": "537cb19b75c69e9874f4385030d6b4e9176b38d132cc7893f8d2d055e44f1692"
+      "sha256": "64b72226b4183aae9605abd33170227c7e786693d3e6181fe2fb470b2db9a0e8"
     },
     {
       "path": "dist/index.d.ts",
@@ -266,23 +266,23 @@
     },
     {
       "path": "dist/processors.d.ts",
-      "bytes": 43191,
-      "sha256": "1706ab4a8a8f7215115c535d9a6808c1e3a6ac96d044863077bf98aac493f03d"
+      "bytes": 43339,
+      "sha256": "593666c91ec85841d4ae7f2fe477c0332dc31d3f029c9565b9c03bf13abee6da"
     },
     {
       "path": "dist/processors.d.ts.map",
-      "bytes": 30417,
-      "sha256": "ead5d3c9752b956d2e50be3035c5e8413b39cc253b865f553e2917a4b3c71477"
+      "bytes": 30419,
+      "sha256": "f45b7450f2831dbc973b4cbc5dbc40c0210dae5ad114b4694445ae9ae8828f03"
     },
     {
       "path": "dist/processors.js",
-      "bytes": 149245,
-      "sha256": "a9be5f35e24e76f2b8250fd3e0cb84af0d042a23f20bf0366f1415332f71bcc4"
+      "bytes": 151588,
+      "sha256": "75d0127bc5d6a2652e5667e08a64f007092d32dbdddfde4d8822ed5b2b20448e"
     },
     {
       "path": "dist/processors.js.map",
-      "bytes": 107605,
-      "sha256": "4d6016c35af4dd56f1f84e1e65acdc12a85be84cb4a196c673537a19af0fc7c0"
+      "bytes": 108974,
+      "sha256": "9de82ec98320242b4085ca775dabefec187a55bbc09e326c7a386c8ebe84e058"
     },
     {
       "path": "dist/questionnaire-engine.d.ts",
@@ -306,23 +306,23 @@
     },
     {
       "path": "dist/scoping-and-harmonization.d.ts",
-      "bytes": 27581,
-      "sha256": "61ffe378d9dcbbd5c36781421e38c6d61a1dc59a72fe8613e0aefd4887402bea"
+      "bytes": 28428,
+      "sha256": "f9ae62f8c893706df3ea64183889261b5373bcdf4e38b4ab4b43501281a89ba5"
     },
     {
       "path": "dist/scoping-and-harmonization.d.ts.map",
-      "bytes": 19472,
-      "sha256": "0889286518a67745ecf1fa65f7a910ecac99af4daa50e9b6ea77d2e0acac47b9"
+      "bytes": 19916,
+      "sha256": "ae3a0001f588939bf7b770ce93aa7174c24bb94d73557626fa5669fd708c317f"
     },
     {
       "path": "dist/scoping-and-harmonization.js",
-      "bytes": 83668,
-      "sha256": "2f7de4ed35884e354ae015a732467d7afe4ac2d81ccc71a31da5d04156e0f939"
+      "bytes": 88273,
+      "sha256": "a47a7316e6e82b28e724556803bbed3ba30c38acbdae2c4402014ced71c4a535"
     },
     {
       "path": "dist/scoping-and-harmonization.js.map",
-      "bytes": 61030,
-      "sha256": "c82e9fbc5ae2c57db99676986c12ea97d642d5734a01c4efcd6a35d7587a8661"
+      "bytes": 63494,
+      "sha256": "0c41ce911d2059ce75989fd535cafdeec194ed2bcdeba38e0227c2447806b5bd"
     },
     {
       "path": "dist/tenancy.d.ts",

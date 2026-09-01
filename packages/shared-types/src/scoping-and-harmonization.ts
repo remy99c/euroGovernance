@@ -374,7 +374,12 @@ export interface ControlObligationCoverage {
   sectionCode: string;
   requirementTitle: string;
   mappingType: ControlMappingType;
+  /** The library/cross-walk strength of the mapping; it is not assurance. */
+  mappingCoverageRatio: number;
+  /** Current assured coverage. This is zero unless the control artifact is verified and current. */
   coverageRatio: number;
+  countsAsCovered: boolean;
+  assuranceStatus: 'assured_current' | 'mapped_unassured' | 'mapping_unverified';
   isDirect: boolean;
   statutoryRationale: string;
   auditExplanation: string;
@@ -387,11 +392,21 @@ export interface ControlHarmonizedCoverage {
   domain: string;
   status: ControlImplementationStatus;
   healthScore: number;
+  currentArtifactVerified: boolean;
+  assuranceTrusted: boolean;
+  assuranceReason: string;
   isHarmonized: boolean;
+  totalObligationsMapped: number;
   totalObligationsSatisfied: number;
   frameworksCovered: string[];
   obligations: ControlObligationCoverage[];
   coverageSummaryExplanation: string;
+}
+
+export interface ControlCoverageAssuranceContext {
+  currentArtifactVerified: boolean;
+  assuranceTrusted: boolean;
+  assuranceReason: string;
 }
 
 // =============================================================================
@@ -1692,7 +1707,9 @@ export function mapOutcomeToComplianceStatus(outcome: ApplicabilityOutcome): Req
     case 'review_required':
       return 'not_evaluated';
     case 'inherited':
-      return 'compliant';
+      // Inheritance is an applicability input, not proof that the tenant has
+      // implemented or independently assured the requirement.
+      return 'not_evaluated';
     case 'deferred':
       return 'not_evaluated';
     default:
@@ -1709,7 +1726,9 @@ export function mapOutcomeToControlStatus(outcome: ApplicabilityOutcome): Contro
     case 'review_required':
       return 'not_started';
     case 'inherited':
-      return 'implemented';
+      // Parent-scope inheritance must be substantiated through the governed
+      // control review workflow before it can become implemented.
+      return 'not_started';
     case 'deferred':
       return 'not_started';
     default:
@@ -1840,12 +1859,6 @@ export function instantiateTenantGRC(input: InstantiationInput): InstantiationRe
           existingControl.isHarmonized = true;
           modified = true;
         }
-        if (outcome === 'inherited' && existingControl.status === 'not_started') {
-          existingControl.status = 'implemented';
-          existingControl.healthScore = 100;
-          modified = true;
-        }
-
         if (modified) {
           existingControl.updatedAt = now;
           existingControl.updatedBy = input.defaultOwnerId;
@@ -1869,14 +1882,14 @@ export function instantiateTenantGRC(input: InstantiationInput): InstantiationRe
           frameworkIds: [req.frameworkId],
           requirementIds: [req.id],
           status: initialStatus,
-          healthScore: initialStatus === 'implemented' ? 100 : 0,
+          healthScore: 0,
           enforcementMechanism: 'manual',
           reviewFrequencyDays: 90,
           lastReviewDate: null,
           nextReviewDate: null,
           implementationNotes:
             outcome === 'inherited'
-              ? 'Control inherited from enterprise parent scope.'
+              ? 'Parent-scope inheritance is recorded but remains unverified until independently reviewed with current evidence.'
               : outcome === 'review_required'
               ? 'Requires scoping review.'
               : outcome === 'not_applicable'
@@ -2003,8 +2016,15 @@ export function buildControlCoverageSummary(
   control: TenantControlInstance,
   allRequirements: Requirement[],
   canonicalMappings?: CanonicalControlMapping[],
-  frameworks?: Framework[]
+  frameworks?: Framework[],
+  assurance: ControlCoverageAssuranceContext = {
+    currentArtifactVerified: false,
+    assuranceTrusted: false,
+    assuranceReason: 'verification_not_supplied',
+  }
 ): ControlHarmonizedCoverage {
+  const coverageTrusted =
+    assurance.currentArtifactVerified && assurance.assuranceTrusted;
   const reqMap = new Map<string, Requirement>();
   for (const r of allRequirements) {
     reqMap.set(r.id, r);
@@ -2034,12 +2054,24 @@ export function buildControlCoverageSummary(
     );
 
     const mappingType: ControlMappingType = mapping?.mappingType || 'equivalent';
-    const coverageRatio = mapping?.coverageRatio ?? 1.0;
+    const mappingCoverageRatio = mapping?.coverageRatio ?? 1.0;
+    const countsAsCovered = coverageTrusted;
+    const coverageRatio = countsAsCovered ? mappingCoverageRatio : 0;
+    const assuranceStatus = countsAsCovered
+      ? 'assured_current'
+      : assurance.currentArtifactVerified
+        ? 'mapped_unassured'
+        : 'mapping_unverified';
     const statutoryRationale =
-      mapping?.mappingRationale || `Operational control satisfies ${fwTitle} ${req.sectionCode} (${req.title}).`;
-    const auditExplanation = `[${fwTitle} - ${req.sectionCode}] Coverage: ${(coverageRatio * 100).toFixed(
-      0
-    )}% via ${mappingType} mapping. ${statutoryRationale}`;
+      mapping?.mappingRationale ||
+      `The control declares a mapping to ${fwTitle} ${req.sectionCode} (${req.title}).`;
+    const auditExplanation = countsAsCovered
+      ? `[${fwTitle} - ${req.sectionCode}] Current assured coverage: ${(coverageRatio * 100).toFixed(
+          0
+        )}% via ${mappingType} mapping. ${statutoryRationale}`
+      : `[${fwTitle} - ${req.sectionCode}] Mapping strength: ${(mappingCoverageRatio * 100).toFixed(
+          0
+        )}%; current assured coverage: 0%. ${statutoryRationale} The mapping does not prove current implementation or effectiveness.`;
 
     obligations.push({
       frameworkId: req.frameworkId,
@@ -2048,7 +2080,10 @@ export function buildControlCoverageSummary(
       sectionCode: req.sectionCode,
       requirementTitle: req.title,
       mappingType,
+      mappingCoverageRatio,
       coverageRatio,
+      countsAsCovered,
+      assuranceStatus,
       isDirect,
       statutoryRationale,
       auditExplanation,
@@ -2057,9 +2092,12 @@ export function buildControlCoverageSummary(
 
   const frameworksCovered = Array.from(new Set(obligations.map((o) => o.frameworkId)));
   const isHarmonized = frameworksCovered.length > 1;
-  const coverageSummaryExplanation = isHarmonized
-    ? `Single harmonized control '${control.code}' simultaneously satisfies ${obligations.length} statutory obligations across ${frameworksCovered.length} adopted frameworks (${frameworksCovered.join(', ')}).`
-    : `Control '${control.code}' addresses ${obligations.length} requirement(s) under ${frameworksCovered.join(', ')}.`;
+  const totalObligationsSatisfied = obligations.filter(
+    (obligation) => obligation.countsAsCovered
+  ).length;
+  const coverageSummaryExplanation = coverageTrusted
+    ? `Verified current control '${control.code}' provides assured coverage for ${totalObligationsSatisfied} mapped requirement(s) across ${frameworksCovered.length} framework(s) (${frameworksCovered.join(', ')}).`
+    : `Control '${control.code}' has ${obligations.length} mapped requirement(s) across ${frameworksCovered.length} framework(s) (${frameworksCovered.join(', ')}), but none count as covered because current independent assurance is unavailable (${assurance.assuranceReason}).`;
 
   return {
     controlId: control.id,
@@ -2067,9 +2105,13 @@ export function buildControlCoverageSummary(
     controlTitle: control.title,
     domain: control.domain,
     status: control.status,
-    healthScore: control.healthScore,
+    healthScore: coverageTrusted ? control.healthScore : 0,
+    currentArtifactVerified: assurance.currentArtifactVerified,
+    assuranceTrusted: coverageTrusted,
+    assuranceReason: assurance.assuranceReason,
     isHarmonized,
-    totalObligationsSatisfied: obligations.length,
+    totalObligationsMapped: obligations.length,
+    totalObligationsSatisfied,
     frameworksCovered,
     obligations,
     coverageSummaryExplanation,
@@ -2499,6 +2541,8 @@ export interface FrameworkCoverageMetrics {
   deferredRequirementsCount: number;
   totalControlsCount: number;
   implementedControlsCount: number;
+  /** Applicable/inherited requirements backed by a current authoritative effective mapped control. */
+  coveredRequirementsCount: number;
   harmonizedControlsCount: number;
   openGapsCount: number;
   overdueReviewsCount: number;
@@ -2514,6 +2558,7 @@ export interface TenantFrameworkCoverageDashboardData {
   totalApplicableCount: number;
   totalNonApplicableCount: number;
   totalReviewNeededCount: number;
+  totalCoveredRequirementsCount: number;
   totalControlsCount: number;
   totalHarmonizedControlsCount: number;
   totalOpenGapsCount: number;
@@ -2554,6 +2599,32 @@ export function computeTenantFrameworkCoverage(params: {
   } = params;
 
   const now = new Date().toISOString();
+  const nowMillis = Date.parse(now);
+
+  const hasAuthoritativeEffectiveAssurance = (
+    control: TenantControlInstance | Control
+  ): boolean => {
+    const candidate = control as Control & {
+      currentArtifactVerified?: boolean;
+      assuranceTrusted?: boolean;
+    };
+    const nextReviewMillis = candidate.nextReviewDate
+      ? Date.parse(candidate.nextReviewDate)
+      : Number.NaN;
+    return (
+      candidate.status === 'implemented' &&
+      candidate.currentArtifactVerified === true &&
+      candidate.assuranceTrusted === true &&
+      candidate.workflowTrust === 'authoritative' &&
+      candidate.assuranceStatus === 'effective' &&
+      typeof candidate.lastReviewId === 'string' &&
+      candidate.lastReviewId.length > 0 &&
+      typeof candidate.lastReviewDecisionCommandId === 'string' &&
+      candidate.lastReviewDecisionCommandId.length > 0 &&
+      Number.isFinite(nextReviewMillis) &&
+      nextReviewMillis >= nowMillis
+    );
+  };
 
   // Maps for fast lookup
   const reqInstanceMap = new Map<string, TenantRequirementInstance>();
@@ -2566,15 +2637,30 @@ export function computeTenantFrameworkCoverage(params: {
     decisionMap.set(d.requirementId, d);
   }
 
-  // Evidence linked to controls
+  // Only server-object-verified, current evidence can satisfy a control's
+  // evidence requirement. A caller-declared ID/path/hash is not evidence.
   const evidenceControlIds = new Set<string>();
   for (const ev of evidence) {
     if (ev && typeof ev === 'object') {
-      if ('controlId' in ev && ev.controlId) {
-        evidenceControlIds.add(ev.controlId);
-      }
-      if ('controlIds' in ev && Array.isArray(ev.controlIds)) {
-        for (const cid of ev.controlIds) evidenceControlIds.add(cid);
+      const verification = ev.objectVerification;
+      const reviewDueMillis = ev.reviewDueDate ? Date.parse(ev.reviewDueDate) : Number.NaN;
+      const isVerifiedCurrentEvidence =
+        ev.status === 'valid' &&
+        verification?.status === 'verified' &&
+        verification?.verifier === 'storage_finalize_function' &&
+        typeof verification.storageGeneration === 'string' &&
+        verification.storageGeneration.length > 0 &&
+        verification.storagePath === ev.storagePath &&
+        verification.verifiedFileHashSha256 === ev.fileHashSha256 &&
+        verification.verifiedFileSizeBytes === ev.fileSizeBytes &&
+        verification.verifiedMimeType === ev.mimeType &&
+        Number.isFinite(Date.parse(verification.verifiedAt)) &&
+        Number.isFinite(reviewDueMillis) &&
+        reviewDueMillis >= nowMillis;
+      if (isVerifiedCurrentEvidence && Array.isArray(ev.controlIds)) {
+        for (const cid of ev.controlIds) {
+          if (typeof cid === 'string' && cid.length > 0) evidenceControlIds.add(cid);
+        }
       }
     }
   }
@@ -2585,6 +2671,7 @@ export function computeTenantFrameworkCoverage(params: {
   let globalTotalApplicable = 0;
   let globalTotalNonApplicable = 0;
   let globalTotalReviewNeeded = 0;
+  let globalTotalCoveredRequirements = 0;
   let globalTotalOpenGaps = 0;
   let globalTotalOverdueReviews = 0;
   let globalTotalMissingEvidence = 0;
@@ -2602,7 +2689,9 @@ export function computeTenantFrameworkCoverage(params: {
     });
 
     const totalControlsCount = fwControls.length;
-    const implementedControlsCount = fwControls.filter((c) => c.status === 'implemented').length;
+    const implementedControlsCount = fwControls.filter(
+      hasAuthoritativeEffectiveAssurance
+    ).length;
     const harmonizedControlsCount = fwControls.filter((c) => (c as any).isHarmonized || ((c as any).frameworkIds && (c as any).frameworkIds.length > 1)).length;
 
     let applicableRequirementsCount = 0;
@@ -2610,6 +2699,7 @@ export function computeTenantFrameworkCoverage(params: {
     let reviewNeededRequirementsCount = 0;
     let inheritedRequirementsCount = 0;
     let deferredRequirementsCount = 0;
+    let coveredRequirementsCount = 0;
     let openGapsCount = 0;
     let overdueReviewsCount = 0;
 
@@ -2619,12 +2709,18 @@ export function computeTenantFrameworkCoverage(params: {
 
       const status = decision?.status || (req.isMandatory ? 'applicable' : 'applicable');
 
-      if (status === 'applicable') {
+      const mappedAssuredControlExists = fwControls.some(
+        (control) =>
+          Array.isArray(control.requirementIds) &&
+          control.requirementIds.includes(req.id) &&
+          hasAuthoritativeEffectiveAssurance(control)
+      );
+
+      if (status === 'applicable' || status === 'conditionally_applicable') {
         applicableRequirementsCount++;
-        // Check if there are satisfying controls
-        const satisfyingCount = reqInstance?.satisfyingControlIds?.length || 0;
-        const hasImplementedControl = fwControls.some((c) => (reqInstance?.satisfyingControlIds || []).includes(c.id) && c.status === 'implemented');
-        if (satisfyingCount === 0 || !hasImplementedControl) {
+        if (mappedAssuredControlExists) {
+          coveredRequirementsCount++;
+        } else {
           openGapsCount++;
         }
       } else if (status === 'not_applicable') {
@@ -2634,6 +2730,11 @@ export function computeTenantFrameworkCoverage(params: {
         overdueReviewsCount++;
       } else if (status === 'inherited') {
         inheritedRequirementsCount++;
+        if (mappedAssuredControlExists) {
+          coveredRequirementsCount++;
+        } else {
+          openGapsCount++;
+        }
       } else if (status === 'deferred') {
         deferredRequirementsCount++;
       }
@@ -2647,19 +2748,20 @@ export function computeTenantFrameworkCoverage(params: {
     // Missing evidence: controls without verified evidence
     let missingEvidenceCount = 0;
     for (const c of fwControls) {
-      if (!evidenceControlIds.has(c.id)) {
+      if (c.status !== 'not_applicable' && !evidenceControlIds.has(c.id)) {
         missingEvidenceCount++;
       }
     }
 
-    const readinessPercentage =
-      totalRequirementsCount > 0
-        ? Math.round(
-            ((implementedControlsCount + inheritedRequirementsCount) /
-              Math.max(1, applicableRequirementsCount || totalRequirementsCount)) *
-              100
-          )
-        : 0;
+    // Readiness is obligation-centric. Every in-scope applicable,
+    // conditionally-applicable, or inherited requirement enters the denominator
+    // exactly once, and only a current, authoritative, effective control
+    // explicitly mapped to that requirement enters the numerator. Unrelated and
+    // duplicate controls cannot inflate it.
+    const readinessDenominator = applicableRequirementsCount + inheritedRequirementsCount;
+    const readinessPercentage = readinessDenominator > 0
+      ? Math.round((coveredRequirementsCount / readinessDenominator) * 100)
+      : 0;
 
     const clampedReadiness = Math.min(100, Math.max(0, readinessPercentage));
 
@@ -2668,6 +2770,7 @@ export function computeTenantFrameworkCoverage(params: {
       globalTotalApplicable += applicableRequirementsCount;
       globalTotalNonApplicable += nonApplicableRequirementsCount;
       globalTotalReviewNeeded += reviewNeededRequirementsCount;
+      globalTotalCoveredRequirements += coveredRequirementsCount;
       globalTotalOpenGaps += openGapsCount;
       globalTotalOverdueReviews += overdueReviewsCount;
       globalTotalMissingEvidence += missingEvidenceCount;
@@ -2689,6 +2792,7 @@ export function computeTenantFrameworkCoverage(params: {
       deferredRequirementsCount,
       totalControlsCount,
       implementedControlsCount,
+      coveredRequirementsCount,
       harmonizedControlsCount,
       openGapsCount,
       overdueReviewsCount,
@@ -2699,11 +2803,21 @@ export function computeTenantFrameworkCoverage(params: {
 
   const globalTotalControls = controls.length;
   const globalTotalHarmonized = controls.filter((c) => (c as any).isHarmonized || ((c as any).frameworkIds && (c as any).frameworkIds.length > 1)).length;
-  const globalImplementedControls = controls.filter((c) => c.status === 'implemented').length;
-
   const overallReadinessScore =
-    globalTotalApplicable > 0
-      ? Math.min(100, Math.round((globalImplementedControls / Math.max(1, globalTotalApplicable)) * 100))
+    globalTotalApplicable + frameworkMetricsList
+      .filter((framework) => framework.isAdopted)
+      .reduce((sum, framework) => sum + framework.inheritedRequirementsCount, 0) > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (globalTotalCoveredRequirements /
+              (globalTotalApplicable +
+                frameworkMetricsList
+                  .filter((framework) => framework.isAdopted)
+                  .reduce((sum, framework) => sum + framework.inheritedRequirementsCount, 0))) *
+              100
+          )
+        )
       : 0;
 
   // Statutory obligations summary
@@ -2720,6 +2834,7 @@ export function computeTenantFrameworkCoverage(params: {
     totalApplicableCount: globalTotalApplicable,
     totalNonApplicableCount: globalTotalNonApplicable,
     totalReviewNeededCount: globalTotalReviewNeeded,
+    totalCoveredRequirementsCount: globalTotalCoveredRequirements,
     totalControlsCount: globalTotalControls,
     totalHarmonizedControlsCount: globalTotalHarmonized,
     totalOpenGapsCount: globalTotalOpenGaps,

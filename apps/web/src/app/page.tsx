@@ -27,6 +27,10 @@ import {
   doc,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import {
+  clearRetryableTenantCommand,
+  retryableTenantCommand,
+} from '../lib/commands';
 
 // Subsystem Modules
 import FrameworkAdoptionWizard from './framework-adoption-wizard';
@@ -369,16 +373,41 @@ export default function DashboardPage() {
       () => handleSubscriptionError('metrics')
     );
 
-    // 2. Controls
-    const controlsRef = collection(db, 'tenants', tenantId, 'controls');
-    const unsubControls = onSnapshot(
-      controlsRef,
-      (snap) => {
-        setControlsList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    // 2. Controls. Raw records, versions, and reviews are browser-inaccessible;
+    // this complete-or-unavailable projection verifies command and assurance
+    // artifacts before a status is allowed to reach dashboards or workflows.
+    const unsubControls = () => {};
+    const listControls = httpsCallable<
+      { tenantId: string; pageSize: number; cursor?: string },
+      { controls?: unknown[]; truncated?: boolean; nextCursor?: string | null }
+    >(functions, 'listTenantControls');
+    void (async () => {
+      const controls: unknown[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 10; page += 1) {
+        const response = await listControls({
+          tenantId,
+          pageSize: 100,
+          ...(cursor ? { cursor } : {}),
+        });
+        if (!Array.isArray(response.data.controls)) {
+          throw new Error('Control projection response is invalid.');
+        }
+        controls.push(...response.data.controls);
+        if (!response.data.truncated) return controls;
+        if (!response.data.nextCursor || response.data.nextCursor === cursor) {
+          throw new Error('Control projection pagination is invalid.');
+        }
+        cursor = response.data.nextCursor;
+      }
+      throw new Error('Control register exceeds the bounded workspace projection.');
+    })()
+      .then((controls) => {
+        if (!subscriptionActive) return;
+        setControlsList(controls);
         markSubscriptionInitialized('controls');
-      },
-      () => handleSubscriptionError('controls')
-    );
+      })
+      .catch(() => handleSubscriptionError('controls'));
 
     // 3. Evidence
     const evidenceRef = collection(db, 'tenants', tenantId, 'evidence');
@@ -635,7 +664,7 @@ export default function DashboardPage() {
     try {
       const fn = httpsCallable(functions, 'materializeTenantMetrics');
       await fn({ tenantId });
-      showNotice('✅ Summary compliance metrics successfully re-materialized from live database records.');
+      showNotice('✅ Verified obligation coverage successfully re-materialized from current governed records.');
     } catch (err: any) {
       showNotice(`❌ Error recalculating metrics: ${err.message}`);
     } finally {
@@ -657,22 +686,44 @@ export default function DashboardPage() {
     }
   };
 
-  const handleCreateControl = async (control: { code: string; title: string; description: string; domain: string; frameworkIds: string[] }) => {
+  const handleCreateControl = async (control: {
+    code: string;
+    title: string;
+    description: string;
+    domain: string;
+    frameworkIds: string[];
+    requirementIds: string[];
+    enforcementMechanism: 'automated' | 'manual' | 'policy' | 'hybrid';
+    reviewFrequencyDays: number;
+    ownerId: string;
+    implementationNotes: string;
+  }) => {
     setLoadingAction('create_control');
+    let commandId: string | null = null;
     try {
       const fn = httpsCallable(functions, 'createTenantControl');
-      await fn({
+      const envelope = await retryableTenantCommand({
         tenantId,
-        code: control.code,
-        title: control.title,
-        description: control.description,
-        domain: control.domain,
-        frameworkIds: control.frameworkIds,
+        action: 'control.create',
+        commandVersion: 1,
+        logicalKey: `control-create:${control.code}`,
+        expectedRevision: null,
+        payload: control,
+      });
+      commandId = envelope.commandId;
+      await fn(envelope);
+      await clearRetryableTenantCommand({
+        tenantId,
+        action: 'control.create',
+        commandVersion: 1,
+        commandId,
       });
       showNotice(`✅ Control ${control.code} created as not started. Implementation and effectiveness require separate review.`);
       setCreateControlModalOpen(false);
+      setTenantDataReloadKey((current) => current + 1);
     } catch (err: any) {
       showNotice(`❌ Control creation failed: ${err.message}`);
+      throw err;
     } finally {
       setLoadingAction(null);
     }
@@ -848,7 +899,11 @@ export default function DashboardPage() {
     try {
       const fn = httpsCallable(functions, 'instantiateTenantFrameworkControls');
       const res: any = await fn({ tenantId, frameworkId });
-      showNotice(`✅ ${frameworkName} instantiated! Added ${res.data.controlsCreatedCount} controls.`);
+      const recorded = Number.isSafeInteger(res.data.createdControlsCount)
+        ? res.data.createdControlsCount
+        : 0;
+      showNotice(`✅ ${frameworkName} produced ${recorded} unassured draft controls. Each draft must be rebaselined and independently reviewed before it contributes to readiness.`);
+      setTenantDataReloadKey((current) => current + 1);
     } catch (err: any) {
       showNotice(`❌ Instantiation failed: ${err.message}`);
     } finally {
@@ -1367,6 +1422,7 @@ export default function DashboardPage() {
           {/* TAB 1: EXECUTIVE & ROLE-TAILORED OVERVIEW */}
           {activeTab === 'overview' && (
             <OverviewTabView
+              tenantId={tenantId}
               userRole={userRole}
               metrics={metrics}
               controlsList={controlsList}
@@ -1383,7 +1439,11 @@ export default function DashboardPage() {
           {/* TAB 2: UNIFIED CONTROLS */}
           {activeTab === 'controls' && (
             <ControlsTabView
+              tenantId={tenantId}
+              userId={user.uid}
+              userRole={userRole}
               controlsList={controlsList}
+              evidenceList={evidenceList}
               adoptedFrameworksList={adoptedFrameworksList}
               onOpenCreateControlModal={() => setCreateControlModalOpen(true)}
               onOpenAdoptFrameworkModal={(fw) =>
@@ -1394,6 +1454,7 @@ export default function DashboardPage() {
                 })
               }
               onInstantiateFramework={handleInstantiateFramework}
+              onChanged={() => setTenantDataReloadKey((current) => current + 1)}
               loadingAction={loadingAction}
             />
           )}
@@ -1582,6 +1643,8 @@ export default function DashboardPage() {
         isOpen={createControlModalOpen}
         onClose={() => setCreateControlModalOpen(false)}
         onSubmit={handleCreateControl}
+        adoptedFrameworksList={adoptedFrameworksList}
+        currentUserId={user.uid}
         loading={loadingAction === 'create_control'}
       />
 
